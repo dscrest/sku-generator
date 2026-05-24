@@ -1,0 +1,361 @@
+{
+  "communities": {
+    "0": [
+      "components_modal_modal",
+      "components_modal_modalbtn",
+      "components_modal_modalfooter",
+      "components_toolbar_btn",
+      "components_toolbar_tbtn",
+      "components_toolbar_toolbar",
+      "frontend_src_components_modal_jsx",
+      "frontend_src_components_toolbar_jsx",
+      "frontend_src_pages_industriespage_jsx",
+      "frontend_src_pages_propertymanagerpage_jsx",
+      "frontend_src_pages_skuitemspage_jsx",
+      "pages_industriespage_industriespage",
+      "pages_industriespage_inputstyle",
+      "pages_industriespage_labelstyle",
+      "pages_industriespage_thstyle",
+      "pages_propertymanagerpage_emptyprop",
+      "pages_propertymanagerpage_emptyval",
+      "pages_propertymanagerpage_inputstyle",
+      "pages_propertymanagerpage_labelstyle",
+      "pages_propertymanagerpage_propertymanagerpage",
+      "pages_propertymanagerpage_propform",
+      "pages_propertymanagerpage_selectstyle",
+      "pages_propertymanagerpage_valform",
+      "pages_skuitemspage_skuitemspage",
+      "pages_skuitemspage_thstyle"
+    ],
+    "1": [
+      "api_industries",
+      "api_industryProperties",
+      "api_propertyValues",
+      "api_skuCreateItem",
+      "api_skuGenerate",
+      "api_skuItems",
+      "indexhtml_SKUStudio",
+      "indexhtml_mainJsx",
+      "skugeneratorpage_CheckIcon",
+      "skugeneratorpage_DotIcon",
+      "skugeneratorpage_SKUGeneratorPage",
+      "skugeneratorpage_WarnIcon",
+      "skugeneratorpage_cmdkPalette",
+      "skugeneratorpage_generatePreview",
+      "skugeneratorpage_getSegCode",
+      "skugeneratorpage_handleCopyPermalink",
+      "skugeneratorpage_handleCreateItem",
+      "skugeneratorpage_handleSelect",
+      "skugeneratorpage_loadProperties",
+      "skugeneratorpage_loadRecent",
+      "skugeneratorpage_openPopover",
+      "skugeneratorpage_popoverUI",
+      "skugeneratorpage_themeTokens",
+      "skugeneratorpage_validationChecks"
+    ],
+    "2": [
+      "component_Modal",
+      "component_Toolbar",
+      "config_ViteConfig",
+      "db_IndustryModel",
+      "db_PropertyModel",
+      "db_PropertyValueModel",
+      "db_SKUItemModel",
+      "frontend_App",
+      "frontend_Main",
+      "page_IndustriesPage",
+      "page_PropertyManagerPage",
+      "page_SKUItemsPage",
+      "rationale_ManualVsRange",
+      "rationale_SKUComposition",
+      "routes_IndustriesRouter",
+      "routes_PropertiesRouter",
+      "routes_PropertyValuesRouter",
+      "routes_SKUItemsRouter",
+      "routes_SKURouter",
+      "seed_ValveSeed",
+      "server_ExpressApp",
+      "server_ServerEntry"
+    ],
+    "3": [
+      "backend_src_app_js",
+      "backend_src_routes_skuitems_js",
+      "backend_src_server_js",
+      "routes_skuitems_express",
+      "routes_skuitems_id",
+      "routes_skuitems_prisma",
+      "routes_skuitems_prismaclient",
+      "routes_skuitems_router",
+      "src_app_cors",
+      "src_app_express",
+      "src_app_industriesrouter",
+      "src_app_propertiesrouter",
+      "src_app_propertyvaluesrouter",
+      "src_app_skuitemsrouter",
+      "src_app_skurouter",
+      "src_server_app"
+    ],
+    "4": [
+      "frontend_src_app_jsx",
+      "frontend_src_main_jsx",
+      "frontend_src_pages_skugeneratorpage_jsx",
+      "pages_skugeneratorpage_checkicon",
+      "pages_skugeneratorpage_doticon",
+      "pages_skugeneratorpage_skugeneratorpage",
+      "pages_skugeneratorpage_t",
+      "pages_skugeneratorpage_warnicon",
+      "src_app_app",
+      "src_app_navitemstyle",
+      "src_app_s",
+      "src_app_sidebar"
+    ],
+    "5": [
+      "backend_src_routes_sku_js",
+      "routes_sku_descparts",
+      "routes_sku_express",
+      "routes_sku_nameparts",
+      "routes_sku_num",
+      "routes_sku_prisma",
+      "routes_sku_prismaclient",
+      "routes_sku_router",
+      "routes_sku_skuparts",
+      "routes_sku_valueid"
+    ],
+    "6": [
+      "backend_src_routes_properties_js",
+      "routes_properties_express",
+      "routes_properties_id",
+      "routes_properties_industryid",
+      "routes_properties_prisma",
+      "routes_properties_prismaclient",
+      "routes_properties_router"
+    ],
+    "7": [
+      "backend_src_routes_propertyvalues_js",
+      "routes_propertyvalues_express",
+      "routes_propertyvalues_id",
+      "routes_propertyvalues_prisma",
+      "routes_propertyvalues_prismaclient",
+      "routes_propertyvalues_propertyid",
+      "routes_propertyvalues_router"
+    ],
+    "8": [
+      "icons_svg_bluesky",
+      "icons_svg_discord",
+      "icons_svg_documentation",
+      "icons_svg_github",
+      "icons_svg_social",
+      "icons_svg_sprite",
+      "icons_svg_x"
+    ],
+    "9": [
+      "backend_src_routes_industries_js",
+      "routes_industries_express",
+      "routes_industries_id",
+      "routes_industries_prisma",
+      "routes_industries_prismaclient",
+      "routes_industries_router"
+    ],
+    "10": [
+      "backend_seed_valve_addvalues",
+      "backend_seed_valve_http",
+      "backend_seed_valve_js",
+      "backend_seed_valve_main",
+      "backend_seed_valve_post"
+    ],
+    "11": [
+      "frontend_src_counter_ts",
+      "frontend_src_main_ts",
+      "src_counter_setupcounter"
+    ],
+    "12": [
+      "components_skupreview_skupreview",
+      "frontend_src_components_skupreview_jsx"
+    ],
+    "13": [
+      "favicon_svg_bolt_icon",
+      "vite_svg_logo"
+    ],
+    "14": [
+      "counter_setupCounter",
+      "main_mainTs"
+    ],
+    "15": [
+      "frontend_vite_config_js"
+    ],
+    "16": [
+      "component_SKUPreview"
+    ],
+    "17": [
+      "hero_png_isometric_layers"
+    ],
+    "18": [
+      "typescript_svg_logo"
+    ],
+    "19": [
+      "main_counterButton"
+    ],
+    "20": [
+      "indexhtml_appRoot"
+    ]
+  },
+  "cohesion": {
+    "0": 0.1,
+    "1": 0.1,
+    "2": 0.18,
+    "3": 0.12,
+    "4": 0.17,
+    "5": 0.2,
+    "6": 0.29,
+    "7": 0.29,
+    "8": 0.29,
+    "9": 0.33,
+    "10": 0.7,
+    "11": 1.0,
+    "12": 1.0,
+    "13": 1.0,
+    "14": 1.0,
+    "15": 1.0,
+    "16": 1.0,
+    "17": 1.0,
+    "18": 1.0,
+    "19": 1.0,
+    "20": 1.0
+  },
+  "gods": [
+    {
+      "id": "skugeneratorpage_SKUGeneratorPage",
+      "label": "SKUGeneratorPage Component",
+      "degree": 18
+    },
+    {
+      "id": "db_IndustryModel",
+      "label": "Industry DB Model",
+      "degree": 7
+    },
+    {
+      "id": "page_PropertyManagerPage",
+      "label": "Property Manager Page",
+      "degree": 7
+    },
+    {
+      "id": "server_ExpressApp",
+      "label": "Express Application (app.js)",
+      "degree": 6
+    },
+    {
+      "id": "routes_IndustriesRouter",
+      "label": "Industries Router",
+      "degree": 6
+    },
+    {
+      "id": "routes_SKURouter",
+      "label": "SKU Router (generate + create-item)",
+      "degree": 6
+    },
+    {
+      "id": "icons_svg_sprite",
+      "label": "SVG Icon Sprite Sheet",
+      "degree": 6
+    },
+    {
+      "id": "db_PropertyModel",
+      "label": "Property DB Model",
+      "degree": 5
+    },
+    {
+      "id": "routes_PropertiesRouter",
+      "label": "Properties Router",
+      "degree": 5
+    },
+    {
+      "id": "page_IndustriesPage",
+      "label": "Industries Admin Page",
+      "degree": 5
+    }
+  ],
+  "surprises": [
+    {
+      "source": "SKU Studio HTML Shell",
+      "target": "SKUGeneratorPage Component",
+      "source_files": [
+        "frontend/index.html",
+        "frontend/src/pages/SKUGeneratorPage.jsx"
+      ],
+      "confidence": "INFERRED",
+      "relation": "references",
+      "why": "inferred connection - not explicitly stated in source; crosses file types (doc ↔ code); peripheral node `SKU Studio HTML Shell` unexpectedly reaches hub `SKUGeneratorPage Component`"
+    },
+    {
+      "source": "Manual vs Range Property Value Types",
+      "target": "Property DB Model",
+      "source_files": [
+        "backend/src/routes/sku.js",
+        "backend/prisma/migrations/20260523180134_init/migration.sql"
+      ],
+      "confidence": "INFERRED",
+      "relation": "rationale_for",
+      "why": "inferred connection - not explicitly stated in source; peripheral node `Manual vs Range Property Value Types` unexpectedly reaches hub `Property DB Model`"
+    },
+    {
+      "source": "Vite Config (proxy to backend)",
+      "target": "Server Entry Point (server.js)",
+      "source_files": [
+        "frontend/vite.config.js",
+        "backend/src/server.js"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "references",
+      "why": "connects across different repos/directories"
+    },
+    {
+      "source": "Industries Admin Page",
+      "target": "Industries Router",
+      "source_files": [
+        "frontend/src/pages/IndustriesPage.jsx",
+        "backend/src/routes/industries.js"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "connects across different repos/directories"
+    },
+    {
+      "source": "Property Manager Page",
+      "target": "Industries Router",
+      "source_files": [
+        "frontend/src/pages/PropertyManagerPage.jsx",
+        "backend/src/routes/industries.js"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "connects across different repos/directories"
+    }
+  ],
+  "questions": [
+    {
+      "type": "bridge_node",
+      "question": "Why does `App()` connect `Community 4` to `Community 3`?",
+      "why": "High betweenness centrality (0.139) - this node is a cross-community bridge."
+    },
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `http`, `express`, `cors` to the rest of the system?",
+      "why": "85 weakly-connected nodes found - possible documentation gaps or missing edges."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `Community 0` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.1 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `Community 1` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.1 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `Community 3` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.12 - nodes in this community are weakly interconnected."
+    }
+  ]
+}

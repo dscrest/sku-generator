@@ -1,0 +1,110 @@
+{
+  "D:\\sku-generator\\backend\\seed-valve.js": {
+    "mtime": 1779561951.5967903,
+    "hash": "2e3880d37fd1213958e6eab6b5eb6403"
+  },
+  "D:\\sku-generator\\backend\\prisma\\migrations\\20260523180134_init\\migration.sql": {
+    "mtime": 1779559294.61133,
+    "hash": "87a5bc59abb3344d4ee5bf1b6710bb4c"
+  },
+  "D:\\sku-generator\\backend\\src\\app.js": {
+    "mtime": 1779556316.6976438,
+    "hash": "ed8e0376160c98804bbd90f2a7f99fac"
+  },
+  "D:\\sku-generator\\backend\\src\\server.js": {
+    "mtime": 1779556352.6262412,
+    "hash": "f6773b19c48e1941eadaf51c94cc6bea"
+  },
+  "D:\\sku-generator\\backend\\src\\routes\\industries.js": {
+    "mtime": 1779556392.93652,
+    "hash": "202ebedd97914bec1824d33c58b5bc5d"
+  },
+  "D:\\sku-generator\\backend\\src\\routes\\properties.js": {
+    "mtime": 1779556462.623235,
+    "hash": "6877f563a000f2a719866a0c2eb2cbf5"
+  },
+  "D:\\sku-generator\\backend\\src\\routes\\propertyValues.js": {
+    "mtime": 1779556499.7701304,
+    "hash": "a006823fb9679975282e72894797a67a"
+  },
+  "D:\\sku-generator\\backend\\src\\routes\\sku.js": {
+    "mtime": 1779556533.061411,
+    "hash": "8247b1511112b94acf1a39ff3b52c06d"
+  },
+  "D:\\sku-generator\\backend\\src\\routes\\skuItems.js": {
+    "mtime": 1779556550.279041,
+    "hash": "a6af9427f7d34c1b9d20f90f1650bdea"
+  },
+  "D:\\sku-generator\\frontend\\vite.config.js": {
+    "mtime": 1779557208.776084,
+    "hash": "fb906b0e00f5f595c6483a80f1ab0f58"
+  },
+  "D:\\sku-generator\\frontend\\src\\App.jsx": {
+    "mtime": 1779594503.885896,
+    "hash": "ae4ed8d8c23fa6f44e05ba645ea6e960"
+  },
+  "D:\\sku-generator\\frontend\\src\\counter.ts": {
+    "mtime": 1779556581.8716724,
+    "hash": "f901580c2252331130bb4d13c0cd858b"
+  },
+  "D:\\sku-generator\\frontend\\src\\main.jsx": {
+    "mtime": 1779557250.584718,
+    "hash": "948287d966fb0851f0c8f7665b031350"
+  },
+  "D:\\sku-generator\\frontend\\src\\main.ts": {
+    "mtime": 1779556581.8736749,
+    "hash": "4ec08956ecf0995f83916143c866c5c2"
+  },
+  "D:\\sku-generator\\frontend\\src\\components\\Modal.jsx": {
+    "mtime": 1779595282.6808753,
+    "hash": "0631fc719ab0beae79400c851925bd7b"
+  },
+  "D:\\sku-generator\\frontend\\src\\components\\SKUPreview.jsx": {
+    "mtime": 1779557376.365841,
+    "hash": "6435a829eda9467cec757aebf3e127d5"
+  },
+  "D:\\sku-generator\\frontend\\src\\components\\Toolbar.jsx": {
+    "mtime": 1779595315.629745,
+    "hash": "f901f93acd7dbe7fa4a01bfd11878ead"
+  },
+  "D:\\sku-generator\\frontend\\src\\pages\\IndustriesPage.jsx": {
+    "mtime": 1779595664.9595017,
+    "hash": "1af209da0016823b40f875e0c25d05fb"
+  },
+  "D:\\sku-generator\\frontend\\src\\pages\\PropertyManagerPage.jsx": {
+    "mtime": 1779595813.5417714,
+    "hash": "c47c4a9075a3fc02adff58e6d3003bd3"
+  },
+  "D:\\sku-generator\\frontend\\src\\pages\\SKUGeneratorPage.jsx": {
+    "mtime": 1779595561.3810475,
+    "hash": "c62f6f3a28b9038c55b4bccb854ee090"
+  },
+  "D:\\sku-generator\\frontend\\src\\pages\\SKUItemsPage.jsx": {
+    "mtime": 1779595877.369007,
+    "hash": "77a18a1cd38fc238d4560e56036d29d3"
+  },
+  "D:\\sku-generator\\frontend\\index.html": {
+    "mtime": 1779594432.0407333,
+    "hash": "bc098bb083daa81160c0c4dcfb0e9b32"
+  },
+  "D:\\sku-generator\\frontend\\public\\favicon.svg": {
+    "mtime": 1779556581.8164935,
+    "hash": "7e840862161341271697daa99a40d76b"
+  },
+  "D:\\sku-generator\\frontend\\public\\icons.svg": {
+    "mtime": 1779556581.8338125,
+    "hash": "3b4fcfcf393eca4d264dca4a4663bc37"
+  },
+  "D:\\sku-generator\\frontend\\src\\assets\\hero.png": {
+    "mtime": 1779556581.7842042,
+    "hash": "aead493361b27e7510691c5d7072dfc1"
+  },
+  "D:\\sku-generator\\frontend\\src\\assets\\typescript.svg": {
+    "mtime": 1779556581.8496878,
+    "hash": "07f132d2ec35a9f4c17c1b9f19a2aac7"
+  },
+  "D:\\sku-generator\\frontend\\src\\assets\\vite.svg": {
+    "mtime": 1779556581.8646755,
+    "hash": "9960a24288958394ac50e57ff638b036"
+  }
+}

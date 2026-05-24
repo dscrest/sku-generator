@@ -1,0 +1,3658 @@
+{
+  "nodes": [
+    {
+      "id": "backend_seed_valve_js",
+      "label": "seed-valve.js",
+      "file_type": "code",
+      "source_file": "backend\\seed-valve.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "backend_seed_valve_http",
+      "label": "http",
+      "file_type": "code",
+      "source_file": "backend\\seed-valve.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "backend_seed_valve_post",
+      "label": "post()",
+      "file_type": "code",
+      "source_file": "backend\\seed-valve.js",
+      "source_location": "L3"
+    },
+    {
+      "id": "backend_seed_valve_addvalues",
+      "label": "addValues()",
+      "file_type": "code",
+      "source_file": "backend\\seed-valve.js",
+      "source_location": "L17"
+    },
+    {
+      "id": "backend_seed_valve_main",
+      "label": "main()",
+      "file_type": "code",
+      "source_file": "backend\\seed-valve.js",
+      "source_location": "L22"
+    },
+    {
+      "id": "backend_src_app_js",
+      "label": "app.js",
+      "file_type": "code",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "src_app_express",
+      "label": "express",
+      "file_type": "code",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L2"
+    },
+    {
+      "id": "src_app_cors",
+      "label": "cors",
+      "file_type": "code",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L3"
+    },
+    {
+      "id": "src_app_industriesrouter",
+      "label": "industriesRouter",
+      "file_type": "code",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L5"
+    },
+    {
+      "id": "src_app_propertiesrouter",
+      "label": "propertiesRouter",
+      "file_type": "code",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L6"
+    },
+    {
+      "id": "src_app_propertyvaluesrouter",
+      "label": "propertyValuesRouter",
+      "file_type": "code",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L7"
+    },
+    {
+      "id": "src_app_skurouter",
+      "label": "skuRouter",
+      "file_type": "code",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L8"
+    },
+    {
+      "id": "src_app_skuitemsrouter",
+      "label": "skuItemsRouter",
+      "file_type": "code",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L9"
+    },
+    {
+      "id": "src_app_app",
+      "label": "app",
+      "file_type": "code",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L11"
+    },
+    {
+      "id": "backend_src_server_js",
+      "label": "server.js",
+      "file_type": "code",
+      "source_file": "backend\\src\\server.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "src_server_app",
+      "label": "app",
+      "file_type": "code",
+      "source_file": "backend\\src\\server.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "backend_src_routes_industries_js",
+      "label": "industries.js",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\industries.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "routes_industries_express",
+      "label": "express",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\industries.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "routes_industries_prismaclient",
+      "label": "{ PrismaClient }",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\industries.js",
+      "source_location": "L2"
+    },
+    {
+      "id": "routes_industries_router",
+      "label": "router",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\industries.js",
+      "source_location": "L4"
+    },
+    {
+      "id": "routes_industries_prisma",
+      "label": "prisma",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\industries.js",
+      "source_location": "L5"
+    },
+    {
+      "id": "routes_industries_id",
+      "label": "id",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\industries.js",
+      "source_location": "L32"
+    },
+    {
+      "id": "backend_src_routes_properties_js",
+      "label": "properties.js",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "routes_properties_express",
+      "label": "express",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "routes_properties_prismaclient",
+      "label": "{ PrismaClient }",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L2"
+    },
+    {
+      "id": "routes_properties_router",
+      "label": "router",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L4"
+    },
+    {
+      "id": "routes_properties_prisma",
+      "label": "prisma",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L5"
+    },
+    {
+      "id": "routes_properties_industryid",
+      "label": "industryId",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L8"
+    },
+    {
+      "id": "routes_properties_id",
+      "label": "id",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L45"
+    },
+    {
+      "id": "backend_src_routes_propertyvalues_js",
+      "label": "propertyValues.js",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "routes_propertyvalues_express",
+      "label": "express",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "routes_propertyvalues_prismaclient",
+      "label": "{ PrismaClient }",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L2"
+    },
+    {
+      "id": "routes_propertyvalues_router",
+      "label": "router",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L4"
+    },
+    {
+      "id": "routes_propertyvalues_prisma",
+      "label": "prisma",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L5"
+    },
+    {
+      "id": "routes_propertyvalues_propertyid",
+      "label": "propertyId",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L8"
+    },
+    {
+      "id": "routes_propertyvalues_id",
+      "label": "id",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L42"
+    },
+    {
+      "id": "backend_src_routes_sku_js",
+      "label": "sku.js",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "routes_sku_express",
+      "label": "express",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "routes_sku_prismaclient",
+      "label": "{ PrismaClient }",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L2"
+    },
+    {
+      "id": "routes_sku_router",
+      "label": "router",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L4"
+    },
+    {
+      "id": "routes_sku_prisma",
+      "label": "prisma",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L5"
+    },
+    {
+      "id": "routes_sku_skuparts",
+      "label": "skuParts",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L22"
+    },
+    {
+      "id": "routes_sku_nameparts",
+      "label": "nameParts",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L23"
+    },
+    {
+      "id": "routes_sku_descparts",
+      "label": "descParts",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L24"
+    },
+    {
+      "id": "routes_sku_num",
+      "label": "num",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L31"
+    },
+    {
+      "id": "routes_sku_valueid",
+      "label": "valueId",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L41"
+    },
+    {
+      "id": "backend_src_routes_skuitems_js",
+      "label": "skuItems.js",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\skuItems.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "routes_skuitems_express",
+      "label": "express",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\skuItems.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "routes_skuitems_prismaclient",
+      "label": "{ PrismaClient }",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\skuItems.js",
+      "source_location": "L2"
+    },
+    {
+      "id": "routes_skuitems_router",
+      "label": "router",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\skuItems.js",
+      "source_location": "L4"
+    },
+    {
+      "id": "routes_skuitems_prisma",
+      "label": "prisma",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\skuItems.js",
+      "source_location": "L5"
+    },
+    {
+      "id": "routes_skuitems_id",
+      "label": "id",
+      "file_type": "code",
+      "source_file": "backend\\src\\routes\\skuItems.js",
+      "source_location": "L22"
+    },
+    {
+      "id": "frontend_vite_config_js",
+      "label": "vite.config.js",
+      "file_type": "code",
+      "source_file": "frontend\\vite.config.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "frontend_src_app_jsx",
+      "label": "App.jsx",
+      "file_type": "code",
+      "source_file": "frontend\\src\\App.jsx",
+      "source_location": "L1"
+    },
+    {
+      "id": "src_app_s",
+      "label": "S",
+      "file_type": "code",
+      "source_file": "frontend\\src\\App.jsx",
+      "source_location": "L7"
+    },
+    {
+      "id": "src_app_navitemstyle",
+      "label": "navItemStyle()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\App.jsx",
+      "source_location": "L57"
+    },
+    {
+      "id": "src_app_sidebar",
+      "label": "Sidebar()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\App.jsx",
+      "source_location": "L71"
+    },
+    {
+      "id": "src_app_app",
+      "label": "App()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\App.jsx",
+      "source_location": "L126"
+    },
+    {
+      "id": "frontend_src_counter_ts",
+      "label": "counter.ts",
+      "file_type": "code",
+      "source_file": "frontend\\src\\counter.ts",
+      "source_location": "L1"
+    },
+    {
+      "id": "src_counter_setupcounter",
+      "label": "setupCounter()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\counter.ts",
+      "source_location": "L1"
+    },
+    {
+      "id": "frontend_src_main_jsx",
+      "label": "main.jsx",
+      "file_type": "code",
+      "source_file": "frontend\\src\\main.jsx",
+      "source_location": "L1"
+    },
+    {
+      "id": "frontend_src_main_ts",
+      "label": "main.ts",
+      "file_type": "code",
+      "source_file": "frontend\\src\\main.ts",
+      "source_location": "L1"
+    },
+    {
+      "id": "frontend_src_components_modal_jsx",
+      "label": "Modal.jsx",
+      "file_type": "code",
+      "source_file": "frontend\\src\\components\\Modal.jsx",
+      "source_location": "L1"
+    },
+    {
+      "id": "components_modal_modal",
+      "label": "Modal()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\components\\Modal.jsx",
+      "source_location": "L3"
+    },
+    {
+      "id": "components_modal_modalfooter",
+      "label": "ModalFooter()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\components\\Modal.jsx",
+      "source_location": "L63"
+    },
+    {
+      "id": "components_modal_modalbtn",
+      "label": "ModalBtn()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\components\\Modal.jsx",
+      "source_location": "L76"
+    },
+    {
+      "id": "frontend_src_components_skupreview_jsx",
+      "label": "SKUPreview.jsx",
+      "file_type": "code",
+      "source_file": "frontend\\src\\components\\SKUPreview.jsx",
+      "source_location": "L1"
+    },
+    {
+      "id": "components_skupreview_skupreview",
+      "label": "SKUPreview()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\components\\SKUPreview.jsx",
+      "source_location": "L1"
+    },
+    {
+      "id": "frontend_src_components_toolbar_jsx",
+      "label": "Toolbar.jsx",
+      "file_type": "code",
+      "source_file": "frontend\\src\\components\\Toolbar.jsx",
+      "source_location": "L1"
+    },
+    {
+      "id": "components_toolbar_tbtn",
+      "label": "tbtn",
+      "file_type": "code",
+      "source_file": "frontend\\src\\components\\Toolbar.jsx",
+      "source_location": "L1"
+    },
+    {
+      "id": "components_toolbar_btn",
+      "label": "Btn()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\components\\Toolbar.jsx",
+      "source_location": "L13"
+    },
+    {
+      "id": "components_toolbar_toolbar",
+      "label": "Toolbar()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\components\\Toolbar.jsx",
+      "source_location": "L41"
+    },
+    {
+      "id": "frontend_src_pages_industriespage_jsx",
+      "label": "IndustriesPage.jsx",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L1"
+    },
+    {
+      "id": "pages_industriespage_inputstyle",
+      "label": "inputStyle",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L8"
+    },
+    {
+      "id": "pages_industriespage_labelstyle",
+      "label": "labelStyle",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L14"
+    },
+    {
+      "id": "pages_industriespage_thstyle",
+      "label": "thStyle",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L18"
+    },
+    {
+      "id": "pages_industriespage_industriespage",
+      "label": "IndustriesPage()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L24"
+    },
+    {
+      "id": "frontend_src_pages_propertymanagerpage_jsx",
+      "label": "PropertyManagerPage.jsx",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L1"
+    },
+    {
+      "id": "pages_propertymanagerpage_inputstyle",
+      "label": "inputStyle",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L8"
+    },
+    {
+      "id": "pages_propertymanagerpage_labelstyle",
+      "label": "labelStyle",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L14"
+    },
+    {
+      "id": "pages_propertymanagerpage_selectstyle",
+      "label": "selectStyle",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L18"
+    },
+    {
+      "id": "pages_propertymanagerpage_emptyprop",
+      "label": "emptyProp",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L24"
+    },
+    {
+      "id": "pages_propertymanagerpage_emptyval",
+      "label": "emptyVal",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L25"
+    },
+    {
+      "id": "pages_propertymanagerpage_propform",
+      "label": "PropForm()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L27"
+    },
+    {
+      "id": "pages_propertymanagerpage_valform",
+      "label": "ValForm()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L55"
+    },
+    {
+      "id": "pages_propertymanagerpage_propertymanagerpage",
+      "label": "PropertyManagerPage()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L76"
+    },
+    {
+      "id": "frontend_src_pages_skugeneratorpage_jsx",
+      "label": "SKUGeneratorPage.jsx",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\SKUGeneratorPage.jsx",
+      "source_location": "L1"
+    },
+    {
+      "id": "pages_skugeneratorpage_t",
+      "label": "T",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\SKUGeneratorPage.jsx",
+      "source_location": "L6"
+    },
+    {
+      "id": "pages_skugeneratorpage_checkicon",
+      "label": "CheckIcon()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\SKUGeneratorPage.jsx",
+      "source_location": "L31"
+    },
+    {
+      "id": "pages_skugeneratorpage_warnicon",
+      "label": "WarnIcon()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\SKUGeneratorPage.jsx",
+      "source_location": "L34"
+    },
+    {
+      "id": "pages_skugeneratorpage_doticon",
+      "label": "DotIcon()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\SKUGeneratorPage.jsx",
+      "source_location": "L37"
+    },
+    {
+      "id": "pages_skugeneratorpage_skugeneratorpage",
+      "label": "SKUGeneratorPage()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\SKUGeneratorPage.jsx",
+      "source_location": "L41"
+    },
+    {
+      "id": "frontend_src_pages_skuitemspage_jsx",
+      "label": "SKUItemsPage.jsx",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\SKUItemsPage.jsx",
+      "source_location": "L1"
+    },
+    {
+      "id": "pages_skuitemspage_thstyle",
+      "label": "thStyle",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\SKUItemsPage.jsx",
+      "source_location": "L6"
+    },
+    {
+      "id": "pages_skuitemspage_skuitemspage",
+      "label": "SKUItemsPage()",
+      "file_type": "code",
+      "source_file": "frontend\\src\\pages\\SKUItemsPage.jsx",
+      "source_location": "L12"
+    },
+    {
+      "id": "seed_ValveSeed",
+      "label": "Valve Industry Seed Script",
+      "file_type": "code",
+      "source_file": "backend/seed-valve.js",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "db_IndustryModel",
+      "label": "Industry DB Model",
+      "file_type": "code",
+      "source_file": "backend/prisma/migrations/20260523180134_init/migration.sql",
+      "source_location": "line 2",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "db_PropertyModel",
+      "label": "Property DB Model",
+      "file_type": "code",
+      "source_file": "backend/prisma/migrations/20260523180134_init/migration.sql",
+      "source_location": "line 11",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "db_PropertyValueModel",
+      "label": "PropertyValue DB Model",
+      "file_type": "code",
+      "source_file": "backend/prisma/migrations/20260523180134_init/migration.sql",
+      "source_location": "line 25",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "db_SKUItemModel",
+      "label": "SKUItem DB Model",
+      "file_type": "code",
+      "source_file": "backend/prisma/migrations/20260523180134_init/migration.sql",
+      "source_location": "line 37",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "server_ExpressApp",
+      "label": "Express Application (app.js)",
+      "file_type": "code",
+      "source_file": "backend/src/app.js",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "server_ServerEntry",
+      "label": "Server Entry Point (server.js)",
+      "file_type": "code",
+      "source_file": "backend/src/server.js",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "routes_IndustriesRouter",
+      "label": "Industries Router",
+      "file_type": "code",
+      "source_file": "backend/src/routes/industries.js",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "routes_PropertiesRouter",
+      "label": "Properties Router",
+      "file_type": "code",
+      "source_file": "backend/src/routes/properties.js",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "routes_PropertyValuesRouter",
+      "label": "Property Values Router",
+      "file_type": "code",
+      "source_file": "backend/src/routes/propertyValues.js",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "routes_SKURouter",
+      "label": "SKU Router (generate + create-item)",
+      "file_type": "code",
+      "source_file": "backend/src/routes/sku.js",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "rationale_SKUComposition",
+      "label": "SKU Composition Pattern: segment codes joined by industry separator",
+      "file_type": "rationale",
+      "source_file": "backend/src/routes/sku.js",
+      "source_location": "line 50",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": "Each property contributes a positional SKU segment (code or raw value). Segments are joined using the industry-level skuSeparator (e.g. '-'), enabling different industries to define their own SKU format without code changes."
+    },
+    {
+      "id": "rationale_ManualVsRange",
+      "label": "Manual vs Range Property Value Types",
+      "file_type": "rationale",
+      "source_file": "backend/src/routes/sku.js",
+      "source_location": "line 30",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "rationale": "Properties of valueType='Manual' select from a predefined PropertyValue lookup table (with SKU codes), while valueType='Range' accept free numeric input validated against rangeMin/rangeMax. This supports both categorical attributes (e.g. Valve Type) and continuous attributes (e.g. custom sizes)."
+    },
+    {
+      "id": "routes_SKUItemsRouter",
+      "label": "SKU Items Router",
+      "file_type": "code",
+      "source_file": "backend/src/routes/skuItems.js",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "config_ViteConfig",
+      "label": "Vite Config (proxy to backend)",
+      "file_type": "code",
+      "source_file": "frontend/vite.config.js",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "frontend_App",
+      "label": "React App Root (App.jsx)",
+      "file_type": "code",
+      "source_file": "frontend/src/App.jsx",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "frontend_Main",
+      "label": "React Entry Point (main.jsx)",
+      "file_type": "code",
+      "source_file": "frontend/src/main.jsx",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "component_Modal",
+      "label": "Modal Component",
+      "file_type": "code",
+      "source_file": "frontend/src/components/Modal.jsx",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "component_SKUPreview",
+      "label": "SKU Preview Component",
+      "file_type": "code",
+      "source_file": "frontend/src/components/SKUPreview.jsx",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "component_Toolbar",
+      "label": "Toolbar Component",
+      "file_type": "code",
+      "source_file": "frontend/src/components/Toolbar.jsx",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "page_IndustriesPage",
+      "label": "Industries Admin Page",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/IndustriesPage.jsx",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "page_PropertyManagerPage",
+      "label": "Property Manager Page",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/PropertyManagerPage.jsx",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "page_SKUItemsPage",
+      "label": "SKU Items Page",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUItemsPage.jsx",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "favicon_svg_bolt_icon",
+      "label": "Favicon - Purple Lightning Bolt / Catalyst-style Icon",
+      "file_type": "image",
+      "source_file": "frontend/public/favicon.svg",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icons_svg_sprite",
+      "label": "SVG Icon Sprite Sheet",
+      "file_type": "image",
+      "source_file": "frontend/public/icons.svg",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icons_svg_bluesky",
+      "label": "Bluesky Social Network Icon",
+      "file_type": "image",
+      "source_file": "frontend/public/icons.svg",
+      "source_location": "symbol#bluesky-icon",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icons_svg_discord",
+      "label": "Discord Icon",
+      "file_type": "image",
+      "source_file": "frontend/public/icons.svg",
+      "source_location": "symbol#discord-icon",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icons_svg_documentation",
+      "label": "Documentation Icon (code file with brackets)",
+      "file_type": "image",
+      "source_file": "frontend/public/icons.svg",
+      "source_location": "symbol#documentation-icon",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icons_svg_github",
+      "label": "GitHub Icon",
+      "file_type": "image",
+      "source_file": "frontend/public/icons.svg",
+      "source_location": "symbol#github-icon",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icons_svg_social",
+      "label": "Social / Community Icon (person with star badge)",
+      "file_type": "image",
+      "source_file": "frontend/public/icons.svg",
+      "source_location": "symbol#social-icon",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icons_svg_x",
+      "label": "X (Twitter) Icon",
+      "file_type": "image",
+      "source_file": "frontend/public/icons.svg",
+      "source_location": "symbol#x-icon",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "hero_png_isometric_layers",
+      "label": "Hero Image - Isometric Stacked Layers / Card UI Concept",
+      "file_type": "image",
+      "source_file": "frontend/src/assets/hero.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "typescript_svg_logo",
+      "label": "TypeScript Language Logo",
+      "file_type": "image",
+      "source_file": "frontend/src/assets/typescript.svg",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "vite_svg_logo",
+      "label": "Vite Build Tool Logo",
+      "file_type": "image",
+      "source_file": "frontend/src/assets/vite.svg",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "counter_setupCounter",
+      "label": "setupCounter Function",
+      "file_type": "code",
+      "source_file": "frontend/src/counter.ts",
+      "source_location": "1",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "main_mainTs",
+      "label": "main.ts Entry Point",
+      "file_type": "code",
+      "source_file": "frontend/src/main.ts",
+      "source_location": "1",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "main_counterButton",
+      "label": "Counter Button Element",
+      "file_type": "code",
+      "source_file": "frontend/src/main.ts",
+      "source_location": "18",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "indexhtml_SKUStudio",
+      "label": "SKU Studio HTML Shell",
+      "file_type": "code",
+      "source_file": "frontend/index.html",
+      "source_location": "1",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "indexhtml_mainJsx",
+      "label": "Main JSX Entry Script Reference",
+      "file_type": "code",
+      "source_file": "frontend/index.html",
+      "source_location": "14",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "indexhtml_appRoot",
+      "label": "App Root Element",
+      "file_type": "code",
+      "source_file": "frontend/index.html",
+      "source_location": "13",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_SKUGeneratorPage",
+      "label": "SKUGeneratorPage Component",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "41",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_themeTokens",
+      "label": "Theme Token Object T",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "6",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_CheckIcon",
+      "label": "CheckIcon SVG Component",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "31",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_WarnIcon",
+      "label": "WarnIcon SVG Component",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "34",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_DotIcon",
+      "label": "DotIcon SVG Component",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "37",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_generatePreview",
+      "label": "generatePreview Async Callback",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "157",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_loadProperties",
+      "label": "loadProperties Async Callback",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "123",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_loadRecent",
+      "label": "loadRecent Async Callback",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "116",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_handleCreateItem",
+      "label": "handleCreateItem Async Function",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "172",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_handleSelect",
+      "label": "handleSelect Function",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "167",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_handleCopyPermalink",
+      "label": "handleCopyPermalink Function",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "189",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_getSegCode",
+      "label": "getSegCode Helper Function",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "196",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_openPopover",
+      "label": "openPopover Function",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "205",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_validationChecks",
+      "label": "validationChecks Array",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "228",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_cmdkPalette",
+      "label": "Command Palette UI CmdK",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "729",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_popoverUI",
+      "label": "Property Value Popover UI",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "413",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "api_industries",
+      "label": "API /api/industries",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "97",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "api_skuItems",
+      "label": "API /api/sku-items",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "106",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "api_industryProperties",
+      "label": "API /api/industries/:id/properties",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "125",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "api_propertyValues",
+      "label": "API /api/properties/:id/values",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "131",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "api_skuGenerate",
+      "label": "API /api/sku/generate",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "160",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "api_skuCreateItem",
+      "label": "API /api/sku/create-item",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "176",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "backend_seed_valve_js",
+      "target": "http",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\seed-valve.js",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_seed_valve_js",
+      "target": "backend_seed_valve_http",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\seed-valve.js",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_seed_valve_js",
+      "target": "backend_seed_valve_post",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\seed-valve.js",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_seed_valve_js",
+      "target": "backend_seed_valve_addvalues",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\seed-valve.js",
+      "source_location": "L17",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_seed_valve_js",
+      "target": "backend_seed_valve_main",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\seed-valve.js",
+      "source_location": "L22",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_seed_valve_addvalues",
+      "target": "backend_seed_valve_post",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\seed-valve.js",
+      "source_location": "L18",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_seed_valve_main",
+      "target": "backend_seed_valve_post",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\seed-valve.js",
+      "source_location": "L23",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_seed_valve_main",
+      "target": "backend_seed_valve_addvalues",
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\seed-valve.js",
+      "source_location": "L48",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_app_js",
+      "target": "express",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_app_js",
+      "target": "src_app_express",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_app_js",
+      "target": "cors",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_app_js",
+      "target": "src_app_cors",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_app_js",
+      "target": "backend_src_routes_industries_js",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_app_js",
+      "target": "src_app_industriesrouter",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_app_js",
+      "target": "backend_src_routes_properties_js",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_app_js",
+      "target": "src_app_propertiesrouter",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_app_js",
+      "target": "backend_src_routes_propertyvalues_js",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_app_js",
+      "target": "src_app_propertyvaluesrouter",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_app_js",
+      "target": "backend_src_routes_sku_js",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_app_js",
+      "target": "src_app_skurouter",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_app_js",
+      "target": "backend_src_routes_skuitems_js",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L9",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_app_js",
+      "target": "src_app_skuitemsrouter",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L9",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_app_js",
+      "target": "src_app_app",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\app.js",
+      "source_location": "L11",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_server_js",
+      "target": "backend_src_app_js",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\server.js",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_server_js",
+      "target": "src_server_app",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\server.js",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_industries_js",
+      "target": "express",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\industries.js",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_industries_js",
+      "target": "routes_industries_express",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\industries.js",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_industries_js",
+      "target": "client",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\industries.js",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_industries_js",
+      "target": "routes_industries_prismaclient",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\industries.js",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_industries_js",
+      "target": "routes_industries_router",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\industries.js",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_industries_js",
+      "target": "routes_industries_prisma",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\industries.js",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_industries_js",
+      "target": "routes_industries_id",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\industries.js",
+      "source_location": "L32",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_industries_js",
+      "target": "routes_industries_id",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\industries.js",
+      "source_location": "L47",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_properties_js",
+      "target": "express",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_properties_js",
+      "target": "routes_properties_express",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_properties_js",
+      "target": "client",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_properties_js",
+      "target": "routes_properties_prismaclient",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_properties_js",
+      "target": "routes_properties_router",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_properties_js",
+      "target": "routes_properties_prisma",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_properties_js",
+      "target": "routes_properties_industryid",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_properties_js",
+      "target": "routes_properties_id",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L45",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_properties_js",
+      "target": "routes_properties_id",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\properties.js",
+      "source_location": "L68",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_propertyvalues_js",
+      "target": "express",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_propertyvalues_js",
+      "target": "routes_propertyvalues_express",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_propertyvalues_js",
+      "target": "client",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_propertyvalues_js",
+      "target": "routes_propertyvalues_prismaclient",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_propertyvalues_js",
+      "target": "routes_propertyvalues_router",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_propertyvalues_js",
+      "target": "routes_propertyvalues_prisma",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_propertyvalues_js",
+      "target": "routes_propertyvalues_propertyid",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_propertyvalues_js",
+      "target": "routes_propertyvalues_id",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L42",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_propertyvalues_js",
+      "target": "routes_propertyvalues_id",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\propertyValues.js",
+      "source_location": "L62",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_sku_js",
+      "target": "express",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_sku_js",
+      "target": "routes_sku_express",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_sku_js",
+      "target": "client",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_sku_js",
+      "target": "routes_sku_prismaclient",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_sku_js",
+      "target": "routes_sku_router",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_sku_js",
+      "target": "routes_sku_prisma",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_sku_js",
+      "target": "routes_sku_skuparts",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L22",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_sku_js",
+      "target": "routes_sku_nameparts",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L23",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_sku_js",
+      "target": "routes_sku_descparts",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L24",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_sku_js",
+      "target": "routes_sku_num",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L31",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_sku_js",
+      "target": "routes_sku_valueid",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\sku.js",
+      "source_location": "L41",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_skuitems_js",
+      "target": "express",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\skuItems.js",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_skuitems_js",
+      "target": "routes_skuitems_express",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\skuItems.js",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_skuitems_js",
+      "target": "client",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\skuItems.js",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_skuitems_js",
+      "target": "routes_skuitems_prismaclient",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\skuItems.js",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_skuitems_js",
+      "target": "routes_skuitems_router",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\skuItems.js",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_skuitems_js",
+      "target": "routes_skuitems_prisma",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\skuItems.js",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "backend_src_routes_skuitems_js",
+      "target": "routes_skuitems_id",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "backend\\src\\routes\\skuItems.js",
+      "source_location": "L22",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_vite_config_js",
+      "target": "vite",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\vite.config.js",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_vite_config_js",
+      "target": "plugin_react",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\vite.config.js",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_vite_config_js",
+      "target": "vite",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\vite.config.js",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_app_jsx",
+      "target": "react_router_dom",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\App.jsx",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_app_jsx",
+      "target": "frontend_src_pages_industriespage_jsx",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\App.jsx",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_app_jsx",
+      "target": "frontend_src_pages_propertymanagerpage_jsx",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\App.jsx",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_app_jsx",
+      "target": "frontend_src_pages_skugeneratorpage_jsx",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\App.jsx",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_app_jsx",
+      "target": "frontend_src_pages_skuitemspage_jsx",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\App.jsx",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_app_jsx",
+      "target": "src_app_s",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\App.jsx",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_app_jsx",
+      "target": "src_app_navitemstyle",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\App.jsx",
+      "source_location": "L57",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_app_jsx",
+      "target": "src_app_sidebar",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\App.jsx",
+      "source_location": "L71",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_app_jsx",
+      "target": "src_app_app",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\App.jsx",
+      "source_location": "L126",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_counter_ts",
+      "target": "src_counter_setupcounter",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\counter.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_main_jsx",
+      "target": "react",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\main.jsx",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_main_jsx",
+      "target": "client",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\main.jsx",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_main_jsx",
+      "target": "react_hot_toast",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\main.jsx",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_main_jsx",
+      "target": "frontend_src_app_jsx",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\main.jsx",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_main_jsx",
+      "target": "d_sku_generator_frontend_src_index_css",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\main.jsx",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_main_ts",
+      "target": "d_sku_generator_frontend_src_style_css",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\main.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_main_ts",
+      "target": "d_sku_generator_frontend_src_assets_typescript_svg",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\main.ts",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_main_ts",
+      "target": "d_sku_generator_frontend_src_assets_vite_svg",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\main.ts",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_main_ts",
+      "target": "d_sku_generator_frontend_src_assets_hero_png",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\main.ts",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_main_ts",
+      "target": "frontend_src_counter_ts",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\main.ts",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_main_ts",
+      "target": "src_counter_setupcounter",
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\main.ts",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_components_modal_jsx",
+      "target": "react",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\components\\Modal.jsx",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_components_modal_jsx",
+      "target": "components_modal_modal",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\components\\Modal.jsx",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_components_modal_jsx",
+      "target": "components_modal_modalfooter",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\components\\Modal.jsx",
+      "source_location": "L63",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_components_modal_jsx",
+      "target": "components_modal_modalbtn",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\components\\Modal.jsx",
+      "source_location": "L76",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_components_skupreview_jsx",
+      "target": "components_skupreview_skupreview",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\components\\SKUPreview.jsx",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_components_toolbar_jsx",
+      "target": "components_toolbar_tbtn",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\components\\Toolbar.jsx",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_components_toolbar_jsx",
+      "target": "components_toolbar_btn",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\components\\Toolbar.jsx",
+      "source_location": "L13",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_components_toolbar_jsx",
+      "target": "components_toolbar_toolbar",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\components\\Toolbar.jsx",
+      "source_location": "L41",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_industriespage_jsx",
+      "target": "react",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_industriespage_jsx",
+      "target": "react_router_dom",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_industriespage_jsx",
+      "target": "axios",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_industriespage_jsx",
+      "target": "react_hot_toast",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_industriespage_jsx",
+      "target": "frontend_src_components_toolbar_jsx",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_industriespage_jsx",
+      "target": "frontend_src_components_modal_jsx",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_industriespage_jsx",
+      "target": "components_modal_modalfooter",
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_industriespage_jsx",
+      "target": "components_modal_modalbtn",
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_industriespage_jsx",
+      "target": "pages_industriespage_inputstyle",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_industriespage_jsx",
+      "target": "pages_industriespage_labelstyle",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L14",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_industriespage_jsx",
+      "target": "pages_industriespage_thstyle",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L18",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_industriespage_jsx",
+      "target": "pages_industriespage_industriespage",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\IndustriesPage.jsx",
+      "source_location": "L24",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "react",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "react_router_dom",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "axios",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "react_hot_toast",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "frontend_src_components_toolbar_jsx",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "frontend_src_components_modal_jsx",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "components_modal_modalfooter",
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "components_modal_modalbtn",
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "pages_propertymanagerpage_inputstyle",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "pages_propertymanagerpage_labelstyle",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L14",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "pages_propertymanagerpage_selectstyle",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L18",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "pages_propertymanagerpage_emptyprop",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L24",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "pages_propertymanagerpage_emptyval",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L25",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "pages_propertymanagerpage_propform",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L27",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "pages_propertymanagerpage_valform",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L55",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_propertymanagerpage_jsx",
+      "target": "pages_propertymanagerpage_propertymanagerpage",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\PropertyManagerPage.jsx",
+      "source_location": "L76",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_skugeneratorpage_jsx",
+      "target": "react",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\SKUGeneratorPage.jsx",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_skugeneratorpage_jsx",
+      "target": "react_router_dom",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\SKUGeneratorPage.jsx",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_skugeneratorpage_jsx",
+      "target": "axios",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\SKUGeneratorPage.jsx",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_skugeneratorpage_jsx",
+      "target": "react_hot_toast",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\SKUGeneratorPage.jsx",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_skugeneratorpage_jsx",
+      "target": "pages_skugeneratorpage_t",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\SKUGeneratorPage.jsx",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_skugeneratorpage_jsx",
+      "target": "pages_skugeneratorpage_checkicon",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\SKUGeneratorPage.jsx",
+      "source_location": "L31",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_skugeneratorpage_jsx",
+      "target": "pages_skugeneratorpage_warnicon",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\SKUGeneratorPage.jsx",
+      "source_location": "L34",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_skugeneratorpage_jsx",
+      "target": "pages_skugeneratorpage_doticon",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\SKUGeneratorPage.jsx",
+      "source_location": "L37",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_skugeneratorpage_jsx",
+      "target": "pages_skugeneratorpage_skugeneratorpage",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\SKUGeneratorPage.jsx",
+      "source_location": "L41",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_skuitemspage_jsx",
+      "target": "react",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\SKUItemsPage.jsx",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_skuitemspage_jsx",
+      "target": "axios",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\SKUItemsPage.jsx",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_skuitemspage_jsx",
+      "target": "react_hot_toast",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\SKUItemsPage.jsx",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_skuitemspage_jsx",
+      "target": "frontend_src_components_toolbar_jsx",
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\SKUItemsPage.jsx",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_skuitemspage_jsx",
+      "target": "pages_skuitemspage_thstyle",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\SKUItemsPage.jsx",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_src_pages_skuitemspage_jsx",
+      "target": "pages_skuitemspage_skuitemspage",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "frontend\\src\\pages\\SKUItemsPage.jsx",
+      "source_location": "L12",
+      "weight": 1.0
+    },
+    {
+      "source": "seed_ValveSeed",
+      "target": "routes_IndustriesRouter",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/seed-valve.js",
+      "source_location": "line 23",
+      "weight": 1.0
+    },
+    {
+      "source": "seed_ValveSeed",
+      "target": "routes_PropertiesRouter",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/seed-valve.js",
+      "source_location": "line 40",
+      "weight": 1.0
+    },
+    {
+      "source": "seed_ValveSeed",
+      "target": "routes_PropertyValuesRouter",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/seed-valve.js",
+      "source_location": "line 18",
+      "weight": 1.0
+    },
+    {
+      "source": "seed_ValveSeed",
+      "target": "db_IndustryModel",
+      "relation": "shares_data_with",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "backend/seed-valve.js",
+      "source_location": "line 23",
+      "weight": 1.0
+    },
+    {
+      "source": "db_PropertyModel",
+      "target": "db_IndustryModel",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/prisma/migrations/20260523180134_init/migration.sql",
+      "source_location": "line 54",
+      "weight": 1.0
+    },
+    {
+      "source": "db_PropertyValueModel",
+      "target": "db_PropertyModel",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/prisma/migrations/20260523180134_init/migration.sql",
+      "source_location": "line 57",
+      "weight": 1.0
+    },
+    {
+      "source": "db_SKUItemModel",
+      "target": "db_IndustryModel",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/prisma/migrations/20260523180134_init/migration.sql",
+      "source_location": "line 60",
+      "weight": 1.0
+    },
+    {
+      "source": "server_ExpressApp",
+      "target": "routes_IndustriesRouter",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/app.js",
+      "source_location": "line 16",
+      "weight": 1.0
+    },
+    {
+      "source": "server_ExpressApp",
+      "target": "routes_PropertiesRouter",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/app.js",
+      "source_location": "line 17",
+      "weight": 1.0
+    },
+    {
+      "source": "server_ExpressApp",
+      "target": "routes_PropertyValuesRouter",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/app.js",
+      "source_location": "line 18",
+      "weight": 1.0
+    },
+    {
+      "source": "server_ExpressApp",
+      "target": "routes_SKURouter",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/app.js",
+      "source_location": "line 19",
+      "weight": 1.0
+    },
+    {
+      "source": "server_ExpressApp",
+      "target": "routes_SKUItemsRouter",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/app.js",
+      "source_location": "line 20",
+      "weight": 1.0
+    },
+    {
+      "source": "server_ServerEntry",
+      "target": "server_ExpressApp",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/server.js",
+      "source_location": "line 1",
+      "weight": 1.0
+    },
+    {
+      "source": "routes_IndustriesRouter",
+      "target": "db_IndustryModel",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/routes/industries.js",
+      "source_location": "line 9",
+      "weight": 1.0
+    },
+    {
+      "source": "routes_PropertiesRouter",
+      "target": "db_PropertyModel",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/routes/properties.js",
+      "source_location": "line 10",
+      "weight": 1.0
+    },
+    {
+      "source": "routes_PropertiesRouter",
+      "target": "db_IndustryModel",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/routes/properties.js",
+      "source_location": "line 7",
+      "weight": 1.0
+    },
+    {
+      "source": "routes_PropertyValuesRouter",
+      "target": "db_PropertyValueModel",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/routes/propertyValues.js",
+      "source_location": "line 10",
+      "weight": 1.0
+    },
+    {
+      "source": "routes_SKURouter",
+      "target": "db_IndustryModel",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/routes/sku.js",
+      "source_location": "line 14",
+      "weight": 1.0
+    },
+    {
+      "source": "routes_SKURouter",
+      "target": "db_PropertyModel",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/routes/sku.js",
+      "source_location": "line 17",
+      "weight": 1.0
+    },
+    {
+      "source": "routes_SKURouter",
+      "target": "db_PropertyValueModel",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/routes/sku.js",
+      "source_location": "line 42",
+      "weight": 1.0
+    },
+    {
+      "source": "routes_SKURouter",
+      "target": "db_SKUItemModel",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/routes/sku.js",
+      "source_location": "line 70",
+      "weight": 1.0
+    },
+    {
+      "source": "rationale_SKUComposition",
+      "target": "routes_SKURouter",
+      "relation": "rationale_for",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "backend/src/routes/sku.js",
+      "source_location": "line 22",
+      "weight": 1.0
+    },
+    {
+      "source": "rationale_ManualVsRange",
+      "target": "db_PropertyModel",
+      "relation": "rationale_for",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "backend/src/routes/sku.js",
+      "source_location": "line 30",
+      "weight": 1.0
+    },
+    {
+      "source": "routes_SKURouter",
+      "target": "rationale_SKUComposition",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "backend/src/routes/sku.js",
+      "source_location": "line 50",
+      "weight": 1.0
+    },
+    {
+      "source": "routes_SKUItemsRouter",
+      "target": "db_SKUItemModel",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/routes/skuItems.js",
+      "source_location": "line 10",
+      "weight": 1.0
+    },
+    {
+      "source": "routes_SKUItemsRouter",
+      "target": "db_IndustryModel",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/src/routes/skuItems.js",
+      "source_location": "line 11",
+      "weight": 1.0
+    },
+    {
+      "source": "config_ViteConfig",
+      "target": "server_ServerEntry",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/vite.config.js",
+      "source_location": "line 9",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_App",
+      "target": "page_IndustriesPage",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/App.jsx",
+      "source_location": "line 133",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_App",
+      "target": "page_PropertyManagerPage",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/App.jsx",
+      "source_location": "line 134",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_App",
+      "target": "page_SKUGeneratorPage",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/App.jsx",
+      "source_location": "line 136",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_App",
+      "target": "page_SKUItemsPage",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/App.jsx",
+      "source_location": "line 137",
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_Main",
+      "target": "frontend_App",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/main.jsx",
+      "source_location": "line 7",
+      "weight": 1.0
+    },
+    {
+      "source": "page_IndustriesPage",
+      "target": "component_Toolbar",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/IndustriesPage.jsx",
+      "source_location": "line 102",
+      "weight": 1.0
+    },
+    {
+      "source": "page_IndustriesPage",
+      "target": "component_Modal",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/IndustriesPage.jsx",
+      "source_location": "line 147",
+      "weight": 1.0
+    },
+    {
+      "source": "page_IndustriesPage",
+      "target": "routes_IndustriesRouter",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/IndustriesPage.jsx",
+      "source_location": "line 36",
+      "weight": 1.0
+    },
+    {
+      "source": "page_IndustriesPage",
+      "target": "page_PropertyManagerPage",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/IndustriesPage.jsx",
+      "source_location": "line 127",
+      "weight": 1.0
+    },
+    {
+      "source": "page_PropertyManagerPage",
+      "target": "component_Toolbar",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/PropertyManagerPage.jsx",
+      "source_location": "line 195",
+      "weight": 1.0
+    },
+    {
+      "source": "page_PropertyManagerPage",
+      "target": "component_Modal",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/PropertyManagerPage.jsx",
+      "source_location": "line 261",
+      "weight": 1.0
+    },
+    {
+      "source": "page_PropertyManagerPage",
+      "target": "routes_PropertiesRouter",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/PropertyManagerPage.jsx",
+      "source_location": "line 93",
+      "weight": 1.0
+    },
+    {
+      "source": "page_PropertyManagerPage",
+      "target": "routes_PropertyValuesRouter",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/PropertyManagerPage.jsx",
+      "source_location": "line 108",
+      "weight": 1.0
+    },
+    {
+      "source": "page_PropertyManagerPage",
+      "target": "routes_IndustriesRouter",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/PropertyManagerPage.jsx",
+      "source_location": "line 99",
+      "weight": 1.0
+    },
+    {
+      "source": "page_SKUItemsPage",
+      "target": "component_Toolbar",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUItemsPage.jsx",
+      "source_location": "line 86",
+      "weight": 1.0
+    },
+    {
+      "source": "page_SKUItemsPage",
+      "target": "routes_SKUItemsRouter",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUItemsPage.jsx",
+      "source_location": "line 23",
+      "weight": 1.0
+    },
+    {
+      "source": "page_SKUItemsPage",
+      "target": "routes_IndustriesRouter",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUItemsPage.jsx",
+      "source_location": "line 29",
+      "weight": 1.0
+    },
+    {
+      "source": "favicon_svg_bolt_icon",
+      "target": "vite_svg_logo",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.65,
+      "source_file": "frontend/public/favicon.svg",
+      "source_location": null,
+      "weight": 0.65
+    },
+    {
+      "source": "icons_svg_sprite",
+      "target": "icons_svg_bluesky",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/public/icons.svg",
+      "source_location": "symbol#bluesky-icon",
+      "weight": 1.0
+    },
+    {
+      "source": "icons_svg_sprite",
+      "target": "icons_svg_discord",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/public/icons.svg",
+      "source_location": "symbol#discord-icon",
+      "weight": 1.0
+    },
+    {
+      "source": "icons_svg_sprite",
+      "target": "icons_svg_documentation",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/public/icons.svg",
+      "source_location": "symbol#documentation-icon",
+      "weight": 1.0
+    },
+    {
+      "source": "icons_svg_sprite",
+      "target": "icons_svg_github",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/public/icons.svg",
+      "source_location": "symbol#github-icon",
+      "weight": 1.0
+    },
+    {
+      "source": "icons_svg_sprite",
+      "target": "icons_svg_social",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/public/icons.svg",
+      "source_location": "symbol#social-icon",
+      "weight": 1.0
+    },
+    {
+      "source": "icons_svg_sprite",
+      "target": "icons_svg_x",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/public/icons.svg",
+      "source_location": "symbol#x-icon",
+      "weight": 1.0
+    },
+    {
+      "source": "sku_generator_frontend",
+      "target": "icons_svg_sprite",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "frontend/public/icons.svg",
+      "source_location": null,
+      "weight": 0.85
+    },
+    {
+      "source": "sku_generator_frontend",
+      "target": "hero_png_isometric_layers",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "frontend/src/assets/hero.png",
+      "source_location": null,
+      "weight": 0.85
+    },
+    {
+      "source": "sku_generator_frontend",
+      "target": "typescript_svg_logo",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "frontend/src/assets/typescript.svg",
+      "source_location": null,
+      "weight": 0.85
+    },
+    {
+      "source": "typescript_svg_logo",
+      "target": "sku_generator_frontend",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "frontend/src/assets/typescript.svg",
+      "source_location": null,
+      "weight": 0.85
+    },
+    {
+      "source": "sku_generator_frontend",
+      "target": "vite_svg_logo",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "frontend/src/assets/vite.svg",
+      "source_location": null,
+      "weight": 0.85
+    },
+    {
+      "source": "vite_svg_logo",
+      "target": "sku_generator_frontend",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "frontend/src/assets/vite.svg",
+      "source_location": null,
+      "weight": 0.85
+    },
+    {
+      "source": "main_mainTs",
+      "target": "counter_setupCounter",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/main.ts",
+      "source_location": "60",
+      "weight": 1.0
+    },
+    {
+      "source": "indexhtml_SKUStudio",
+      "target": "indexhtml_mainJsx",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/index.html",
+      "source_location": "14",
+      "weight": 1.0
+    },
+    {
+      "source": "indexhtml_SKUStudio",
+      "target": "skugeneratorpage_SKUGeneratorPage",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "frontend/index.html",
+      "source_location": "14",
+      "weight": 0.95
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_themeTokens",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "247",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_CheckIcon",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "684",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_WarnIcon",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "685",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_DotIcon",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "686",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_generatePreview",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "165",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_loadProperties",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "152",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_loadRecent",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "153",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_handleCreateItem",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "601",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_handleCopyPermalink",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "624",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_getSegCode",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "369",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_openPopover",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "375",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_handleSelect",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "446",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_validationChecks",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "228",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_cmdkPalette",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "729",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_popoverUI",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "413",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "api_industries",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "97",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "api_skuItems",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "106",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_loadRecent",
+      "target": "api_skuItems",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "118",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_loadProperties",
+      "target": "api_industryProperties",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "125",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_loadProperties",
+      "target": "api_propertyValues",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "131",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_generatePreview",
+      "target": "api_skuGenerate",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "160",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_handleCreateItem",
+      "target": "api_skuCreateItem",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "176",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_handleCreateItem",
+      "target": "skugeneratorpage_loadRecent",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "183",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_popoverUI",
+      "target": "skugeneratorpage_handleSelect",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "446",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_popoverUI",
+      "target": "skugeneratorpage_openPopover",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "375",
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "data_hierarchy",
+      "label": "Prisma Data Hierarchy: Industry -> Property -> PropertyValue (cascade delete)",
+      "nodes": [
+        "db_IndustryModel",
+        "db_PropertyModel",
+        "db_PropertyValueModel",
+        "db_SKUItemModel"
+      ],
+      "relation": "form",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "backend/prisma/migrations/20260523180134_init/migration.sql"
+    },
+    {
+      "id": "sku_generation_pipeline",
+      "label": "SKU Generation Pipeline: Industry + Properties + PropertyValues -> SKU string",
+      "nodes": [
+        "db_IndustryModel",
+        "db_PropertyModel",
+        "db_PropertyValueModel",
+        "routes_SKURouter",
+        "page_SKUGeneratorPage"
+      ],
+      "relation": "participate_in",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "backend/src/routes/sku.js"
+    },
+    {
+      "id": "admin_crud_pattern",
+      "label": "Admin CRUD Pattern: Toolbar + Modal + Page + REST Router",
+      "nodes": [
+        "component_Toolbar",
+        "component_Modal",
+        "page_IndustriesPage",
+        "page_PropertyManagerPage",
+        "routes_IndustriesRouter",
+        "routes_PropertiesRouter"
+      ],
+      "relation": "implement",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "frontend/src/pages/IndustriesPage.jsx"
+    },
+    {
+      "id": "social_icons_group",
+      "label": "Social Media Icons in Sprite Sheet",
+      "nodes": [
+        "icons_svg_sprite",
+        "icons_svg_bluesky",
+        "icons_svg_discord",
+        "icons_svg_github",
+        "icons_svg_x",
+        "icons_svg_social"
+      ],
+      "relation": "participate_in",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/public/icons.svg"
+    },
+    {
+      "id": "sku_generation_flow",
+      "label": "SKU Generation Flow",
+      "nodes": [
+        "skugeneratorpage_loadProperties",
+        "skugeneratorpage_generatePreview",
+        "api_skuGenerate"
+      ],
+      "relation": "implement",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.95,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx"
+    },
+    {
+      "id": "popover_interaction_pattern",
+      "label": "Popover Interaction Pattern",
+      "nodes": [
+        "skugeneratorpage_openPopover",
+        "skugeneratorpage_popoverUI",
+        "skugeneratorpage_handleSelect"
+      ],
+      "relation": "participate_in",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.95,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx"
+    }
+  ],
+  "input_tokens": 53485,
+  "output_tokens": 0
+}

@@ -1,0 +1,51 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Industry {
+  id           Int        @id @default(autoincrement())
+  name         String
+  skuSeparator String     @default("")
+  properties   Property[]
+  skuItems     SKUItem[]
+}
+
+model Property {
+  id          Int             @id @default(autoincrement())
+  name        String
+  caption     String
+  unit        String?
+  valueType   String
+  skuPosition Int
+  rangeMin    Float?
+  rangeMax    Float?
+  industryId  Int
+  industry    Industry        @relation(fields: [industryId], references: [id], onDelete: Cascade)
+  values      PropertyValue[]
+}
+
+model PropertyValue {
+  id           Int      @id @default(autoincrement())
+  displayValue String
+  name         String
+  sku          String
+  description  String?
+  propertyId   Int
+  property     Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+}
+
+model SKUItem {
+  id          Int      @id @default(autoincrement())
+  name        String
+  sku         String   @unique
+  description String?
+  type        String
+  industryId  Int
+  industry    Industry @relation(fields: [industryId], references: [id])
+  createdAt   DateTime @default(now())
+}

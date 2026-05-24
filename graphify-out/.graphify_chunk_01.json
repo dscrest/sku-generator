@@ -1,0 +1,624 @@
+{
+  "nodes": [
+    {
+      "id": "counter_setupCounter",
+      "label": "setupCounter Function",
+      "file_type": "code",
+      "source_file": "frontend/src/counter.ts",
+      "source_location": "1",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "main_mainTs",
+      "label": "main.ts Entry Point",
+      "file_type": "code",
+      "source_file": "frontend/src/main.ts",
+      "source_location": "1",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "main_counterButton",
+      "label": "Counter Button Element",
+      "file_type": "code",
+      "source_file": "frontend/src/main.ts",
+      "source_location": "18",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "indexhtml_SKUStudio",
+      "label": "SKU Studio HTML Shell",
+      "file_type": "code",
+      "source_file": "frontend/index.html",
+      "source_location": "1",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "indexhtml_mainJsx",
+      "label": "Main JSX Entry Script Reference",
+      "file_type": "code",
+      "source_file": "frontend/index.html",
+      "source_location": "14",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "indexhtml_appRoot",
+      "label": "App Root Element",
+      "file_type": "code",
+      "source_file": "frontend/index.html",
+      "source_location": "13",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_SKUGeneratorPage",
+      "label": "SKUGeneratorPage Component",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "41",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_themeTokens",
+      "label": "Theme Token Object T",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "6",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_CheckIcon",
+      "label": "CheckIcon SVG Component",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "31",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_WarnIcon",
+      "label": "WarnIcon SVG Component",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "34",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_DotIcon",
+      "label": "DotIcon SVG Component",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "37",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_generatePreview",
+      "label": "generatePreview Async Callback",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "157",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_loadProperties",
+      "label": "loadProperties Async Callback",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "123",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_loadRecent",
+      "label": "loadRecent Async Callback",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "116",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_handleCreateItem",
+      "label": "handleCreateItem Async Function",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "172",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_handleSelect",
+      "label": "handleSelect Function",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "167",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_handleCopyPermalink",
+      "label": "handleCopyPermalink Function",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "189",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_getSegCode",
+      "label": "getSegCode Helper Function",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "196",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_openPopover",
+      "label": "openPopover Function",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "205",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_validationChecks",
+      "label": "validationChecks Array",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "228",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_cmdkPalette",
+      "label": "Command Palette UI CmdK",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "729",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "skugeneratorpage_popoverUI",
+      "label": "Property Value Popover UI",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "413",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "api_industries",
+      "label": "API /api/industries",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "97",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "api_skuItems",
+      "label": "API /api/sku-items",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "106",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "api_industryProperties",
+      "label": "API /api/industries/:id/properties",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "125",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "api_propertyValues",
+      "label": "API /api/properties/:id/values",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "131",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "api_skuGenerate",
+      "label": "API /api/sku/generate",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "160",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "api_skuCreateItem",
+      "label": "API /api/sku/create-item",
+      "file_type": "code",
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "176",
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "main_mainTs",
+      "target": "counter_setupCounter",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/main.ts",
+      "source_location": "60",
+      "weight": 1.0
+    },
+    {
+      "source": "indexhtml_SKUStudio",
+      "target": "indexhtml_mainJsx",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/index.html",
+      "source_location": "14",
+      "weight": 1.0
+    },
+    {
+      "source": "indexhtml_SKUStudio",
+      "target": "skugeneratorpage_SKUGeneratorPage",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.95,
+      "source_file": "frontend/index.html",
+      "source_location": "14",
+      "weight": 0.95
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_themeTokens",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "247",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_CheckIcon",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "684",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_WarnIcon",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "685",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_DotIcon",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "686",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_generatePreview",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "165",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_loadProperties",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "152",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_loadRecent",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "153",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_handleCreateItem",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "601",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_handleCopyPermalink",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "624",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_getSegCode",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "369",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_openPopover",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "375",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_handleSelect",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "446",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_validationChecks",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "228",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_cmdkPalette",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "729",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "skugeneratorpage_popoverUI",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "413",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "api_industries",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "97",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_SKUGeneratorPage",
+      "target": "api_skuItems",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "106",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_loadRecent",
+      "target": "api_skuItems",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "118",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_loadProperties",
+      "target": "api_industryProperties",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "125",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_loadProperties",
+      "target": "api_propertyValues",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "131",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_generatePreview",
+      "target": "api_skuGenerate",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "160",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_handleCreateItem",
+      "target": "api_skuCreateItem",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "176",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_handleCreateItem",
+      "target": "skugeneratorpage_loadRecent",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "183",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_popoverUI",
+      "target": "skugeneratorpage_handleSelect",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "446",
+      "weight": 1.0
+    },
+    {
+      "source": "skugeneratorpage_popoverUI",
+      "target": "skugeneratorpage_openPopover",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx",
+      "source_location": "375",
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "sku_generation_flow",
+      "label": "SKU Generation Flow",
+      "nodes": [
+        "skugeneratorpage_loadProperties",
+        "skugeneratorpage_generatePreview",
+        "api_skuGenerate"
+      ],
+      "relation": "implement",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.95,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx"
+    },
+    {
+      "id": "popover_interaction_pattern",
+      "label": "Popover Interaction Pattern",
+      "nodes": [
+        "skugeneratorpage_openPopover",
+        "skugeneratorpage_popoverUI",
+        "skugeneratorpage_handleSelect"
+      ],
+      "relation": "participate_in",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.95,
+      "source_file": "frontend/src/pages/SKUGeneratorPage.jsx"
+    }
+  ],
+  "input_tokens": 53485,
+  "output_tokens": 0
+}
