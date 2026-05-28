@@ -48,4 +48,15 @@ model SKUItem {
   industryId  Int
   industry    Industry @relation(fields: [industryId], references: [id])
   createdAt   DateTime @default(now())
+  zohoItemId  String?
+}
+
+model ZohoToken {
+  id           Int       @id @default(1)
+  refreshToken String
+  accessToken  String?
+  expiresAt    DateTime?
+  orgId        String?
+  orgName      String?
+  updatedAt    DateTime  @updatedAt
 }

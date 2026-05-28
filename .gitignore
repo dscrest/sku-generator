@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+.next/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Prisma engine binaries
+backend/node_modules/.prisma/client/query_engine-windows.dll.node
+backend/node_modules/.prisma/client/query_engine-windows.dll.node.tmp*
+
+# Editor
+.vscode/
+*.swp

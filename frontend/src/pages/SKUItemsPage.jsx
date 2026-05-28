@@ -44,6 +44,18 @@ export default function SKUItemsPage() {
     else { setSortCol(col); setSortDir('asc'); }
   }
 
+  async function handlePushZoho(item, e) {
+    e.stopPropagation();
+    const tid = toast.loading(`Pushing "${item.sku}" to Zoho…`);
+    try {
+      const { data } = await axios.post(`/api/sku-items/${item.id}/push-zoho`);
+      toast.success(`Synced! Zoho ID: ${data.zohoItemId}`, { id: tid });
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Push failed', { id: tid });
+    }
+  }
+
   async function handleDelete() {
     if (!selected) return;
     if (!confirm(`Delete SKU "${selected.sku}"?`)) return;
@@ -94,6 +106,7 @@ export default function SKUItemsPage() {
                   <th style={thStyle} onClick={() => toggleSort('type')}>Type <SortArrow col="type" /></th>
                   <th style={thStyle} onClick={() => toggleSort('industry')}>Industry <SortArrow col="industry" /></th>
                   <th style={thStyle} onClick={() => toggleSort('createdAt')}>Created <SortArrow col="createdAt" /></th>
+                  <th style={{ ...thStyle, width: 110 }}>Zoho</th>
                 </tr>
               </thead>
               <tbody>
@@ -122,6 +135,23 @@ export default function SKUItemsPage() {
                       </td>
                       <td style={{ padding: '10px 16px', color: 'var(--text-secondary)' }}>{item.industry?.name || '—'}</td>
                       <td style={{ padding: '10px 16px', color: 'var(--text-muted)', fontSize: 12 }}>{new Date(item.createdAt).toLocaleDateString()}</td>
+                      <td style={{ padding: '8px 16px' }} onClick={e => e.stopPropagation()}>
+                        <button
+                          onClick={e => handlePushZoho(item, e)}
+                          title={item.zohoItemId ? `Zoho ID: ${item.zohoItemId}` : 'Push to Zoho Books'}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 5,
+                            padding: '4px 10px', fontSize: 11, fontWeight: 600,
+                            background: item.zohoItemId ? '#f0fdf4' : '#fff7ed',
+                            color: item.zohoItemId ? '#16a34a' : '#ea580c',
+                            border: `1px solid ${item.zohoItemId ? '#bbf7d0' : '#fed7aa'}`,
+                            borderRadius: 'var(--radius-sm)', cursor: 'pointer', whiteSpace: 'nowrap',
+                          }}
+                        >
+                          <span style={{ fontWeight: 700 }}>Z</span>
+                          {item.zohoItemId ? 'Synced' : 'Push'}
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}

@@ -7,6 +7,7 @@ const propertiesRouter = require('./routes/properties');
 const propertyValuesRouter = require('./routes/propertyValues');
 const skuRouter = require('./routes/sku');
 const skuItemsRouter = require('./routes/skuItems');
+const zohoAuthRouter = require('./routes/zohoAuth');
 
 const app = express();
 
@@ -18,6 +19,7 @@ app.use('/api', propertiesRouter);
 app.use('/api', propertyValuesRouter);
 app.use('/api/sku', skuRouter);
 app.use('/api/sku-items', skuItemsRouter);
+app.use('/auth/zoho', zohoAuthRouter);
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
