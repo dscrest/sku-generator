@@ -99,7 +99,7 @@ export default function SKUGeneratorPage() {
       setStats(s => ({ ...s, industries: data.length }));
       const qInd = searchParams.get('industry');
       if (qInd) {
-        const found = data.find(i => i.id === parseInt(qInd));
+        const found = data.find(i => String(i.id) === String(qInd));
         if (found) setSelectedIndustry(found);
       }
     });

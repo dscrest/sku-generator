@@ -1,0 +1,13 @@
+{
+  "name": "skuapi",
+  "version": "1.0.0",
+  "description": "SKU Generator API (Advanced I/O, Express + Catalyst Data Store)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "zcatalyst-sdk-node": "^3.4.0"
+  }
+}

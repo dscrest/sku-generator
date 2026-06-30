@@ -7,7 +7,7 @@ import SKUItemsPage from './pages/SKUItemsPage.jsx';
 import ZohoConnectPage from './pages/ZohoConnectPage.jsx';
 import OrgSelectPage from './pages/OrgSelectPage.jsx';
 
-const API = 'http://localhost:3001';
+const API = '/server/skuapi';
 
 const S = {
   sidebar: {
@@ -248,7 +248,7 @@ export default function App() {
   }
 
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.PROD ? '/app' : undefined}>
       <AppShell zoho={zoho} setZoho={setZoho} />
     </BrowserRouter>
   );

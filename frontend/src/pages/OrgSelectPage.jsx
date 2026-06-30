@@ -8,7 +8,7 @@ export default function OrgSelectPage({ onSelected }) {
   const [reconnecting, setReconnecting] = useState(false);
 
   useEffect(() => {
-    fetch('http://localhost:3001/auth/zoho/orgs')
+    fetch('/server/skuapi/auth/zoho/orgs')
       .then(r => r.json())
       .then(data => {
         const list = Array.isArray(data) ? data : [];
@@ -22,7 +22,7 @@ export default function OrgSelectPage({ onSelected }) {
   async function selectOrg(org) {
     setSaving(org.organization_id);
     try {
-      const r = await fetch('http://localhost:3001/auth/zoho/select-org', {
+      const r = await fetch('/server/skuapi/auth/zoho/select-org', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orgId: org.organization_id, orgName: org.name }),
@@ -34,8 +34,8 @@ export default function OrgSelectPage({ onSelected }) {
 
   async function handleReconnect() {
     setReconnecting(true);
-    await fetch('http://localhost:3001/auth/zoho/disconnect', { method: 'POST' }).catch(() => {});
-    window.location.href = 'http://localhost:3001/auth/zoho';
+    await fetch('/server/skuapi/auth/zoho/disconnect', { method: 'POST' }).catch(() => {});
+    window.location.href = '/server/skuapi/auth/zoho';
   }
 
   if (loading) {

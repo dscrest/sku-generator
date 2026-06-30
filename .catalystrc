@@ -1,0 +1,32 @@
+{
+  "defaults": {
+    "project": 1,
+    "env": 1
+  },
+  "actives": {
+    "project": 1,
+    "env": 1
+  },
+  "projects": [
+    {
+      "idx": 1,
+      "id": "69851000000052895",
+      "name": "SKU-GEN-OCTFIS",
+      "domain": {
+        "id": "10128021669",
+        "name": "sku-gen-octfis-925638796.development"
+      },
+      "timezone": "Asia/Kolkata",
+      "env": [
+        {
+          "idx": 1,
+          "id": "925638796",
+          "name": "Development",
+          "type": 3,
+          "is_default": true,
+          "action_required": false
+        }
+      ]
+    }
+  ]
+}

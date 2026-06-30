@@ -41,7 +41,7 @@ export default function ZohoConnectPage({ error }) {
         )}
 
         <a
-          href="http://localhost:3001/auth/zoho"
+          href="/server/skuapi/auth/zoho"
           style={{
             width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
             padding: '12px 20px', background: '#e84c3d', color: '#fff',
@@ -80,7 +80,7 @@ function ManualConnect() {
     if (!orgId.trim()) return;
     setSaving(true);
     try {
-      const r = await fetch('http://localhost:3001/auth/zoho/select-org', {
+      const r = await fetch('/server/skuapi/auth/zoho/select-org', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ orgId: orgId.trim() }),

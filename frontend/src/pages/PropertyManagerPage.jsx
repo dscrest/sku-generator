@@ -97,7 +97,7 @@ export default function PropertyManagerPage() {
 
   useEffect(() => {
     axios.get('/api/industries').then(({ data }) => {
-      const ind = data.find(i => i.id === parseInt(industryId));
+      const ind = data.find(i => String(i.id) === String(industryId));
       if (ind) setIndustryName(ind.name);
     });
     loadProperties();
@@ -120,7 +120,7 @@ export default function PropertyManagerPage() {
     if (!propForm.name.trim() || !propForm.caption.trim()) return toast.error('Name and Caption are required');
     const nextPos = properties.length > 0 ? Math.max(...properties.map(p => p.skuPosition)) + 1 : 1;
     try {
-      await axios.post('/api/properties', { ...propForm, skuPosition: nextPos, industryId: parseInt(industryId) });
+      await axios.post('/api/properties', { ...propForm, skuPosition: nextPos, industryId });
       toast.success('Property created'); setShowAddProp(false); setPropForm(emptyProp); loadProperties();
     } catch { toast.error('Failed to create property'); }
   }
@@ -164,10 +164,10 @@ export default function PropertyManagerPage() {
   }
 
   async function onDrop(e, targetProp) {
-    const dragId = parseInt(e.dataTransfer.getData('propId'));
-    if (dragId === targetProp.id) return;
+    const dragId = e.dataTransfer.getData('propId');
+    if (String(dragId) === String(targetProp.id)) return;
     const reordered = [...properties];
-    const fromIdx = reordered.findIndex(p => p.id === dragId);
+    const fromIdx = reordered.findIndex(p => String(p.id) === String(dragId));
     const toIdx = reordered.findIndex(p => p.id === targetProp.id);
     const [moved] = reordered.splice(fromIdx, 1);
     reordered.splice(toIdx, 0, moved);

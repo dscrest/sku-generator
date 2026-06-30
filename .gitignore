@@ -28,3 +28,11 @@ backend/node_modules/.prisma/client/query_engine-windows.dll.node.tmp*
 # Editor
 .vscode/
 *.swp
+
+# Catalyst build artifacts
+.build/
+catalyst-debug.log
+
+# Catalyst function config holds secrets (ZOHO_CLIENT_SECRET) — keep local only.
+# Deploy from a copy of catalyst-config.example.json with real values filled in.
+functions/*/catalyst-config.json

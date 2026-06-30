@@ -1,0 +1,18 @@
+{
+  "deployment": {
+    "name": "skuapi",
+    "stack": "node18",
+    "type": "advancedio",
+    "memory": 256,
+    "env_variables": {
+      "ZOHO_DC": "com",
+      "ZOHO_CLIENT_ID": "REPLACE_WITH_ZOHO_CLIENT_ID",
+      "ZOHO_CLIENT_SECRET": "REPLACE_WITH_ZOHO_CLIENT_SECRET",
+      "ZOHO_ORG_ID": "743418751",
+      "FRONTEND_URL": "https://sku-gen-octfis-925638796.development.catalystserverless.com/app"
+    }
+  },
+  "execution": {
+    "main": "index.js"
+  }
+}
