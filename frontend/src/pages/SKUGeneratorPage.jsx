@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
@@ -42,6 +42,7 @@ export default function SKUGeneratorPage() {
   const [industries, setIndustries] = useState([]);
   const [selectedIndustry, setSelectedIndustry] = useState(null);
   const [properties, setProperties] = useState([]);
+  const [loadingProps, setLoadingProps] = useState(false);
   const [propertyValues, setPropertyValues] = useState({});
   const [selections, setSelections] = useState({});
   const [preview, setPreview] = useState(null);
@@ -121,6 +122,7 @@ export default function SKUGeneratorPage() {
   }, []);
 
   const loadProperties = useCallback(async (industry) => {
+    setLoadingProps(true);
     try {
       const { data: props } = await axios.get(`/api/industries/${industry.id}/properties`);
       setProperties(props);
@@ -140,6 +142,8 @@ export default function SKUGeneratorPage() {
       setSelections(initSels);
     } catch {
       toast.error('Failed to load properties');
+    } finally {
+      setLoadingProps(false);
     }
   }, [searchParams]);
 
@@ -171,12 +175,15 @@ export default function SKUGeneratorPage() {
 
   async function handleCreateItem() {
     if (!preview?.sku) return;
+    if (missingRequired.length) { toast.error(`Required fields missing: ${missingRequired.join(', ')}`); return; }
+    if (preview.duplicate) { toast.error(`SKU "${preview.sku}" already exists`); return; }
     setCreating(true);
     try {
       await axios.post('/api/sku/create-item', {
         name: preview.name, sku: preview.sku,
         description: preview.description, type: itemType,
         industryId: selectedIndustry.id,
+        selectedValues: selections,
       });
       toast.success(`SKU "${preview.sku}" created`);
       setStats(s => ({ ...s, totalSKUs: s.totalSKUs + 1, thisWeek: s.thisWeek + 1 }));
@@ -225,15 +232,20 @@ export default function SKUGeneratorPage() {
   const totalCount = properties.length;
   const progress = totalCount > 0 ? Math.round((filledCount / totalCount) * 100) : 0;
 
+  const missingRequired = properties
+    .filter(p => p.required && (selections[p.id] === undefined || selections[p.id] === ''))
+    .map(p => p.caption);
+
   const validationChecks = [
     { key: 'ind', label: 'Industry selected', status: selectedIndustry ? 'ok' : 'pending' },
     {
-      key: 'req', label: 'Required fields complete',
-      status: !selectedIndustry ? 'pending' : (filledCount === totalCount && totalCount > 0) ? 'ok' : 'warn',
+      key: 'req',
+      label: missingRequired.length ? `Required: ${missingRequired.join(', ')}` : 'Required fields complete',
+      status: !selectedIndustry ? 'pending' : missingRequired.length ? 'warn' : 'ok',
     },
     {
       key: 'dup', label: 'No duplicate SKU',
-      status: !preview?.sku ? 'pending' : recentSKUs.some(s => s.sku === preview.sku) ? 'warn' : 'ok',
+      status: !preview?.sku ? 'pending' : preview.duplicate ? 'warn' : 'ok',
     },
   ];
 
@@ -360,29 +372,39 @@ export default function SKUGeneratorPage() {
                 <div style={{
                   fontFamily: T.mono, fontWeight: 600, fontSize: 48,
                   lineHeight: 1.05, letterSpacing: '-0.01em',
-                  display: 'flex', flexWrap: 'wrap', alignItems: 'center',
-                  gap: 2, marginBottom: 14,
+                  display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end',
+                  gap: '6px 10px', marginBottom: 14,
                 }}>
-                  {properties.length === 0 ? (
+                  {loadingProps ? (
                     <span style={{ color: T.ink4, fontSize: 28, fontWeight: 400 }}>Loading…</span>
+                  ) : properties.length === 0 ? (
+                    <span style={{ color: T.ink4, fontSize: 22, fontWeight: 400, fontFamily: T.sans }}>Add properties to generate a SKU</span>
                   ) : properties.map(prop => {
                     const code = getSegCode(prop);
                     const isOpen = popover?.propId === prop.id;
                     return (
-                      <span
-                        key={prop.id}
-                        title={prop.caption}
-                        onClick={e => openPopover(prop, e.currentTarget)}
-                        style={{
-                          padding: '2px 8px', borderRadius: 8, cursor: 'pointer',
-                          border: `1.5px ${code ? 'solid' : 'dashed'} ${isOpen ? T.accent : (code ? 'transparent' : T.borderStrong)}`,
-                          background: isOpen ? T.accentSoft : (code ? 'transparent' : T.bgSubtle),
-                          color: isOpen ? T.accentInk : (code ? T.ink : T.ink4),
-                          transition: 'background 0.12s, border-color 0.12s, color 0.12s',
-                          userSelect: 'none',
-                        }}
-                      >
-                        {code || '?'}
+                      <span key={prop.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                        <span style={{
+                          fontFamily: T.sans, fontSize: 10, fontWeight: 600, color: isOpen ? T.accentInk : T.ink4,
+                          textTransform: 'uppercase', letterSpacing: '0.05em',
+                          maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        }}>
+                          {prop.caption}
+                        </span>
+                        <span
+                          title={prop.caption}
+                          onClick={e => openPopover(prop, e.currentTarget)}
+                          style={{
+                            padding: '2px 8px', borderRadius: 8, cursor: 'pointer',
+                            border: `1.5px ${code ? 'solid' : 'dashed'} ${isOpen ? T.accent : (code ? 'transparent' : T.borderStrong)}`,
+                            background: isOpen ? T.accentSoft : (code ? 'transparent' : T.bgSubtle),
+                            color: isOpen ? T.accentInk : (code ? T.ink : T.ink4),
+                            transition: 'background 0.12s, border-color 0.12s, color 0.12s',
+                            userSelect: 'none',
+                          }}
+                        >
+                          {code || '?'}
+                        </span>
                       </span>
                     );
                   })}
@@ -556,11 +578,21 @@ export default function SKUGeneratorPage() {
             )}
 
             {/* No properties state */}
-            {selectedIndustry && properties.length === 0 && (
+            {selectedIndustry && !loadingProps && properties.length === 0 && (
               <div style={{ background: T.bgElev, border: `1px solid ${T.border}`, borderRadius: 12, padding: '36px 20px', textAlign: 'center' }}>
-                <div style={{ fontSize: 13, color: T.ink4 }}>
-                  No properties for <strong style={{ color: T.ink2 }}>{selectedIndustry.name}</strong>
+                <div style={{ fontSize: 13, color: T.ink4, marginBottom: 10 }}>
+                  <strong style={{ color: T.ink2 }}>{selectedIndustry.name}</strong> has no properties yet. Add properties to generate a SKU.
                 </div>
+                <Link
+                  to={`/admin/industries/${selectedIndustry.id}/properties`}
+                  style={{
+                    display: 'inline-block', padding: '7px 14px', borderRadius: 8,
+                    fontSize: 13, fontWeight: 600, textDecoration: 'none',
+                    background: T.accent, color: '#fff',
+                  }}
+                >
+                  Add properties
+                </Link>
               </div>
             )}
           </div>

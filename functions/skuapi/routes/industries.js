@@ -1,13 +1,15 @@
 "use strict";
 const express = require("express");
-const { rowList, out, idOk } = require("../store");
+const { rowList, out, idOk, orgClause, ownsRow } = require("../store");
 
 const router = express.Router();
 const TABLE = "Industry";
 
 router.get("/", async (req, res) => {
   try {
-    const rows = rowList(await req.catalyst.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} ORDER BY name`));
+    const rows = rowList(
+      await req.catalyst.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE ${orgClause(req.catalyst)} ORDER BY name`),
+    );
     res.json(rows.map(out));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -18,7 +20,7 @@ router.post("/", async (req, res) => {
   const { name, skuSeparator = "" } = req.body;
   if (!name) return res.status(400).json({ error: "name is required" });
   try {
-    const row = await req.catalyst.datastore().table(TABLE).insertRow({ name, skuSeparator });
+    const row = await req.catalyst.datastore().table(TABLE).insertRow({ name, skuSeparator, orgId: req.orgId });
     res.status(201).json(out(row));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -28,6 +30,7 @@ router.post("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
+  if (!(await ownsRow(req.catalyst, TABLE, id))) return res.status(404).json({ error: "Not found" });
   const { name, skuSeparator } = req.body;
   const data = { ROWID: id };
   if (name) data.name = name;
@@ -43,6 +46,7 @@ router.put("/:id", async (req, res) => {
 router.delete("/:id", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
+  if (!(await ownsRow(req.catalyst, TABLE, id))) return res.status(404).json({ error: "Not found" });
   try {
     const ds = req.catalyst.datastore();
     const zcql = req.catalyst.zcql();

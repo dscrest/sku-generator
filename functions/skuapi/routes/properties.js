@@ -1,6 +1,6 @@
 "use strict";
 const express = require("express");
-const { rowList, out, idOk } = require("../store");
+const { rowList, out, idOk, orgClause, ownsRow } = require("../store");
 
 const router = express.Router();
 const TABLE = "Property";
@@ -11,7 +11,7 @@ router.get("/industries/:id/properties", async (req, res) => {
   try {
     const rows = rowList(
       await req.catalyst.zcql().executeZCQLQuery(
-        `SELECT * FROM ${TABLE} WHERE industryId = ${industryId} ORDER BY skuPosition`,
+        `SELECT * FROM ${TABLE} WHERE industryId = ${industryId} AND ${orgClause(req.catalyst)} ORDER BY skuPosition`,
       ),
     );
     res.json(rows.map(out));
@@ -21,11 +21,13 @@ router.get("/industries/:id/properties", async (req, res) => {
 });
 
 router.post("/properties", async (req, res) => {
-  const { name, caption, unit, valueType, skuPosition, industryId, rangeMin, rangeMax } = req.body;
+  const { name, caption, unit, valueType, skuPosition, industryId, rangeMin, rangeMax, required, zohoCfApiName } = req.body;
   if (!name || !caption || !valueType || skuPosition === undefined || !industryId) {
     return res.status(400).json({ error: "name, caption, valueType, skuPosition, industryId are required" });
   }
   if (!idOk(industryId)) return res.status(400).json({ error: "Invalid industryId" });
+  // The parent industry must belong to this org, or you could graft a property onto another tenant's industry.
+  if (!(await ownsRow(req.catalyst, "Industry", industryId))) return res.status(404).json({ error: "Industry not found" });
   try {
     const row = await req.catalyst.datastore().table(TABLE).insertRow({
       name,
@@ -36,6 +38,9 @@ router.post("/properties", async (req, res) => {
       industryId: String(industryId),
       rangeMin: rangeMin !== undefined && rangeMin !== null ? parseFloat(rangeMin) : null,
       rangeMax: rangeMax !== undefined && rangeMax !== null ? parseFloat(rangeMax) : null,
+      required: required ? "true" : "false",
+      zohoCfApiName: zohoCfApiName || null,
+      orgId: req.orgId,
     });
     res.status(201).json(out(row));
   } catch (err) {
@@ -46,7 +51,8 @@ router.post("/properties", async (req, res) => {
 router.put("/properties/:id", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
-  const { name, caption, unit, valueType, skuPosition, rangeMin, rangeMax } = req.body;
+  if (!(await ownsRow(req.catalyst, TABLE, id))) return res.status(404).json({ error: "Not found" });
+  const { name, caption, unit, valueType, skuPosition, rangeMin, rangeMax, required, zohoCfApiName } = req.body;
   const data = { ROWID: id };
   if (name) data.name = name;
   if (caption) data.caption = caption;
@@ -55,6 +61,8 @@ router.put("/properties/:id", async (req, res) => {
   if (skuPosition !== undefined) data.skuPosition = parseInt(skuPosition);
   if (rangeMin !== undefined) data.rangeMin = rangeMin === null ? null : parseFloat(rangeMin);
   if (rangeMax !== undefined) data.rangeMax = rangeMax === null ? null : parseFloat(rangeMax);
+  if (required !== undefined) data.required = required ? "true" : "false";
+  if (zohoCfApiName !== undefined) data.zohoCfApiName = zohoCfApiName || null;
   try {
     const row = await req.catalyst.datastore().table(TABLE).updateRow(data);
     res.json(out(row));
@@ -66,6 +74,7 @@ router.put("/properties/:id", async (req, res) => {
 router.delete("/properties/:id", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
+  if (!(await ownsRow(req.catalyst, TABLE, id))) return res.status(404).json({ error: "Not found" });
   try {
     const ds = req.catalyst.datastore();
     const vals = rowList(

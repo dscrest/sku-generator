@@ -1,13 +1,10 @@
 "use strict";
 const express = require("express");
-const { rowList, out, idOk } = require("../store");
+const { rowList, out, idOk, orgClause, ownsRow, findSkuRowId } = require("../store");
 const { pushToZoho } = require("../zoho/push");
+const { saveItemValues, missingRequired } = require("../itemValues");
 
 const router = express.Router();
-
-function isDup(err) {
-  return /unique|duplicate|already exist/i.test((err && err.message) || "");
-}
 
 router.post("/generate", async (req, res) => {
   const { industryId, selectedValues } = req.body;
@@ -18,21 +15,29 @@ router.post("/generate", async (req, res) => {
 
   try {
     const zcql = req.catalyst.zcql();
-    const inds = rowList(await zcql.executeZCQLQuery(`SELECT * FROM Industry WHERE ROWID = ${industryId}`));
+    const inds = rowList(
+      await zcql.executeZCQLQuery(`SELECT * FROM Industry WHERE ROWID = ${industryId} AND ${orgClause(req.catalyst)}`),
+    );
     if (!inds.length) return res.status(404).json({ error: "Industry not found" });
     const industry = out(inds[0]);
 
     const properties = rowList(
-      await zcql.executeZCQLQuery(`SELECT * FROM Property WHERE industryId = ${industryId} ORDER BY skuPosition`),
+      await zcql.executeZCQLQuery(
+        `SELECT * FROM Property WHERE industryId = ${industryId} AND ${orgClause(req.catalyst)} ORDER BY skuPosition`,
+      ),
     ).map(out);
 
     const skuParts = [];
     const nameParts = [];
     const descParts = [];
+    const missingRequired = [];
 
     for (const prop of properties) {
       const rawValue = selectedValues[prop.id];
-      if (rawValue === undefined || rawValue === null || rawValue === "") continue;
+      if (rawValue === undefined || rawValue === null || rawValue === "") {
+        if (prop.required) missingRequired.push(prop.caption);
+        continue;
+      }
 
       if (prop.valueType === "Range") {
         const num = parseFloat(rawValue);
@@ -46,7 +51,9 @@ router.post("/generate", async (req, res) => {
         descParts.push(`${prop.caption}: ${rawValue}${prop.unit ? " " + prop.unit : ""}`);
       } else {
         if (!idOk(rawValue)) return res.status(400).json({ error: `Invalid value for ${prop.caption}` });
-        const pvs = rowList(await zcql.executeZCQLQuery(`SELECT * FROM PropertyValue WHERE ROWID = ${rawValue}`));
+        const pvs = rowList(
+          await zcql.executeZCQLQuery(`SELECT * FROM PropertyValue WHERE ROWID = ${rawValue} AND ${orgClause(req.catalyst)}`),
+        );
         if (!pvs.length) return res.status(404).json({ error: `Value ${rawValue} not found` });
         const pv = out(pvs[0]);
         skuParts.push(pv.sku);
@@ -56,10 +63,13 @@ router.post("/generate", async (req, res) => {
     }
 
     const sep = industry.skuSeparator || "";
+    const sku = skuParts.join(sep);
     res.json({
-      sku: skuParts.join(sep),
+      sku,
       name: nameParts.join(", "),
       description: descParts.join(" | "),
+      missingRequired,
+      duplicate: sku ? Boolean(await findSkuRowId(req.catalyst, sku)) : false,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -67,7 +77,7 @@ router.post("/generate", async (req, res) => {
 });
 
 router.post("/create-item", async (req, res) => {
-  const { name, sku, description, type, industryId } = req.body;
+  const { name, sku, description, type, industryId, selectedValues } = req.body;
   if (!name || !sku || !type || !industryId)
     return res.status(400).json({ error: "name, sku, type, industryId are required" });
   if (!["Trading", "Manufacturing"].includes(type))
@@ -75,14 +85,26 @@ router.post("/create-item", async (req, res) => {
   if (!idOk(industryId)) return res.status(400).json({ error: "Invalid industryId" });
 
   try {
+    if (!(await ownsRow(req.catalyst, "Industry", industryId))) return res.status(404).json({ error: "Industry not found" });
+    const missing = await missingRequired(req.catalyst, industryId, selectedValues);
+    if (missing.length) {
+      return res.status(400).json({ error: `Required fields missing: ${missing.join(", ")}` });
+    }
+    if (await findSkuRowId(req.catalyst, sku)) {
+      return res.status(409).json({ error: "SKU already exists" });
+    }
     const row = await req.catalyst.datastore().table("SKUItem").insertRow({
       name,
       sku,
       description: description || null,
       type,
       industryId: String(industryId),
+      orgId: req.orgId,
     });
     const item = out(row);
+
+    // Persist structured selections so the item is searchable by property.
+    await saveItemValues(req.catalyst, item.id, industryId, selectedValues);
 
     // Push to Zoho Books — non-blocking, best-effort.
     pushToZoho(req.catalyst, item, description).catch((err) =>
@@ -91,7 +113,6 @@ router.post("/create-item", async (req, res) => {
 
     res.status(201).json(item);
   } catch (err) {
-    if (isDup(err)) return res.status(409).json({ error: "SKU already exists" });
     res.status(500).json({ error: err.message });
   }
 });

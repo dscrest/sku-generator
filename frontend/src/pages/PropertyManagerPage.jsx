@@ -4,6 +4,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
 import Modal, { ModalFooter, ModalBtn } from '../components/Modal.jsx';
+import RowDeleteButton from '../components/RowDeleteButton.jsx';
 
 const inputStyle = {
   width: '100%', background: 'var(--bg-secondary)', border: '1px solid var(--border)',
@@ -21,7 +22,7 @@ const selectStyle = {
   backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center', paddingRight: 30,
 };
 
-const emptyProp = { name: '', caption: '', unit: '', valueType: 'Manual', rangeMin: '', rangeMax: '' };
+const emptyProp = { name: '', caption: '', unit: '', valueType: 'Manual', rangeMin: '', rangeMax: '', required: false, zohoCfApiName: '' };
 const emptyVal = { displayValue: '', name: '', sku: '', description: '' };
 
 function PropForm({ form, setForm, onSubmit, onCancel, label }) {
@@ -47,6 +48,15 @@ function PropForm({ form, setForm, onSubmit, onCancel, label }) {
           <div><label style={labelStyle}>Range Max</label><input type="number" style={inputStyle} value={form.rangeMax} onChange={e => setForm(f => ({ ...f, rangeMax: e.target.value }))} onFocus={fi} onBlur={fo} /></div>
         </div>
       )}
+      <div>
+        <label style={labelStyle}>Zoho Books custom field (api_name)</label>
+        <input style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} value={form.zohoCfApiName} onChange={e => setForm(f => ({ ...f, zohoCfApiName: e.target.value }))} placeholder="cf_brand — leave blank to skip sync" onFocus={fi} onBlur={fo} />
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>This property's value syncs into the matching Books item custom field, and is read back on import.</div>
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
+        <input type="checkbox" checked={!!form.required} onChange={e => setForm(f => ({ ...f, required: e.target.checked }))} />
+        Required for SKU generation
+      </label>
       <ModalFooter><ModalBtn onClick={onCancel}>Cancel</ModalBtn><ModalBtn onClick={onSubmit} variant="primary">{label}</ModalBtn></ModalFooter>
     </>
   );
@@ -125,6 +135,12 @@ export default function PropertyManagerPage() {
     } catch { toast.error('Failed to create property'); }
   }
 
+  function openEditProp(prop) {
+    setSelectedProp(prop);
+    setPropForm({ name: prop.name, caption: prop.caption, unit: prop.unit || '', valueType: prop.valueType, rangeMin: prop.rangeMin ?? '', rangeMax: prop.rangeMax ?? '', required: !!prop.required, zohoCfApiName: prop.zohoCfApiName || '' });
+    setShowEditProp(true);
+  }
+
   async function handleEditProp() {
     try {
       await axios.put(`/api/properties/${selectedProp.id}`, propForm);
@@ -132,11 +148,13 @@ export default function PropertyManagerPage() {
     } catch { toast.error('Failed to update property'); }
   }
 
-  async function handleDeleteProp() {
-    if (!selectedProp || !confirm(`Delete property "${selectedProp.name}"?`)) return;
+  async function handleDeleteProp(prop) {
+    if (!confirm(`Delete property "${prop.name}"?`)) return;
     try {
-      await axios.delete(`/api/properties/${selectedProp.id}`);
-      toast.success('Property deleted'); setSelectedProp(null); loadProperties();
+      await axios.delete(`/api/properties/${prop.id}`);
+      toast.success('Property deleted');
+      if (selectedProp?.id === prop.id) setSelectedProp(null);
+      loadProperties();
     } catch { toast.error('Failed to delete property'); }
   }
 
@@ -148,6 +166,12 @@ export default function PropertyManagerPage() {
     } catch { toast.error('Failed to create value'); }
   }
 
+  function openEditVal(val) {
+    setSelectedVal(val);
+    setValForm({ displayValue: val.displayValue, name: val.name, sku: val.sku, description: val.description || '' });
+    setShowEditVal(true);
+  }
+
   async function handleEditVal() {
     try {
       await axios.put(`/api/property-values/${selectedVal.id}`, valForm);
@@ -155,11 +179,13 @@ export default function PropertyManagerPage() {
     } catch { toast.error('Failed to update value'); }
   }
 
-  async function handleDeleteVal() {
-    if (!selectedVal || !confirm(`Delete value "${selectedVal.displayValue}"?`)) return;
+  async function handleDeleteVal(val) {
+    if (!confirm(`Delete value "${val.displayValue}"?`)) return;
     try {
-      await axios.delete(`/api/property-values/${selectedVal.id}`);
-      toast.success('Value deleted'); setSelectedVal(null); loadValues(selectedProp.id);
+      await axios.delete(`/api/property-values/${val.id}`);
+      toast.success('Value deleted');
+      if (selectedVal?.id === val.id) setSelectedVal(null);
+      loadValues(selectedProp.id);
     } catch { toast.error('Failed to delete value'); }
   }
 
@@ -192,13 +218,13 @@ export default function PropertyManagerPage() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
 
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-            <Toolbar onAdd={() => { setPropForm(emptyProp); setShowAddProp(true); }} onEdit={selectedProp ? () => { setPropForm({ name: selectedProp.name, caption: selectedProp.caption, unit: selectedProp.unit || '', valueType: selectedProp.valueType, rangeMin: selectedProp.rangeMin ?? '', rangeMax: selectedProp.rangeMax ?? '' }); setShowEditProp(true); } : undefined} onDelete={handleDeleteProp} onRefresh={loadProperties} selectedCount={selectedProp ? 1 : 0} />
+            <Toolbar onAdd={() => { setPropForm(emptyProp); setShowAddProp(true); }} onRefresh={loadProperties} />
             <div>
               {properties.length === 0 && <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No properties. Click + to add.</div>}
               {properties.map(prop => {
                 const sel = selectedProp?.id === prop.id;
                 return (
-                  <div key={prop.id} draggable onDragStart={e => e.dataTransfer.setData('propId', prop.id)} onDragOver={e => { e.preventDefault(); setDragOver(prop.id); }} onDragLeave={() => setDragOver(null)} onDrop={e => onDrop(e, prop)} onClick={() => setSelectedProp(sel ? null : prop)}
+                  <div key={prop.id} className="list-row" draggable onDragStart={e => e.dataTransfer.setData('propId', prop.id)} onDragOver={e => { e.preventDefault(); setDragOver(prop.id); }} onDragLeave={() => setDragOver(null)} onDrop={e => onDrop(e, prop)} onClick={() => setSelectedProp(sel ? null : prop)}
                     style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s', background: dragOver === prop.id ? 'var(--blue-mid)' : sel ? 'var(--blue-light)' : 'transparent', borderLeft: `3px solid ${sel ? 'var(--blue)' : 'transparent'}` }}
                     onMouseEnter={e => { if (!sel && dragOver !== prop.id) e.currentTarget.style.background = 'var(--bg-secondary)'; }}
                     onMouseLeave={e => { if (!sel && dragOver !== prop.id) e.currentTarget.style.background = 'transparent'; }}
@@ -210,11 +236,26 @@ export default function PropertyManagerPage() {
                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="18" y2="18"/></svg>
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 500 }}>{prop.name}</div>
+                      <div style={{ fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {prop.name}
+                        {prop.required && <span style={{ fontSize: 9, fontWeight: 700, color: '#e11d48', background: '#fef2f2', border: '1px solid #fecdd3', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>REQUIRED</span>}
+                      </div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{prop.caption}{prop.unit ? ` · ${prop.unit}` : ''}</div>
                     </div>
                     <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, flexShrink: 0, background: prop.valueType === 'Range' ? 'var(--orange-light)' : 'var(--bg-secondary)', color: prop.valueType === 'Range' ? 'var(--orange)' : 'var(--text-secondary)', border: `1px solid ${prop.valueType === 'Range' ? 'var(--orange-border)' : 'var(--border)'}` }}>{prop.valueType}</span>
                     <span style={{ fontSize: 11, color: 'var(--text-muted)', background: 'var(--bg-secondary)', borderRadius: 10, padding: '1px 7px', flexShrink: 0 }}>#{prop.skuPosition}</span>
+                    <div className="row-actions" style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                      <button
+                        title={`Edit ${prop.name}`}
+                        onClick={e => { e.stopPropagation(); openEditProp(prop); }}
+                        style={{ width: 28, height: 28, border: '1px solid var(--border)', background: 'var(--bg-card)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}
+                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--border)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-card)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                      </button>
+                      <RowDeleteButton onDelete={() => handleDeleteProp(prop)} title={`Delete ${prop.name}`} />
+                    </div>
                   </div>
                 );
               })}
@@ -222,26 +263,28 @@ export default function PropertyManagerPage() {
           </div>
 
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-            <Toolbar onAdd={selectedProp ? () => { setValForm(emptyVal); setShowAddVal(true); } : undefined} onEdit={selectedVal ? () => { setValForm({ displayValue: selectedVal.displayValue, name: selectedVal.name, sku: selectedVal.sku, description: selectedVal.description || '' }); setShowEditVal(true); } : undefined} onDelete={handleDeleteVal} onRefresh={selectedProp ? () => loadValues(selectedProp.id) : undefined} selectedCount={selectedVal ? 1 : 0} />
+            <Toolbar onAdd={selectedProp ? () => { setValForm(emptyVal); setShowAddVal(true); } : undefined} onRefresh={selectedProp ? () => loadValues(selectedProp.id) : undefined} />
             {!selectedProp ? (
               <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Select a property to view its values</div>
             ) : (
               <>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                  <thead><tr><th style={thStyle}>Display Value</th><th style={thStyle}>Name</th><th style={thStyle}>SKU Code</th></tr></thead>
+                  <thead><tr><th style={thStyle}>Display Value</th><th style={thStyle}>Name</th><th style={thStyle}>SKU Code</th><th style={{ ...thStyle, width: 48 }}></th></tr></thead>
                   <tbody>
-                    {values.length === 0 && <tr><td colSpan={3} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>No values. Click + to add.</td></tr>}
+                    {values.length === 0 && <tr><td colSpan={4} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>No values. Click + to add.</td></tr>}
                     {values.map(val => {
-                      const sel = selectedVal?.id === val.id;
                       return (
-                        <tr key={val.id} onClick={() => setSelectedVal(sel ? null : val)}
-                          style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', background: sel ? 'var(--blue-light)' : 'transparent', borderLeft: `3px solid ${sel ? 'var(--blue)' : 'transparent'}`, transition: 'background 0.1s' }}
-                          onMouseEnter={e => { if (!sel) e.currentTarget.style.background = 'var(--bg-secondary)'; }}
-                          onMouseLeave={e => { if (!sel) e.currentTarget.style.background = 'transparent'; }}
+                        <tr key={val.id} onClick={() => openEditVal(val)} title="Click to edit"
+                          style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                         >
                           <td style={{ padding: '10px 16px' }}>{val.displayValue}</td>
                           <td style={{ padding: '10px 16px', color: 'var(--text-secondary)' }}>{val.name}</td>
                           <td style={{ padding: '10px 16px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--blue)' }}>{val.sku}</td>
+                          <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
+                            <RowDeleteButton onDelete={() => handleDeleteVal(val)} title={`Delete ${val.displayValue}`} />
+                          </td>
                         </tr>
                       );
                     })}

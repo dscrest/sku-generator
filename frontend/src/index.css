@@ -80,3 +80,11 @@ body {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* Row hover actions: per-row action buttons (e.g. delete) revealed on row hover.
+   Applied to table rows and div-based list rows that carry .list-row. */
+.row-actions { opacity: 0; transition: opacity 0.1s ease; }
+tr:hover .row-actions,
+.list-row:hover .row-actions,
+.row-actions:focus-within { opacity: 1; }
+@media (hover: none) { .row-actions { opacity: 1; } }

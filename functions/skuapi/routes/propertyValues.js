@@ -1,6 +1,6 @@
 "use strict";
 const express = require("express");
-const { rowList, out, idOk } = require("../store");
+const { rowList, out, idOk, orgClause, ownsRow } = require("../store");
 
 const router = express.Router();
 const TABLE = "PropertyValue";
@@ -11,7 +11,7 @@ router.get("/properties/:id/values", async (req, res) => {
   try {
     const rows = rowList(
       await req.catalyst.zcql().executeZCQLQuery(
-        `SELECT * FROM ${TABLE} WHERE propertyId = ${propertyId} ORDER BY displayValue`,
+        `SELECT * FROM ${TABLE} WHERE propertyId = ${propertyId} AND ${orgClause(req.catalyst)} ORDER BY displayValue`,
       ),
     );
     res.json(rows.map(out));
@@ -26,6 +26,7 @@ router.post("/property-values", async (req, res) => {
     return res.status(400).json({ error: "displayValue, name, sku, propertyId are required" });
   }
   if (!idOk(propertyId)) return res.status(400).json({ error: "Invalid propertyId" });
+  if (!(await ownsRow(req.catalyst, "Property", propertyId))) return res.status(404).json({ error: "Property not found" });
   try {
     const row = await req.catalyst.datastore().table(TABLE).insertRow({
       displayValue,
@@ -33,6 +34,7 @@ router.post("/property-values", async (req, res) => {
       sku,
       description: description || null,
       propertyId: String(propertyId),
+      orgId: req.orgId,
     });
     res.status(201).json(out(row));
   } catch (err) {
@@ -43,6 +45,7 @@ router.post("/property-values", async (req, res) => {
 router.put("/property-values/:id", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
+  if (!(await ownsRow(req.catalyst, TABLE, id))) return res.status(404).json({ error: "Not found" });
   const { displayValue, name, sku, description } = req.body;
   const data = { ROWID: id };
   if (displayValue) data.displayValue = displayValue;
@@ -60,6 +63,7 @@ router.put("/property-values/:id", async (req, res) => {
 router.delete("/property-values/:id", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
+  if (!(await ownsRow(req.catalyst, TABLE, id))) return res.status(404).json({ error: "Not found" });
   try {
     await req.catalyst.datastore().table(TABLE).deleteRow(id);
     res.status(204).end();

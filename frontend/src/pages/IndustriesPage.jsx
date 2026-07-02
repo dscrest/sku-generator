@@ -4,6 +4,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
 import Modal, { ModalFooter, ModalBtn } from '../components/Modal.jsx';
+import RowDeleteButton from '../components/RowDeleteButton.jsx';
 
 const inputStyle = {
   width: '100%', background: 'var(--bg-secondary)', border: '1px solid var(--border)',
@@ -59,6 +60,12 @@ export default function IndustriesPage() {
     } catch { toast.error('Failed to create industry'); }
   }
 
+  function openEdit(ind) {
+    setSelected(ind);
+    setForm({ name: ind.name, skuSeparator: ind.skuSeparator });
+    setShowEdit(true);
+  }
+
   async function handleEdit() {
     try {
       await axios.put(`/api/industries/${selected.id}`, form);
@@ -67,12 +74,11 @@ export default function IndustriesPage() {
     } catch { toast.error('Failed to update industry'); }
   }
 
-  async function handleDelete() {
-    if (!selected) return;
-    if (!confirm(`Delete "${selected.name}"?`)) return;
+  async function handleDelete(ind) {
+    if (!confirm(`Delete "${ind.name}"?`)) return;
     try {
-      await axios.delete(`/api/industries/${selected.id}`);
-      toast.success('Industry deleted'); setSelected(null); load();
+      await axios.delete(`/api/industries/${ind.id}`);
+      toast.success('Industry deleted'); load();
     } catch { toast.error('Failed to delete industry'); }
   }
 
@@ -101,10 +107,7 @@ export default function IndustriesPage() {
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
           <Toolbar
             onAdd={() => { setForm({ name: '', skuSeparator: '' }); setShowAdd(true); }}
-            onEdit={selected ? () => { setForm({ name: selected.name, skuSeparator: selected.skuSeparator }); setShowEdit(true); } : undefined}
-            onDelete={handleDelete}
             onRefresh={load}
-            selectedCount={selected ? 1 : 0}
           />
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -112,29 +115,35 @@ export default function IndustriesPage() {
                 <th style={{ ...thStyle, width: 60 }} onClick={() => toggleSort('id')}>ID <SortArrow col="id" /></th>
                 <th style={thStyle} onClick={() => toggleSort('name')}>Name <SortArrow col="name" /></th>
                 <th style={thStyle} onClick={() => toggleSort('skuSeparator')}>SKU Separator <SortArrow col="skuSeparator" /></th>
+                <th style={{ ...thStyle, width: 48 }}></th>
               </tr>
             </thead>
             <tbody>
               {sorted.length === 0 && (
-                <tr><td colSpan={3} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No industries yet. Click + to add.</td></tr>
+                <tr><td colSpan={4} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No industries yet. Click + to add.</td></tr>
               )}
               {sorted.map(ind => {
-                const sel = selected?.id === ind.id;
                 return (
                   <tr
                     key={ind.id}
-                    onClick={() => setSelected(sel ? null : ind)}
-                    onDoubleClick={() => navigate(`/admin/industries/${ind.id}/properties`)}
-                    style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', background: sel ? 'var(--blue-light)' : 'transparent', borderLeft: `3px solid ${sel ? 'var(--blue)' : 'transparent'}`, transition: 'background 0.1s' }}
-                    onMouseEnter={e => { if (!sel) e.currentTarget.style.background = 'var(--bg-secondary)'; }}
-                    onMouseLeave={e => { if (!sel) e.currentTarget.style.background = 'transparent'; }}
+                    onClick={() => openEdit(ind)}
+                    title="Click to edit"
+                    style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                   >
                     <td style={{ padding: '10px 16px', color: 'var(--text-muted)', fontSize: 12 }}>{ind.id}</td>
-                    <td style={{ padding: '10px 16px', fontWeight: 500, color: 'var(--blue)', cursor: 'pointer' }}
-                      onClick={e => { e.stopPropagation(); navigate(`/admin/industries/${ind.id}/properties`); }}>
-                      {ind.name}
+                    <td style={{ padding: '10px 16px', fontWeight: 500 }}>
+                      <a
+                        onClick={e => { e.stopPropagation(); navigate(`/admin/industries/${ind.id}/properties`); }}
+                        style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'none' }}
+                        title="Open properties"
+                      >{ind.name} ›</a>
                     </td>
                     <td style={{ padding: '10px 16px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>"{ind.skuSeparator}"</td>
+                    <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
+                      <RowDeleteButton onDelete={() => handleDelete(ind)} title={`Delete ${ind.name}`} />
+                    </td>
                   </tr>
                 );
               })}
