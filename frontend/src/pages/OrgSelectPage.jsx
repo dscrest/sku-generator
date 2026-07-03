@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-export default function OrgSelectPage({ onSelected }) {
+export default function OrgSelectPage({ onSelected, onCancel }) {
   const [orgs, setOrgs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(null);
@@ -55,6 +55,17 @@ export default function OrgSelectPage({ onSelected }) {
               <OrgButton key={org.organization_id} org={org} saving={saving} onSelect={selectOrg} />
             ))}
           </div>
+          {onCancel && (
+            <button
+              onClick={onCancel}
+              style={{
+                width: '100%', marginTop: 16, padding: '9px 0', background: 'transparent',
+                border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--text-muted)',
+              }}
+            >
+              Cancel
+            </button>
+          )}
         </Card>
       </Centered>
     );

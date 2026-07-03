@@ -52,7 +52,7 @@ function navItemStyle({ isActive }, collapsed) {
   };
 }
 
-function OrgBadge({ orgName, orgId, onLogout }) {
+function OrgBadge({ orgName, orgId, onLogout, onSwitchOrg }) {
   const [hover, setHover] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -101,6 +101,25 @@ function OrgBadge({ orgName, orgId, onLogout }) {
           </div>
         )}
       </div>
+      {onSwitchOrg && (
+        <button
+          onClick={onSwitchOrg}
+          style={{
+            width: '100%', marginTop: 6, padding: '7px 10px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            background: 'transparent', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-md)', cursor: 'pointer',
+            fontSize: 12, color: 'var(--text-muted)', transition: 'all 0.12s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--blue)'; e.currentTarget.style.color = 'var(--blue)'; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+          </svg>
+          Switch organization
+        </button>
+      )}
       <button
         onClick={handleLogout}
         disabled={loggingOut}
@@ -132,7 +151,7 @@ const NAV_LINKS = [
   { to: '/admin/properties', label: 'Properties', icon: <><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="18" y2="18"/></> },
 ];
 
-function Sidebar({ zoho, onLogout }) {
+function Sidebar({ zoho, onLogout, onSwitchOrg }) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === '1');
   // Logo file is dropped by the user at frontend/public/octfis-logo.png; until
   // then (or if it 404s) fall back to the original "SK" mark.
@@ -191,7 +210,7 @@ function Sidebar({ zoho, onLogout }) {
       </nav>
       {!collapsed && <div style={S.footer}>
         {(zoho?.connected && zoho?.orgId ? (
-          <OrgBadge orgName={zoho.orgName} orgId={zoho.orgId} onLogout={onLogout} />
+          <OrgBadge orgName={zoho.orgName} orgId={zoho.orgId} onLogout={onLogout} onSwitchOrg={onSwitchOrg} />
         ) : (
           <>
             <div style={{
@@ -223,6 +242,7 @@ function AppShell({ user, refreshUser, onLogout }) {
   const params = new URLSearchParams(location.search);
   const zohoParam = params.get('zoho');
   const errorParam = params.get('error');
+  const [switchOrg, setSwitchOrg] = useState(false);
 
   // After the OAuth redirect (?zoho=connected|select_org) re-pull the user so
   // zohoConnected / orgId reflect the just-linked account.
@@ -234,15 +254,24 @@ function AppShell({ user, refreshUser, onLogout }) {
     return <ZohoConnectPage error={errorParam} />;
   }
 
-  if (!user.orgId) {
-    return <OrgSelectPage onSelected={refreshUser} />;
+  // Org picker: forced on first login (no org yet), or on demand via "Switch
+  // organization". Cancel is only offered once an org is already selected.
+  if (!user.orgId || switchOrg) {
+    return (
+      <OrgSelectPage
+        onSelected={() => { setSwitchOrg(false); refreshUser(); }}
+        onCancel={user.orgId ? () => setSwitchOrg(false) : null}
+      />
+    );
   }
 
   const zoho = { connected: true, orgId: user.orgId, orgName: user.orgName };
   return (
     <>
-      <Sidebar zoho={zoho} onLogout={onLogout} />
-      <div style={S.main}>
+      <Sidebar zoho={zoho} onLogout={onLogout} onSwitchOrg={() => setSwitchOrg(true)} />
+      {/* key on orgId: switching org remounts the pages so they refetch the new
+          org's catalog instead of showing the previous org's data. */}
+      <div style={S.main} key={user.orgId}>
         <Routes>
           <Route path="/" element={<Navigate to="/sku-generator" replace />} />
           <Route path="/admin/industries" element={<IndustriesPage />} />

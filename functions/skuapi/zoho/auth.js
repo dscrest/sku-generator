@@ -13,12 +13,13 @@ const CLIENT_ID = process.env.ZOHO_CLIENT_ID;
 const CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET;
 const REDIRECT_URI = process.env.ZOHO_REDIRECT_URI || "http://localhost:3001/auth/zoho/callback";
 
-// profile.READ → Sign-in-with-Zoho identity; the rest are the data apps we sync.
+// Only what the app uses: Books (all sync) + profile.READ (identity for
+// Sign-in-with-Zoho — silent, no consent popup). CRM and Inventory omitted;
+// re-add "ZohoCRM.modules.ALL" / "ZohoInventory.fullaccess.all" here if/when
+// that sync is actually built.
 const SCOPES = [
   "AaaServer.profile.READ",
   "ZohoBooks.fullaccess.all",
-  "ZohoInventory.fullaccess.all",
-  "ZohoCRM.modules.ALL",
 ].join(",");
 
 function isConfigured() {
