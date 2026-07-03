@@ -209,7 +209,7 @@ export default function PropertyManagerPage() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', padding: '0 24px', height: 56, display: 'flex', alignItems: 'center', flexShrink: 0, gap: 8 }}>
-        <Link to="/admin/industries" style={{ fontSize: 13, color: 'var(--blue)', textDecoration: 'none', fontWeight: 500 }}>Industries</Link>
+        <Link to="/sku/industries" style={{ fontSize: 13, color: 'var(--blue)', textDecoration: 'none', fontWeight: 500 }}>Industries</Link>
         <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>/</span>
         <span style={{ fontSize: 15, fontWeight: 600 }}>{industryName || '…'} — Properties</span>
       </div>

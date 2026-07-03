@@ -101,6 +101,28 @@ function requireAuth(req, res, next) {
   next();
 }
 
+// ---- super-admin (OCTFIS staff) ----
+// ponytail: ADMIN_EMAILS env allowlist; move to an AppUser role column when
+// admins need self-service management.
+const ADMIN_EMAILS = new Set(
+  (process.env.ADMIN_EMAILS || "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean),
+);
+
+function isAdmin(email) {
+  return Boolean(email) && ADMIN_EMAILS.has(String(email).toLowerCase());
+}
+
+// Requires requireAuth upstream (req.userId set).
+async function requireAdmin(req, res, next) {
+  try {
+    const user = await getUserById(req.catalyst, req.userId);
+    if (!user || !isAdmin(user.email)) return res.status(403).json({ error: "Admin only" });
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
 // ---- AppUser Data Store helpers ----
 async function findUserByEmail(catalyst, email) {
   const rows = rowList(
@@ -132,6 +154,8 @@ module.exports = {
   hashPassword,
   verifyPassword,
   requireAuth,
+  requireAdmin,
+  isAdmin,
   currentUserId,
   setSessionCookie,
   clearSessionCookie,

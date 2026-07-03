@@ -43,7 +43,8 @@ app.use("/auth/zoho", require("./routes/zohoAuth"));
 // req.catalyst.__userId so per-user Zoho tokens resolve downstream) AND a
 // selected Zoho org — the catalog is shared per org, so req.orgId /
 // req.catalyst.__orgId scope every data query to that tenant.
-const { requireAuth } = require("./session");
+const { requireAuth, requireAdmin } = require("./session");
+const { requireAddon } = require("./addons");
 const { loadToken } = require("./zoho/auth");
 async function requireOrg(req, res, next) {
   try {
@@ -59,11 +60,37 @@ async function requireOrg(req, res, next) {
 }
 app.use("/api", requireAuth, requireOrg);
 
-app.use("/api/industries", require("./routes/industries"));
-app.use("/api", require("./routes/properties"));
-app.use("/api", require("./routes/propertyValues"));
-app.use("/api/sku", require("./routes/sku"));
-app.use("/api/sku-items", require("./routes/skuItems"));
+// Super-admin (OCTFIS staff): entitlement management. Spans orgs, so it sits
+// outside the /api requireOrg chain.
+app.use("/admin", requireAuth, requireAdmin, require("./routes/admin"));
+
+// Reserve add-on. Mounted BEFORE the bare "/api" mounts below: their
+// requireAddon("sku-generator") middleware runs on any /api path that reaches
+// it, so reserve must claim its requests first.
+app.use("/api/reserve", requireAddon("reserve"), require("./routes/reserve"));
+
+// SKU generator add-on — everything below is gated per-org.
+const skuGen = requireAddon("sku-generator");
+app.use("/api/industries", skuGen, require("./routes/industries"));
+app.use("/api", skuGen, require("./routes/properties"));
+app.use("/api", skuGen, require("./routes/propertyValues"));
+app.use("/api/sku", skuGen, require("./routes/sku"));
+app.use("/api/sku-items", skuGen, require("./routes/skuItems"));
+
+// Cron entry (Catalyst URL-type cron, Phase 4): refresh stock snapshots for
+// every org with reserve enabled. Shared-secret guarded — no user session.
+app.post("/internal/sync-stock", async (req, res) => {
+  if (!process.env.SYNC_SECRET || req.get("X-Sync-Secret") !== process.env.SYNC_SECRET) {
+    return res.status(401).json({ error: "unauthorized" });
+  }
+  try {
+    const result = await require("./reserve/sync").syncAllOrgs(req.catalyst);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error(err && (err.stack || err.message));
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.use((err, _req, res, _next) => {
   console.error(err && (err.stack || err.message || err));

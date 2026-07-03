@@ -366,7 +366,7 @@ export default function SKUItemsPage() {
       </div>
 
       {/* Pagination footer — page-level, pinned below the scroll area (never moves or resizes) */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 24px', borderTop: '1px solid var(--border)', background: 'var(--bg-card)', flexShrink: 0 }}>
+      <div style={{ height: 44, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', borderTop: '1px solid var(--border)', background: 'var(--bg-card)', flexShrink: 0 }}>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
           {total === 0 ? 'No records' : `Showing ${curPage * pageSize + 1}–${Math.min((curPage + 1) * pageSize, total)} of ${total} record${total !== 1 ? 's' : ''}`}
         </span>

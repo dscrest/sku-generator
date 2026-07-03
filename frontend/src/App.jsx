@@ -1,12 +1,15 @@
-import { HashRouter, Routes, Route, Navigate, NavLink, useLocation } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, NavLink, useLocation, useParams } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import IndustriesPage from './pages/IndustriesPage.jsx';
 import PropertyManagerPage from './pages/PropertyManagerPage.jsx';
+import PropertiesPage from './pages/PropertiesPage.jsx';
 import SKUGeneratorPage from './pages/SKUGeneratorPage.jsx';
 import SKUItemsPage from './pages/SKUItemsPage.jsx';
 import ZohoConnectPage from './pages/ZohoConnectPage.jsx';
 import OrgSelectPage from './pages/OrgSelectPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
+import AddonAdminPage from './pages/AddonAdminPage.jsx';
+import ReservePage from './pages/ReservePage.jsx';
 
 const API = '/server/skuapi';
 
@@ -35,8 +38,14 @@ const S = {
     fontSize: 10, fontWeight: 600, color: 'var(--text-muted)',
     letterSpacing: '0.08em', textTransform: 'uppercase', padding: '10px 10px 5px',
   },
-  footer: { padding: '14px 16px', borderTop: '1px solid var(--border)' },
+  // Same 44px as GridFooter so the two bottom bars share one line across the app.
+  footer: { height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', borderTop: '1px solid var(--border)' },
   main: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 },
+  header: {
+    height: 52, flexShrink: 0, display: 'flex', alignItems: 'center',
+    justifyContent: 'flex-end', gap: 8, padding: '0 20px',
+    background: 'var(--bg-card)', borderBottom: '1px solid var(--border)',
+  },
 };
 
 function navItemStyle({ isActive }, collapsed) {
@@ -52,9 +61,13 @@ function navItemStyle({ isActive }, collapsed) {
   };
 }
 
-function OrgBadge({ orgName, orgId, onLogout, onSwitchOrg }) {
-  const [hover, setHover] = useState(false);
+// Account menu (top-right): org avatar + name + chevron → dropdown with org
+// details, switch-org and logout.
+function HeaderBar({ zoho, onLogout, onSwitchOrg }) {
+  const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const orgName = zoho.orgName || 'Zoho Books';
+  const initials = orgName.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -62,96 +75,151 @@ function OrgBadge({ orgName, orgId, onLogout, onSwitchOrg }) {
     onLogout();
   }
 
+  const menuItem = {
+    display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+    padding: '8px 12px', background: 'transparent', border: 'none',
+    borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 13,
+    color: 'var(--text-secondary)', textAlign: 'left',
+  };
+
   return (
-    <div>
-      <div onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} style={{ position: 'relative' }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
-          borderRadius: 'var(--radius-md)', background: hover ? 'var(--bg-secondary)' : 'transparent',
-          cursor: 'default', transition: 'background 0.12s',
-        }}>
-          <div style={{
-            width: 8, height: 8, borderRadius: '50%', background: '#16a34a', flexShrink: 0,
-            boxShadow: '0 0 0 2px #dcfce7',
-          }} />
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{
-              fontSize: 12, fontWeight: 600, color: 'var(--text-primary)',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}>{orgName || 'Zoho Books'}</div>
-            <div style={{
-              fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}>{orgId ? `ID: ${orgId}` : 'Connected'}</div>
-          </div>
-          <div style={{
-            width: 22, height: 22, borderRadius: 4, background: '#e84c3d', flexShrink: 0,
+    <header style={S.header}>
+      <div style={{ position: 'relative' }}>
+        <button
+          onClick={() => setOpen(o => !o)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px',
+            background: open ? 'var(--bg-secondary)' : 'transparent', border: 'none',
+            borderRadius: 'var(--radius-md)', cursor: 'pointer', transition: 'background 0.12s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+          onMouseLeave={e => { if (!open) e.currentTarget.style.background = 'transparent'; }}
+        >
+          <span style={{
+            width: 26, height: 26, borderRadius: '50%', background: 'var(--blue)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff', fontSize: 11, fontWeight: 700,
-          }}>Z</div>
-        </div>
-        {hover && orgId && (
-          <div style={{
-            position: 'absolute', bottom: '110%', left: 0, right: 0,
-            background: '#0f172a', color: '#fff', borderRadius: 'var(--radius-md)',
-            padding: '8px 10px', fontSize: 11, zIndex: 100, boxShadow: 'var(--shadow-lg)',
-          }}>
-            <div style={{ fontWeight: 600, marginBottom: 3 }}>{orgName}</div>
-            <div style={{ fontFamily: 'var(--font-mono)', opacity: 0.7, fontSize: 10 }}>Org ID: {orgId}</div>
-          </div>
+            color: '#fff', fontSize: 10, fontWeight: 700, letterSpacing: '0.02em', flexShrink: 0,
+          }}>{initials}</span>
+          <span style={{
+            fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', maxWidth: 200,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>{orgName}</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+            style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </button>
+
+        {open && (
+          <>
+            <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 90 }} />
+            <div style={{
+              position: 'absolute', top: 'calc(100% + 6px)', right: 0, width: 248, zIndex: 100,
+              background: 'var(--bg-card)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)', padding: 6,
+            }}>
+              <div style={{ padding: '10px 12px 8px' }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {orgName}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#16a34a', flexShrink: 0 }} />
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    Zoho Books · <span style={{ fontFamily: 'var(--font-mono)' }}>{zoho.orgId}</span>
+                  </span>
+                </div>
+              </div>
+              <div style={{ height: 1, background: 'var(--border)', margin: '2px 6px 6px' }} />
+              <button
+                style={menuItem}
+                onClick={() => { setOpen(false); onSwitchOrg(); }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                </svg>
+                Switch organization
+              </button>
+              <button
+                style={{ ...menuItem, cursor: loggingOut ? 'wait' : 'pointer' }}
+                disabled={loggingOut}
+                onClick={handleLogout}
+                onMouseEnter={e => { e.currentTarget.style.background = '#fee2e2'; e.currentTarget.style.color = '#dc2626'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
+                </svg>
+                {loggingOut ? 'Logging out…' : 'Log out'}
+              </button>
+            </div>
+          </>
         )}
       </div>
-      {onSwitchOrg && (
-        <button
-          onClick={onSwitchOrg}
-          style={{
-            width: '100%', marginTop: 6, padding: '7px 10px',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            background: 'transparent', border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-md)', cursor: 'pointer',
-            fontSize: 12, color: 'var(--text-muted)', transition: 'all 0.12s',
-          }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--blue)'; e.currentTarget.style.color = 'var(--blue)'; }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-          </svg>
-          Switch organization
-        </button>
-      )}
-      <button
-        onClick={handleLogout}
-        disabled={loggingOut}
-        style={{
-          width: '100%', marginTop: 6, padding: '7px 10px',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-          background: 'transparent', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius-md)', cursor: loggingOut ? 'not-allowed' : 'pointer',
-          fontSize: 12, color: 'var(--text-muted)', transition: 'all 0.12s',
-        }}
-        onMouseEnter={e => { e.currentTarget.style.borderColor = '#e84c3d'; e.currentTarget.style.color = '#e84c3d'; }}
-        onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
-      >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-          <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
-        </svg>
-        {loggingOut ? 'Logging out…' : 'Logout'}
-      </button>
+    </header>
+  );
+}
+
+// Left nav = one entry per add-on. Future add-ons (reserve, cheque-printing,
+// label-printing) are new entries here; visibility is filtered by the org's
+// enabled addons from /auth/me.
+const NAV_LINKS = [
+  { section: 'Add-ons' },
+  { to: '/sku/generator', match: '/sku', addon: 'sku-generator', label: 'SKU Generator', icon: <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17h7M17 14v7"/></> },
+  { to: '/reserve', addon: 'reserve', label: 'Reserve / De-reserve', icon: <><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></> },
+  // OCTFIS super-admin only (user.isAdmin)
+  { section: 'Admin', adminOnly: true },
+  { to: '/admin/addons', adminOnly: true, label: 'Customer add-ons', icon: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></> },
+];
+
+const SKU_TABS = [
+  { to: '/sku/generator', label: 'SKU Generator' },
+  { to: '/sku/items', label: 'SKU Items' },
+  { to: '/sku/industries', label: 'Industries', end: true },
+  { to: '/sku/properties', label: 'Properties' },
+];
+
+function TabBar({ tabs }) {
+  return (
+    <div style={{
+      display: 'flex', gap: 2, padding: '0 20px', flexShrink: 0,
+      background: 'var(--bg-card)', borderBottom: '1px solid var(--border)',
+    }}>
+      {tabs.map(t => (
+        <NavLink key={t.to} to={t.to} end={t.end} style={({ isActive }) => ({
+          padding: '10px 14px', fontSize: 13, textDecoration: 'none',
+          color: isActive ? 'var(--blue)' : 'var(--text-secondary)',
+          fontWeight: isActive ? 500 : 400,
+          borderBottom: isActive ? '2px solid var(--blue)' : '2px solid transparent',
+        })}>
+          {t.label}
+        </NavLink>
+      ))}
     </div>
   );
 }
 
-const NAV_LINKS = [
-  { section: 'Generate' },
-  { to: '/sku-generator', label: 'SKU Generator', icon: <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17h7M17 14v7"/></> },
-  { to: '/sku-items', label: 'SKU Items', icon: <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/> },
-  { section: 'Admin' },
-  { to: '/admin/industries', label: 'Industries', end: true, icon: <><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9,22 9,12 15,12 15,22"/></> },
-  { to: '/admin/properties', label: 'Properties', icon: <><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="14" y2="12"/><line x1="4" y1="18" x2="18" y2="18"/></> },
-];
+function SkuLayout() {
+  return (
+    <>
+      <TabBar tabs={SKU_TABS} />
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <Routes>
+          <Route path="generator" element={<SKUGeneratorPage />} />
+          <Route path="items" element={<SKUItemsPage />} />
+          <Route path="industries" element={<IndustriesPage />} />
+          <Route path="industries/:id/properties" element={<PropertyManagerPage />} />
+          <Route path="properties" element={<PropertiesPage />} />
+          <Route path="*" element={<Navigate to="generator" replace />} />
+        </Routes>
+      </div>
+    </>
+  );
+}
 
-function Sidebar({ zoho, onLogout, onSwitchOrg }) {
+function Sidebar({ addons, isAdmin }) {
+  const { pathname } = useLocation();
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === '1');
   // Logo file is dropped by the user at frontend/public/octfis-logo.png; until
   // then (or if it 404s) fall back to the original "SK" mark.
@@ -199,37 +267,21 @@ function Sidebar({ zoho, onLogout, onSwitchOrg }) {
         {toggleBtn}
       </div>
       <nav style={S.nav}>
-        {NAV_LINKS.map((l, i) => l.section ? (
-          !collapsed && <div key={i} style={{ ...S.navLabel, marginTop: i ? 8 : 0 }}>{l.section}</div>
-        ) : (
-          <NavLink key={l.to} to={l.to} end={l.end} title={l.label} style={s => navItemStyle(s, collapsed)}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>{l.icon}</svg>
-            {!collapsed && l.label}
-          </NavLink>
-        ))}
+        {NAV_LINKS
+          .filter(l => (!l.adminOnly || isAdmin) && (l.section || !l.addon || addons.includes(l.addon)))
+          .map((l, i) => l.section ? (
+            !collapsed && <div key={i} style={{ ...S.navLabel, marginTop: i ? 8 : 0 }}>{l.section}</div>
+          ) : (
+            // Active on the whole add-on's path prefix (tabs live below it)
+            <NavLink key={l.to} to={l.to} title={l.label}
+              style={() => navItemStyle({ isActive: pathname.startsWith(l.match || l.to) }, collapsed)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>{l.icon}</svg>
+              {!collapsed && l.label}
+            </NavLink>
+          ))}
       </nav>
       {!collapsed && <div style={S.footer}>
-        {(zoho?.connected && zoho?.orgId ? (
-          <OrgBadge orgName={zoho.orgName} orgId={zoho.orgId} onLogout={onLogout} onSwitchOrg={onSwitchOrg} />
-        ) : (
-          <>
-            <div style={{
-              fontSize: 10, fontWeight: 600, color: 'var(--text-muted)',
-              letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8,
-            }}>SKU Field Tags</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-              {['##Property##', '##Caption##', '##Unit##'].map(tag => (
-                <span key={tag} style={{
-                  display: 'inline-flex', alignItems: 'center',
-                  background: 'var(--blue-light)', color: 'var(--blue)',
-                  border: '1px solid var(--blue-border)', borderRadius: 20,
-                  fontSize: 10, fontWeight: 500, padding: '2px 8px', fontFamily: 'var(--font-mono)',
-                }}>{tag}</span>
-              ))}
-            </div>
-          </>
-        ))}
-        <div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'center', marginTop: 10, whiteSpace: 'nowrap' }}>
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           Powered by OCTFIS Techno LLP
         </div>
       </div>}
@@ -266,23 +318,43 @@ function AppShell({ user, refreshUser, onLogout }) {
   }
 
   const zoho = { connected: true, orgId: user.orgId, orgName: user.orgName };
+  const addons = user.addons ?? ['sku-generator']; // until /auth/me sends addons
   return (
     <>
-      <Sidebar zoho={zoho} onLogout={onLogout} onSwitchOrg={() => setSwitchOrg(true)} />
+      <Sidebar addons={addons} isAdmin={user.isAdmin} />
       {/* key on orgId: switching org remounts the pages so they refetch the new
           org's catalog instead of showing the previous org's data. */}
       <div style={S.main} key={user.orgId}>
+        <HeaderBar zoho={zoho} onLogout={onLogout} onSwitchOrg={() => setSwitchOrg(true)} />
         <Routes>
-          <Route path="/" element={<Navigate to="/sku-generator" replace />} />
-          <Route path="/admin/industries" element={<IndustriesPage />} />
-          <Route path="/admin/industries/:id/properties" element={<PropertyManagerPage />} />
-          <Route path="/admin/properties" element={<IndustriesPage />} />
-          <Route path="/sku-generator" element={<SKUGeneratorPage />} />
-          <Route path="/sku-items" element={<SKUItemsPage />} />
+          <Route path="/" element={<Navigate to="/sku/generator" replace />} />
+          <Route path="/sku/*" element={<SkuLayout />} />
+          {/* Deep link from Zoho Books custom button: /app/#/reserve?soId=… ;
+              backend 403s if the addon is off — the page shows a clear notice. */}
+          <Route path="/reserve" element={<ReservePage />} />
+          {user.isAdmin && <Route path="/admin/addons" element={<AddonAdminPage />} />}
+          {/* legacy paths (old bookmarks, OAuth redirects) */}
+          <Route path="/sku-generator" element={<LegacyGeneratorRedirect />} />
+          <Route path="/sku-items" element={<Navigate to="/sku/items" replace />} />
+          <Route path="/admin/industries" element={<Navigate to="/sku/industries" replace />} />
+          <Route path="/admin/properties" element={<Navigate to="/sku/properties" replace />} />
+          <Route path="/admin/industries/:id/properties" element={<LegacyPropertiesRedirect />} />
+          <Route path="*" element={<Navigate to="/sku/generator" replace />} />
         </Routes>
       </div>
     </>
   );
+}
+
+function LegacyPropertiesRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/sku/industries/${id}/properties`} replace />;
+}
+
+// Keeps ?industry=…&p<id>=… from old copied permalinks
+function LegacyGeneratorRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={`/sku/generator${search}`} replace />;
 }
 
 export default function App() {

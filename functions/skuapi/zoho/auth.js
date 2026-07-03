@@ -13,13 +13,16 @@ const CLIENT_ID = process.env.ZOHO_CLIENT_ID;
 const CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET;
 const REDIRECT_URI = process.env.ZOHO_REDIRECT_URI || "http://localhost:3001/auth/zoho/callback";
 
-// Only what the app uses: Books (all sync) + profile.READ (identity for
-// Sign-in-with-Zoho — silent, no consent popup). CRM and Inventory omitted;
-// re-add "ZohoCRM.modules.ALL" / "ZohoInventory.fullaccess.all" here if/when
-// that sync is actually built.
+// Books (all sync) + Inventory (reserve add-on: composite items, warehouses,
+// stock) + profile.READ (identity for Sign-in-with-Zoho). CRM omitted; re-add
+// "ZohoCRM.modules.ALL" if/when that sync is actually built.
+// NB: tokens granted before Inventory was added lack that scope — Inventory
+// calls fail until the user re-authorizes (reserve endpoints surface this as
+// 409 reauth_required; Books-only flows keep working).
 const SCOPES = [
   "AaaServer.profile.READ",
   "ZohoBooks.fullaccess.all",
+  "ZohoInventory.fullaccess.all",
 ].join(",");
 
 function isConfigured() {
@@ -156,6 +159,7 @@ async function saveOrg(catalyst, userId, orgId, orgName) {
 
 module.exports = {
   isConfigured,
+  dsDate,
   getAuthUrl,
   exchangeCode,
   saveToken,

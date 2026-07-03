@@ -20,6 +20,23 @@ router.get("/industries/:id/properties", async (req, res) => {
   }
 });
 
+// All properties of the org (the Properties tab grid), with industry names.
+router.get("/properties", async (req, res) => {
+  try {
+    const zcql = req.catalyst.zcql();
+    const props = rowList(
+      await zcql.executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE ${orgClause(req.catalyst)} ORDER BY skuPosition`),
+    );
+    const inds = rowList(
+      await zcql.executeZCQLQuery(`SELECT ROWID, name FROM Industry WHERE ${orgClause(req.catalyst)}`),
+    );
+    const nameById = new Map(inds.map((i) => [String(i.ROWID), i.name]));
+    res.json(props.map((p) => ({ ...out(p), industryName: nameById.get(String(p.industryId)) || null })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post("/properties", async (req, res) => {
   const { name, caption, unit, valueType, skuPosition, industryId, rangeMin, rangeMax, required, zohoCfApiName } = req.body;
   if (!name || !caption || !valueType || skuPosition === undefined || !industryId) {

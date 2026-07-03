@@ -98,8 +98,38 @@ strings).
 | `valueId` | string? | PropertyValue ROWID (List) or null (Range) |
 | `valueText` | string | Display text / raw range number, used for LIKE search |
 
+### OrgAddon
+Per-customer add-on entitlements (multi-add-on platform). Missing row =
+disabled, except `sku-generator` which defaults ON (`DEFAULT_ON` in `addons.js`).
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `orgId` | string | Zoho Books org (tenant key) |
+| `addonKey` | string | `sku-generator` \| `reserve` \| `cheque-printing` \| `label-printing` |
+| `enabled` | bool | |
+
+### ReservationLine
+Reserve add-on: mutable reservation state per SO × FG × component.
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `orgId`, `salesOrderId`, `fgItemId`, `componentItemId` | string | Keys (Zoho ids) |
+| `warehouseId` | string? | Null until the reserved-warehouse mapping lands |
+| `reservedQty` / `issuedQty` / `returnedQty` | number | Grid columns C / D (net) |
+| `zohoDocs` | text | JSON audit of Zoho documents written per action (Phase 4) |
+
+### ItemStockSnapshot
+Reserve add-on: synced cache of Zoho stock numbers (grid columns B/E/F/G).
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `orgId`, `itemId` | string | Keys |
+| `warehouseId` | string? | Null = org-total |
+| `stockOnHand` / `poQty` / `receivedQty` / `billedQty` | number | B / E / F / G |
+| `syncedAt` | datetime | "Last sync" banner = max per org |
+
 ### ZohoToken
-Single-row OAuth state for the Zoho Books connection.
+Per-user OAuth state for the Zoho connection (keyed by `userId`).
 
 | Column | Type | Purpose |
 |--------|------|---------|
@@ -158,6 +188,26 @@ ROWID (List props) or a raw number string (Range props).
 | POST | `/api/sku-items/:id/push-zoho` | Manual (re)push a single item to Zoho Books |
 | POST | `/api/sku-items/backfill-values` | One-shot, idempotent backfill of SKUItemValue for legacy items by reverse-matching SKU tokens |
 | POST | `/api/sku-items/import-zoho` | Import new items from Zoho Books into an industry. Body `{ industryId }`. Create-only — items already linked (by `zohoItemId`, then `sku`) are skipped. Reverse-maps Books custom fields → SKUItemValue via `zohoCfApiName`. Returns `{ total, imported, skipped, valuesMapped, errors }` |
+
+### Admin — `routes/admin.js` (mounted `/admin`, requireAuth + requireAdmin via `ADMIN_EMAILS`)
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/admin/orgs` | All orgs ever seen (from ZohoToken) with resolved add-on flags |
+| POST | `/admin/org-addons` | Upsert one entitlement. Body `{ orgId, addonKey, enabled }` |
+| DELETE | `/admin/orgs/:orgId` | Permanently delete an org: all rows in every org-scoped table incl. ZohoToken (disconnects its users; AppUser logins survive) |
+
+### Reserve — `routes/reserve.js` (mounted `/api/reserve`, gated by `requireAddon("reserve")`)
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/reserve/sales-orders?q=` | SO picker (Books list) |
+| GET | `/api/reserve/so/:soId` | SO header + line items (FG selector) |
+| GET | `/api/reserve/grid?soId=&fgItemId=` | BOM ⋈ snapshot ⋈ ReservationLine with A–I computed server-side |
+| POST | `/api/reserve/sync` | Manual stock refresh for this org's snapshot items |
+| POST | `/api/reserve/(actions)` | 501 until Phase 4 (see RESERVE-TASKS.md) |
+
+`POST /internal/sync-stock` (in `index.js`, `X-Sync-Secret` header = `SYNC_SECRET`) syncs all reserve-enabled orgs — the future cron target.
+
+Old-scope tokens (pre-Inventory) make reserve endpoints return `409 {error:"reauth_required"}` — the UI offers a Zoho reconnect; SKU flows keep working.
 
 ### Zoho OAuth — `routes/zohoAuth.js` (mounted `/auth/zoho`)
 | Method | Path | Purpose |
@@ -228,6 +278,8 @@ Set in `functions/skuapi/catalyst-config.json` → `env_variables`:
 | `ZOHO_ORG_ID` | Default Books org (overridden by saved `orgId`) |
 | `ZOHO_REDIRECT_URI` | OAuth callback (defaults to localhost in dev) |
 | `FRONTEND_URL` | Where the OAuth callback redirects back to |
+| `ADMIN_EMAILS` | Comma-separated super-admin login emails (entitlement management) |
+| `SYNC_SECRET` | Shared secret for the `/internal/sync-stock` cron endpoint |
 
 > Note: live OAuth secrets are currently committed in `catalyst-config.json` —
 > rotate and move to Catalyst environment secrets before this is anything but a

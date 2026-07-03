@@ -5,6 +5,8 @@ import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
 import Modal, { ModalFooter, ModalBtn } from '../components/Modal.jsx';
 import RowDeleteButton from '../components/RowDeleteButton.jsx';
+import RowEditButton from '../components/RowEditButton.jsx';
+import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
 
 const inputStyle = {
   width: '100%', background: 'var(--bg-secondary)', border: '1px solid var(--border)',
@@ -30,6 +32,8 @@ export default function IndustriesPage() {
   const [form, setForm] = useState({ name: '', skuSeparator: '' });
   const [sortCol, setSortCol] = useState('name');
   const [sortDir, setSortDir] = useState('asc');
+  const [fName, setFName] = useState('');
+  const [fSep, setFSep] = useState('');
   const navigate = useNavigate();
 
   const load = useCallback(async () => {
@@ -41,10 +45,13 @@ export default function IndustriesPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const sorted = [...industries].sort((a, b) => {
+  const filtered = industries.filter(i =>
+    (!fName || i.name === fName) && (!fSep || i.skuSeparator === fSep));
+  const sorted = [...filtered].sort((a, b) => {
     const v = a[sortCol] < b[sortCol] ? -1 : a[sortCol] > b[sortCol] ? 1 : 0;
     return sortDir === 'asc' ? v : -v;
   });
+  const { pageRows, pager } = usePager(sorted);
 
   function toggleSort(col) {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -108,6 +115,12 @@ export default function IndustriesPage() {
           <Toolbar
             onAdd={() => { setForm({ name: '', skuSeparator: '' }); setShowAdd(true); }}
             onRefresh={load}
+            right={
+              <div style={{ display: 'flex', gap: 8 }}>
+                <FilterSelect label="names" value={fName} onChange={setFName} options={distinct(industries, 'name')} />
+                <FilterSelect label="separators" value={fSep} onChange={setFSep} options={distinct(industries, 'skuSeparator')} />
+              </div>
+            }
           />
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -115,34 +128,35 @@ export default function IndustriesPage() {
                 <th style={{ ...thStyle, width: 60 }} onClick={() => toggleSort('id')}>ID <SortArrow col="id" /></th>
                 <th style={thStyle} onClick={() => toggleSort('name')}>Name <SortArrow col="name" /></th>
                 <th style={thStyle} onClick={() => toggleSort('skuSeparator')}>SKU Separator <SortArrow col="skuSeparator" /></th>
-                <th style={{ ...thStyle, width: 48 }}></th>
+                <th style={{ ...thStyle, width: 84 }}></th>
               </tr>
             </thead>
             <tbody>
-              {sorted.length === 0 && (
-                <tr><td colSpan={4} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No industries yet. Click + to add.</td></tr>
+              {pageRows.length === 0 && (
+                <tr><td colSpan={4} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No industries found.</td></tr>
               )}
-              {sorted.map(ind => {
+              {pageRows.map(ind => {
                 return (
                   <tr
                     key={ind.id}
-                    onClick={() => openEdit(ind)}
-                    title="Click to edit"
-                    style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
+                    style={{ borderTop: '1px solid var(--border)', transition: 'background 0.1s' }}
                     onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
                     onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                   >
                     <td style={{ padding: '10px 16px', color: 'var(--text-muted)', fontSize: 12 }}>{ind.id}</td>
                     <td style={{ padding: '10px 16px', fontWeight: 500 }}>
                       <a
-                        onClick={e => { e.stopPropagation(); navigate(`/admin/industries/${ind.id}/properties`); }}
+                        onClick={() => navigate(`/sku/industries/${ind.id}/properties`)}
                         style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'none' }}
                         title="Open properties"
                       >{ind.name} ›</a>
                     </td>
                     <td style={{ padding: '10px 16px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>"{ind.skuSeparator}"</td>
-                    <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
-                      <RowDeleteButton onDelete={() => handleDelete(ind)} title={`Delete ${ind.name}`} />
+                    <td style={{ padding: '8px 12px' }}>
+                      <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                        <RowEditButton onEdit={() => openEdit(ind)} title={`Edit ${ind.name}`} />
+                        <RowDeleteButton onDelete={() => handleDelete(ind)} title={`Delete ${ind.name}`} />
+                      </div>
                     </td>
                   </tr>
                 );
@@ -151,6 +165,8 @@ export default function IndustriesPage() {
           </table>
         </div>
       </div>
+
+      <GridFooter pager={pager} />
 
       {showAdd && (
         <Modal title="Add Industry" onClose={() => setShowAdd(false)}>

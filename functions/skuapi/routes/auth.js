@@ -7,11 +7,13 @@ const {
   setSessionCookie,
   clearSessionCookie,
   requireAuth,
+  isAdmin,
   findUserByEmail,
   createUser,
   getUserById,
 } = require("../session");
 const { loadToken } = require("../zoho/auth");
+const { enabledAddons } = require("../addons");
 
 const router = express.Router();
 const shape = (u) => ({ id: String(u.ROWID), email: u.email, name: u.name || null });
@@ -56,11 +58,14 @@ router.get("/me", requireAuth, async (req, res) => {
     const user = await getUserById(req.catalyst, req.userId);
     if (!user) return res.status(401).json({ error: "Not authenticated" });
     const token = await loadToken(req.catalyst, req.userId);
+    const orgId = (token && token.orgId) || null;
     res.json({
       ...shape(user),
       zohoConnected: Boolean(token && token.refreshToken),
-      orgId: (token && token.orgId) || null,
+      orgId,
       orgName: (token && token.orgName) || null,
+      isAdmin: isAdmin(user.email),
+      addons: orgId ? await enabledAddons(req.catalyst, orgId) : [],
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

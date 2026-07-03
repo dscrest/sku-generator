@@ -196,7 +196,7 @@ export default function SKUGeneratorPage() {
   function handleCopyPermalink() {
     const params = new URLSearchParams({ industry: selectedIndustry.id });
     Object.entries(selections).forEach(([pid, val]) => params.set(`p${pid}`, val));
-    navigator.clipboard.writeText(`${window.location.origin}/sku-generator?${params.toString()}`)
+    navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}#/sku/generator?${params.toString()}`)
       .then(() => toast.success('Permalink copied'));
   }
 
@@ -584,7 +584,7 @@ export default function SKUGeneratorPage() {
                   <strong style={{ color: T.ink2 }}>{selectedIndustry.name}</strong> has no properties yet. Add properties to generate a SKU.
                 </div>
                 <Link
-                  to={`/admin/industries/${selectedIndustry.id}/properties`}
+                  to={`/sku/industries/${selectedIndustry.id}/properties`}
                   style={{
                     display: 'inline-block', padding: '7px 14px', borderRadius: 8,
                     fontSize: 13, fontWeight: 600, textDecoration: 'none',
