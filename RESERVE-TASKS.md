@@ -1,9 +1,10 @@
-# Reserve / De-reserve — tasks & planning
+# Reserve / De-reserve — reference & open design questions
 
-Reserve-specific task file (main project tasks live in the separate task-management
-file). Rebuild of the existing addon.octfis.in `ZBTejReserve.aspx` screen inside
-this app. Full plan context: see plan `the-sku-generator-is-transient-comet.md`
-and ARCHITECTURE.md.
+Rebuild of the existing addon.octfis.in `ZBTejReserve.aspx` screen inside this app.
+
+> **Tasks live in [TASKS.md](TASKS.md)** (single task list) — this file keeps the
+> reserve-specific reference material: grid formulas, open design questions, risks.
+> Schema: [SCHEMA.md](SCHEMA.md). System shape: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Grid formula reference (from existing addon)
 
@@ -26,28 +27,14 @@ Click a qty → reserve if available; row red = shortage → reorder from vendor
 "New RM Added" rows come via Import BOM.
 **Exact column definitions to be confirmed against reference tables (open item 4).**
 
-## Tasks
+## Status
 
-### Phase 3 — read path (code deployed 2026-07-03; needs live verification with a re-consented token)
-- [x] Add `ZohoInventory.fullaccess.all` scope + `reauth_required` (409) handling on reserve endpoints
-- [x] booksApi: `getSalesOrder`, `listSalesOrders`, `listPurchaseOrdersForItem` (+ `getPurchaseOrder` for line qtys)
-- [x] inventoryApi: `getCompositeItem`, `listWarehouses`, `getItemStock` (+ write stubs)
-- [x] Data Store tables: `ReservationLine` (69851000000054976), `ItemStockSnapshot` (69851000000056456)
-- [x] `GET /api/reserve/sales-orders | /so/:soId | /grid` + `POST /api/reserve/sync` (formulas server-side)
-- [x] `reserve/sync.js` (sequential, rate-limit-friendly) + `reserve/zohoDocs.js` action seam (POST actions return 501 until Phase 4 — no separate actions.js until there is logic to put in it)
-- [x] `ReservePage.jsx`: SO picker / `?soId=` deep link, FG selector, sync banner + refresh, grid with red shortage rows
-- [x] `POST /internal/sync-stock` cron hook (SYNC_SECRET-guarded) — verified 401/200 on deploy; cron itself not registered yet
-- [ ] **Live verification**: enable `reserve` for the org in `/#/admin/addons`, reconnect Zoho (Inventory scope), open `/#/reserve?soId=<real SO>` and hand-check H against the existing addon
-- [ ] Verify deep link `…/app/#/reserve?soId=…` survives login/OAuth round-trip (sessionStorage fallback if not)
-
-### Phase 4 — write actions (BLOCKED on reference tables/designs from Dhiraj)
-- [ ] Fill `zohoDocs.js`: Zoho document per action (reserve/de-reserve/issue/return/transfer)
-- [ ] Action validation: reserve ≤ H, issue ≤ C, return ≤ issued
-- [ ] Grid cell click → reserve qty input wired to POST actions
-- [ ] Import BOM action
-- [ ] Per-warehouse snapshot rows if reserved-warehouse model requires
-- [ ] Catalyst URL cron → `POST /internal/sync-stock` (secret-guarded), frequency TBD
-- [ ] Books custom button per customer org (manual setup step — document procedure here)
+Phase 3 (read path) is **code-complete and deployed** to SKU-GEN-OCTFIS dev
+(2026-07-03) — scope + `reauth_required` handling, Books/Inventory reads, both
+Data Store tables, the grid endpoint with A–I computed server-side, `reserve/sync.js`,
+`ReservePage.jsx`, and the SYNC_SECRET-guarded `/internal/sync-stock` hook.
+Outstanding: live verification against a real SO, and all of Phase 4 (write
+actions), which is blocked on the open items below. Details: [TASKS.md](TASKS.md).
 
 ## Open items awaiting inputs (reference tables / design formats)
 

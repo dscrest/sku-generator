@@ -1,5 +1,7 @@
 import { HashRouter, Routes, Route, Navigate, NavLink, useLocation, useParams } from 'react-router-dom';
 import { useState, useEffect } from 'react';
+import toast from 'react-hot-toast';
+import GlobalSearch from './components/GlobalSearch.jsx';
 import IndustriesPage from './pages/IndustriesPage.jsx';
 import PropertyManagerPage from './pages/PropertyManagerPage.jsx';
 import PropertiesPage from './pages/PropertiesPage.jsx';
@@ -10,6 +12,10 @@ import OrgSelectPage from './pages/OrgSelectPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import AddonAdminPage from './pages/AddonAdminPage.jsx';
 import ReservePage from './pages/ReservePage.jsx';
+import WorkOrderListPage from './pages/WorkOrderListPage.jsx';
+import WorkOrderPage from './pages/WorkOrderPage.jsx';
+import WorkOrderSettingsPage from './pages/WorkOrderSettingsPage.jsx';
+import WorkOrderReportsPage from './pages/WorkOrderReportsPage.jsx';
 
 const API = '/server/skuapi';
 
@@ -132,6 +138,17 @@ function HeaderBar({ zoho, onLogout, onSwitchOrg }) {
               <div style={{ height: 1, background: 'var(--border)', margin: '2px 6px 6px' }} />
               <button
                 style={menuItem}
+                onClick={() => { setOpen(false); toast.success('Submitted to helpdesk'); }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                </svg>
+                Submit to helpdesk
+              </button>
+              <button
+                style={menuItem}
                 onClick={() => { setOpen(false); onSwitchOrg(); }}
                 onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
@@ -167,6 +184,7 @@ function HeaderBar({ zoho, onLogout, onSwitchOrg }) {
 const NAV_LINKS = [
   { section: 'Add-ons' },
   { to: '/sku/generator', match: '/sku', addon: 'sku-generator', label: 'SKU Generator', icon: <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17h7M17 14v7"/></> },
+  { to: '/wo', match: '/wo', addon: 'work-order', label: 'Work Order', icon: <><path d="M20 7h-3V4a1 1 0 00-1-1H8a1 1 0 00-1 1v3H4a1 1 0 00-1 1v11a1 1 0 001 1h16a1 1 0 001-1V8a1 1 0 00-1-1z"/><path d="M9 7V5h6v2"/><path d="M8 13h8M8 17h5"/></> },
   { to: '/reserve', addon: 'reserve', label: 'Reserve / De-reserve', icon: <><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></> },
   // OCTFIS super-admin only (user.isAdmin)
   { section: 'Admin', adminOnly: true },
@@ -196,7 +214,32 @@ function TabBar({ tabs }) {
           {t.label}
         </NavLink>
       ))}
+      <GlobalSearch />
     </div>
+  );
+}
+
+const WO_TABS = [
+  { to: '/wo', label: 'Work Orders', end: true },
+  { to: '/wo/reports', label: 'Reports' },
+  { to: '/wo/settings', label: 'Settings' },
+];
+
+// One nav entry for the whole Work Order module; the tab bar is its only header.
+function WorkOrderLayout() {
+  return (
+    <>
+      <TabBar tabs={WO_TABS} />
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <Routes>
+          <Route index element={<WorkOrderListPage />} />
+          <Route path="reports" element={<WorkOrderReportsPage />} />
+          <Route path="settings" element={<WorkOrderSettingsPage />} />
+          <Route path=":id" element={<WorkOrderPage />} />
+          <Route path="*" element={<Navigate to="/wo" replace />} />
+        </Routes>
+      </div>
+    </>
   );
 }
 
@@ -331,6 +374,7 @@ function AppShell({ user, refreshUser, onLogout }) {
           <Route path="/sku/*" element={<SkuLayout />} />
           {/* Deep link from Zoho Books custom button: /app/#/reserve?soId=… ;
               backend 403s if the addon is off — the page shows a clear notice. */}
+          <Route path="/wo/*" element={<WorkOrderLayout />} />
           <Route path="/reserve" element={<ReservePage />} />
           {user.isAdmin && <Route path="/admin/addons" element={<AddonAdminPage />} />}
           {/* legacy paths (old bookmarks, OAuth redirects) */}

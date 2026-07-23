@@ -8,7 +8,7 @@
 const { rowList, zStr } = require("./store");
 
 // All known add-ons — admin UI + upsert validation use this list.
-const ADDON_KEYS = ["sku-generator", "reserve", "cheque-printing", "label-printing"];
+const ADDON_KEYS = ["sku-generator", "work-order", "reserve", "cheque-printing", "label-printing"];
 // ponytail: sku-generator defaults ON so existing orgs keep working with zero
 // migration; every new add-on is opt-in via an explicit OrgAddon row.
 const DEFAULT_ON = new Set(["sku-generator"]);

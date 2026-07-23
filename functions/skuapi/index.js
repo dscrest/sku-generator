@@ -64,9 +64,12 @@ app.use("/api", requireAuth, requireOrg);
 // outside the /api requireOrg chain.
 app.use("/admin", requireAuth, requireAdmin, require("./routes/admin"));
 
-// Reserve add-on. Mounted BEFORE the bare "/api" mounts below: their
-// requireAddon("sku-generator") middleware runs on any /api path that reaches
-// it, so reserve must claim its requests first.
+// Work-order + reserve add-ons. Mounted BEFORE the bare "/api" mounts below:
+// their requireAddon("sku-generator") middleware runs on any /api path that
+// reaches it, so these must claim their requests first.
+app.use("/api/wo", requireAddon("work-order"), require("./routes/workorder"));
+// Superseded by /api/wo — kept one release so the Books custom button and any
+// saved /#/reserve?soId= deep links keep working.
 app.use("/api/reserve", requireAddon("reserve"), require("./routes/reserve"));
 
 // SKU generator add-on — everything below is gated per-org.
@@ -77,15 +80,63 @@ app.use("/api", skuGen, require("./routes/propertyValues"));
 app.use("/api/sku", skuGen, require("./routes/sku"));
 app.use("/api/sku-items", skuGen, require("./routes/skuItems"));
 
-// Cron entry (Catalyst URL-type cron, Phase 4): refresh stock snapshots for
-// every org with reserve enabled. Shared-secret guarded — no user session.
-app.post("/internal/sync-stock", async (req, res) => {
+// ---- internal endpoints: no user session, shared-secret guarded ----
+function internalAuth(req, res) {
   if (!process.env.SYNC_SECRET || req.get("X-Sync-Secret") !== process.env.SYNC_SECRET) {
-    return res.status(401).json({ error: "unauthorized" });
+    res.status(401).json({ error: "unauthorized" });
+    return false;
   }
+  return true;
+}
+
+// Cron entry (Catalyst URL-type cron): refresh stock snapshots for every org
+// with reserve enabled. Superseded by /internal/reconcile for work-order orgs.
+app.post("/internal/sync-stock", async (req, res) => {
+  if (!internalAuth(req, res)) return;
   try {
     const result = await require("./reserve/sync").syncAllOrgs(req.catalyst);
     res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error(err && (err.stack || err.message));
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Nightly cron: reconcile the work-order read model (bounded by open work
+// orders, not catalog size) and then evaluate the shortfall / cost alerts.
+app.post("/internal/reconcile", async (req, res) => {
+  if (!internalAuth(req, res)) return;
+  try {
+    const result = await require("./workorder/sync").reconcileAllOrgs(req.catalyst);
+    const alerts = {};
+    for (const orgId of Object.keys(result.synced)) {
+      req.catalyst.__orgId = orgId;
+      delete req.catalyst.__woSettings;
+      try {
+        alerts[orgId] = await require("./workorder/alerts").evaluateOrg(req.catalyst, orgId);
+      } catch (err) {
+        alerts[orgId] = `error: ${err.message}`;
+      }
+    }
+    res.json({ ok: true, ...result, alerts });
+  } catch (err) {
+    console.error(err && (err.stack || err.message));
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Zoho Books workflow-rule webhook sink. The rule's URL carries ?type=&orgId=
+// because Books payloads have no consistent envelope — setup procedure is in
+// WORKORDER.md. Unknown event types are acknowledged, never rejected, so a
+// client's Books console never shows failures for a rule we do not handle.
+app.post("/internal/zoho-event", async (req, res) => {
+  if (!internalAuth(req, res)) return;
+  const { type, orgId } = req.query;
+  if (!orgId) return res.status(400).json({ error: "orgId query parameter is required" });
+  try {
+    const tokens = await require("./workorder/sync").tokenForOrg(req.catalyst, orgId);
+    if (!tokens) return res.status(409).json({ error: "no connected Zoho user for this org" });
+    res.json({ ok: true, ...(await require("./workorder/sync").handleZohoEvent(req.catalyst, orgId, type, req.body)) });
   } catch (err) {
     console.error(err && (err.stack || err.message));
     res.status(500).json({ error: err.message });

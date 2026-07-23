@@ -27,11 +27,14 @@ async function apiRequest(catalyst, method, path, body, service = "books") {
 }
 
 // customFields: [{ api_name, value }] — property values destined for Books item custom fields.
+// The generated property breakdown goes into both description boxes Books shows on
+// an item: `description` (Sales Information) and `purchase_description` (Purchase).
 async function createItem(catalyst, name, sku, description, customFields) {
   const data = await apiRequest(catalyst, "POST", "/items", {
     name,
     sku,
     description: description || undefined,
+    purchase_description: description || undefined,
     item_type: "inventory",
     rate: 0,
     custom_fields: customFields && customFields.length ? customFields : undefined,
@@ -41,7 +44,10 @@ async function createItem(catalyst, name, sku, description, customFields) {
 
 async function updateItem(catalyst, zohoItemId, name, sku, description, customFields) {
   const body = { name, sku };
-  if (description !== undefined) body.description = description;
+  if (description !== undefined) {
+    body.description = description;
+    body.purchase_description = description;
+  }
   if (customFields && customFields.length) body.custom_fields = customFields;
   const data = await apiRequest(catalyst, "PUT", `/items/${zohoItemId}`, body);
   return data.item;
@@ -96,6 +102,49 @@ async function listPurchaseOrdersForItem(catalyst, itemId) {
 
 async function getPurchaseOrder(catalyst, poId) {
   const data = await apiRequest(catalyst, "GET", `/purchaseorders/${poId}`);
+  return data.purchaseorder;
+}
+
+// ---- work-order add-on ----
+
+// Vendors for the Purchase Request screen (BRD §6.6: a vendor must be picked
+// per item before confirm).
+async function listVendors(catalyst) {
+  const vendors = [];
+  let page = 1;
+  for (;;) {
+    const data = await apiRequest(catalyst, "GET", `/contacts?contact_type=vendor&page=${page}&per_page=200`);
+    vendors.push(...(data.contacts || []));
+    if (!data.page_context || !data.page_context.has_more_page) break;
+    page++;
+  }
+  return vendors.map((v) => ({ id: String(v.contact_id), name: v.contact_name, status: v.status }));
+}
+
+/**
+ * One draft PO per vendor (BRD FR-PRQ-001). Every line is tagged with the
+ * originating Sales Order and delivered into the Reserve warehouse, so received
+ * stock lands already allocated to the project.
+ *
+ * lines: [{ rmItemId, qty, rate?, description? }]
+ */
+async function createPurchaseOrder(catalyst, { vendorId, date, referenceNumber, warehouseId, lines, notes }) {
+  const data = await apiRequest(catalyst, "POST", "/purchaseorders", {
+    vendor_id: String(vendorId),
+    date,
+    // The SO number, so the PO is traceable back to the project from Books.
+    reference_number: referenceNumber || undefined,
+    // Draft: the org's own approval process takes over from here (§6.6.6).
+    status: "draft",
+    notes: notes || undefined,
+    line_items: lines.map((l) => ({
+      item_id: String(l.rmItemId),
+      quantity: Number(l.qty) || 0,
+      rate: l.rate === undefined || l.rate === null ? undefined : Number(l.rate),
+      description: l.description || undefined,
+      warehouse_id: warehouseId ? String(warehouseId) : undefined,
+    })),
+  });
   return data.purchaseorder;
 }
 
