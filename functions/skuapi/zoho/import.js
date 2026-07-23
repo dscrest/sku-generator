@@ -3,12 +3,25 @@ const { rowList, out, idOk, reqOrg, orgClause } = require("../store");
 const { isConfigured } = require("./auth");
 const { listItems, getItem } = require("./booksApi");
 
+// Auto SKU code for an imported value: first 4 uppercase alphanumerics of the
+// text, numeric suffix on collision within the property. Editable later in
+// Property Manager.
+function autoCode(text, used) {
+  const base = String(text).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4) || "VAL";
+  let code = base;
+  let n = 2;
+  while (used.has(code)) code = `${base}${n++}`;
+  used.add(code);
+  return code;
+}
+
 /**
  * Import items from Zoho Books into a chosen industry. Create-only: items already
  * linked locally (by zohoItemId, then by sku) are skipped, never overwritten.
  * For each new item, custom fields whose api_name matches a Property.zohoCfApiName
- * in this industry are reverse-mapped into SKUItemValue (valueText only — there's
- * no PropertyValue ROWID to recover from a free-text Books value).
+ * in this industry are reverse-mapped into SKUItemValue. For Manual properties the
+ * value is matched (case-insensitive) to a PropertyValue, creating one with an
+ * auto-generated SKU code when missing; Range properties stay free-text.
  * ponytail: one detail fetch per imported item to read custom_fields (the list
  * endpoint omits them); fine for the create-only path.
  */
@@ -30,16 +43,31 @@ async function importFromBooks(catalyst, industryId) {
   const knownSkus = new Set(existing.map((r) => r.sku));
   const knownZohoIds = new Set(existing.map((r) => r.zohoItemId).filter(Boolean).map(String));
 
-  // This industry's custom-field map: Books api_name -> propertyId.
+  // This industry's custom-field map: Books api_name -> { id, valueType }.
   const props = rowList(
     await zcql.executeZCQLQuery(
-      `SELECT ROWID, zohoCfApiName FROM Property WHERE industryId = ${industryId} AND ${orgClause(catalyst)}`,
+      `SELECT ROWID, zohoCfApiName, valueType FROM Property WHERE industryId = ${industryId} AND ${orgClause(catalyst)}`,
     ),
   ).map(out);
-  const propByCf = Object.fromEntries(props.filter((p) => p.zohoCfApiName).map((p) => [p.zohoCfApiName, String(p.id)]));
+  const mapped = props.filter((p) => p.zohoCfApiName);
+  const propByCf = Object.fromEntries(mapped.map((p) => [p.zohoCfApiName, { id: String(p.id), valueType: p.valueType }]));
+
+  // Existing values of the mapped Manual properties, for find-or-create:
+  // propertyId -> { byName: Map<lowercased displayValue, valueId>, codes: Set<sku> }.
+  const valuesByProp = {};
+  for (const p of mapped) {
+    if (p.valueType === "Range") continue;
+    const vals = rowList(
+      await zcql.executeZCQLQuery(`SELECT ROWID, displayValue, sku FROM PropertyValue WHERE propertyId = ${p.id}`),
+    ).map(out);
+    valuesByProp[String(p.id)] = {
+      byName: new Map(vals.map((v) => [String(v.displayValue).toLowerCase(), String(v.id)])),
+      codes: new Set(vals.map((v) => v.sku)),
+    };
+  }
 
   const books = await listItems(catalyst);
-  const report = { total: books.length, imported: 0, skipped: 0, valuesMapped: 0, errors: [] };
+  const report = { total: books.length, imported: 0, skipped: 0, valuesMapped: 0, valuesCreated: 0, errors: [] };
 
   for (const b of books) {
     const sku = b.sku || "";
@@ -65,13 +93,35 @@ async function importFromBooks(catalyst, industryId) {
       if (Object.keys(propByCf).length) {
         const detail = await getItem(catalyst, b.item_id);
         for (const cf of detail.custom_fields || []) {
-          const propertyId = propByCf[cf.api_name];
-          if (!propertyId || cf.value === undefined || cf.value === null || cf.value === "") continue;
+          const prop = propByCf[cf.api_name];
+          if (!prop || cf.value === undefined || cf.value === null || cf.value === "") continue;
+          const text = String(cf.value);
+
+          // Manual properties: link (or create) the PropertyValue for this text.
+          let valueId = null;
+          const vals = valuesByProp[prop.id];
+          if (vals) {
+            valueId = vals.byName.get(text.toLowerCase()) || null;
+            if (!valueId) {
+              const created = await ds.table("PropertyValue").insertRow({
+                displayValue: text,
+                name: text,
+                sku: autoCode(text, vals.codes),
+                description: null,
+                propertyId: prop.id,
+                orgId: reqOrg(catalyst),
+              });
+              valueId = String(created.ROWID);
+              vals.byName.set(text.toLowerCase(), valueId);
+              report.valuesCreated++;
+            }
+          }
+
           await ds.table("SKUItemValue").insertRow({
             skuItemId: String(item.id),
-            propertyId,
-            valueId: null,
-            valueText: String(cf.value),
+            propertyId: prop.id,
+            valueId,
+            valueText: text,
             orgId: reqOrg(catalyst),
           });
           report.valuesMapped++;

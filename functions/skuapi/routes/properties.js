@@ -5,6 +5,16 @@ const { rowList, out, idOk, orgClause, ownsRow } = require("../store");
 const router = express.Router();
 const TABLE = "Property";
 
+// Books item custom-field definitions — source list for the Zoho mapping screen.
+// Lives here (not zohoAuth) so it inherits the /api requireOrg + addon gates.
+router.get("/zoho/item-custom-fields", async (req, res) => {
+  try {
+    res.json(await require("../zoho/booksApi").listItemCustomFields(req.catalyst));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 router.get("/industries/:id/properties", async (req, res) => {
   const industryId = req.params.id;
   if (!idOk(industryId)) return res.status(400).json({ error: "Invalid id" });
