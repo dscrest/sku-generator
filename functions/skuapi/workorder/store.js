@@ -40,11 +40,15 @@ const SETTING_KEYS = [
 // requests, so an admin edit takes effect on the very next call.
 async function settings(catalyst, orgId) {
   if (catalyst.__woSettings) return catalyst.__woSettings;
+  // Columns are settingKey/settingValue, not key/value — the bare words are
+  // reserved in enough SQL dialects to not be worth the risk in ZCQL.
   const rows = rowList(
-    await catalyst.zcql().executeZCQLQuery(`SELECT key, value FROM OrgSetting WHERE orgId = ${zStr(String(orgId))}`),
+    await catalyst.zcql().executeZCQLQuery(
+      `SELECT settingKey, settingValue FROM OrgSetting WHERE orgId = ${zStr(String(orgId))}`,
+    ),
   );
   const merged = { ...DEFAULTS };
-  for (const r of rows) if (r.value !== null && r.value !== "") merged[r.key] = String(r.value);
+  for (const r of rows) if (r.settingValue !== null && r.settingValue !== "") merged[r.settingKey] = String(r.settingValue);
   catalyst.__woSettings = merged;
   return merged;
 }
@@ -52,11 +56,11 @@ async function settings(catalyst, orgId) {
 async function setSetting(catalyst, orgId, key, value) {
   const rows = rowList(
     await catalyst.zcql().executeZCQLQuery(
-      `SELECT ROWID FROM OrgSetting WHERE orgId = ${zStr(String(orgId))} AND key = ${zStr(key)}`,
+      `SELECT ROWID FROM OrgSetting WHERE orgId = ${zStr(String(orgId))} AND settingKey = ${zStr(key)}`,
     ),
   );
   const table = catalyst.datastore().table("OrgSetting");
-  const fields = { orgId: String(orgId), key: String(key), value: value === null ? "" : String(value) };
+  const fields = { orgId: String(orgId), settingKey: String(key), settingValue: value === null ? "" : String(value) };
   if (rows.length) await table.updateRow({ ROWID: rows[0].ROWID, ...fields });
   else await table.insertRow(fields);
   delete catalyst.__woSettings;
@@ -130,7 +134,7 @@ async function logActivity(catalyst, orgId, entityType, entityId, action, userId
       entityId: String(entityId),
       action: String(action),
       userId: userId ? String(userId) : "",
-      at: dsDate(Date.now()),
+      loggedAt: dsDate(Date.now()),
       detail: detail ? JSON.stringify(detail) : "",
     });
   } catch (err) {
@@ -182,21 +186,21 @@ if (require.main === module && process.argv.includes("--selftest")) {
     await settings(c1, "org1");
     assert.strictEqual(c1._count(), 1, "settings are memoised per request");
 
-    const c2 = fake([{ key: "costAlertPct", value: "65" }, { key: "mainWarehouseId", value: "" }]);
+    const c2 = fake([{ settingKey: "costAlertPct", settingValue: "65" }, { settingKey: "mainWarehouseId", settingValue: "" }]);
     const s2 = await settings(c2, "org1");
     assert.strictEqual(s2.costAlertPct, "65", "explicit value beats the default");
     assert.strictEqual(s2.mainWarehouseId, undefined, "empty string is not a configured value");
 
     await assert.rejects(
-      () => warehouses(fake([{ key: "mainWarehouseId", value: "W1" }]), "org1"),
+      () => warehouses(fake([{ settingKey: "mainWarehouseId", settingValue: "W1" }]), "org1"),
       /Warehouses not configured: reserve, issue/,
       "missing warehouses name themselves",
     );
 
     const whRows = [
-      { key: "mainWarehouseId", value: "W1" },
-      { key: "reserveWarehouseId", value: "W2" },
-      { key: "issueWarehouseId", value: "W3" },
+      { settingKey: "mainWarehouseId", settingValue: "W1" },
+      { settingKey: "reserveWarehouseId", settingValue: "W2" },
+      { settingKey: "issueWarehouseId", settingValue: "W3" },
     ];
     assert.deepStrictEqual(await warehouses(fake(whRows), "org1"), { main: "W1", reserve: "W2", issue: "W3" });
     assert.deepStrictEqual(

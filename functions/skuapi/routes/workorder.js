@@ -240,7 +240,7 @@ router.get("/:id", ok(async (req, res) => {
   ]);
   const approvals = await byOrg(
     req.catalyst, req.orgId, "Approval",
-    `entityType = 'WorkOrder' AND entityId = ${zStr(String(wo.ROWID))}`, "level",
+    `entityType = 'WorkOrder' AND entityId = ${zStr(String(wo.ROWID))}`, "approvalLevel",
   );
   res.json({
     id: String(wo.ROWID),
@@ -264,7 +264,7 @@ router.get("/:id", ok(async (req, res) => {
     purchaseRequests: prs,
     transactions: txns,
     approvals: approvals.map((a) => ({
-      id: String(a.ROWID), level: n(a.level), status: a.status,
+      id: String(a.ROWID), level: n(a.approvalLevel), status: a.status,
       approverEmail: a.approverEmail, actedAt: a.actedAt || null, remarks: a.remarks || null,
     })),
   });
@@ -503,13 +503,13 @@ router.post("/:id/approve", ok(async (req, res) => {
     `entityType = 'WorkOrder' AND entityId = ${zStr(String(wo.ROWID))}`,
   );
   if (level === 2) {
-    const l1 = existing.find((a) => n(a.level) === 1 && a.status === "Approved");
+    const l1 = existing.find((a) => n(a.approvalLevel) === 1 && a.status === "Approved");
     if (!l1) { const e = new Error("Level 1 must approve before level 2"); e.status = 409; throw e; }
   }
-  const prev = existing.find((a) => n(a.level) === level);
+  const prev = existing.find((a) => n(a.approvalLevel) === level);
   const approver = await getUserById(req.catalyst, req.userId);
   const fields = {
-    orgId: String(req.orgId), entityType: "WorkOrder", entityId: String(wo.ROWID), level, status,
+    orgId: String(req.orgId), entityType: "WorkOrder", entityId: String(wo.ROWID), approvalLevel: level, status,
     approverEmail: (approver && approver.email) || "",
     actedAt: dsDate(Date.now()), remarks: (req.body || {}).remarks || "",
   };
@@ -530,7 +530,7 @@ router.get("/:id/invoice-gate", ok(async (req, res) => {
   const approvals = await byOrg(
     req.catalyst, req.orgId, "Approval", `entityType = 'WorkOrder' AND entityId = ${zStr(String(wo.ROWID))}`,
   );
-  const approved = [1, 2].filter((lv) => approvals.some((a) => n(a.level) === lv && a.status === "Approved"));
+  const approved = [1, 2].filter((lv) => approvals.some((a) => n(a.approvalLevel) === lv && a.status === "Approved"));
   res.json({
     allowed: approved.length === 2,
     approvedLevels: approved,

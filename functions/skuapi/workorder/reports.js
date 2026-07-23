@@ -119,10 +119,10 @@ async function history(catalyst, orgId, workOrderId) {
   const rows = await byOrg(
     catalyst, orgId, "ActivityLog",
     `entityId = ${zStr(String(workOrderId))} OR entityType = 'MaterialTxn'`,
-    "at DESC",
+    "loggedAt DESC",
   );
   return rows.slice(0, 200).map((r) => ({
-    at: r.at,
+    at: r.loggedAt,
     action: r.action,
     entityType: r.entityType,
     entityId: String(r.entityId),

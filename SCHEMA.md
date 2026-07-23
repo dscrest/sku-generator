@@ -165,6 +165,19 @@ Grid column formulas: see [WORKORDER.md](WORKORDER.md).
 
 ## Work Order add-on (CR-013)
 
+**Live in `SKU-GEN-OCTFIS` (Development) as of 2026-07-23.** Table ids:
+`OrgSetting` 69851000000080705 · `WorkOrder` 69851000000084605 ·
+`WorkOrderFG` 69851000000077940 · `WorkOrderLine` 69851000000083652 ·
+`BomRevision` 69851000000081456 · `MaterialTxn` 69851000000082438 ·
+`MaterialTxnLine` 69851000000079610 · `PurchaseRequest` 69851000000084964 ·
+`PurchaseRequestLine` 69851000000089011 · `CompositeItemCache` 69851000000085676 ·
+`Approval` 69851000000091035 · `AlertLog` 69851000000088299 ·
+`ActivityLog` 69851000000081815.
+
+Conventions applied: ids `varchar(50)`, names `varchar(255)`, quantities
+`double(15,4)`, JSON/notes `text(10000)`. Only `orgId` is mandatory on every
+table — cascades and referential integrity stay in code, as elsewhere.
+
 Implements the MSUN Work Order BRD. Every table carries `orgId`. Ids referencing
 Zoho (`salesOrderId`, `rmItemId`, `zohoPoId`, …) are Zoho's ids as strings; ids
 referencing our own rows are 17-digit Catalyst ROWIDs as strings.
@@ -176,8 +189,11 @@ become a column. Read via `workorder/settings.js`.
 | Column | Type | Purpose |
 |--------|------|---------|
 | `orgId` | string | Tenant key |
-| `key` | string | `mainWarehouseId`, `reserveWarehouseId`, `issueWarehouseId`, `purchaseTeamEmail`, `approverL1Email`, `approverL2Email`, `shortfallAlertDays`, `costAlertPct`, `woNumberPrefix`, `prNumberPrefix`, `txnNumberPrefix` — the full list is `SETTING_KEYS` in `workorder/store.js` |
-| `value` | string | Always stored as text; callers coerce |
+| `settingKey` | string | `mainWarehouseId`, `reserveWarehouseId`, `issueWarehouseId`, `purchaseTeamEmail`, `approverL1Email`, `approverL2Email`, `shortfallAlertDays`, `costAlertPct`, `woNumberPrefix`, `prNumberPrefix`, `txnNumberPrefix` — the full list is `SETTING_KEYS` in `workorder/store.js` |
+| `settingValue` | string(255) | Always stored as text; callers coerce |
+
+> Named `settingKey`/`settingValue`, not `key`/`value` — the bare words are
+> reserved in enough SQL dialects to not be worth risking in ZCQL.
 
 ### WorkOrder
 The BRD's BOM header — one per Work Order, linked to a confirmed Sales Order.
@@ -322,7 +338,7 @@ Two-level sign-off (FR-ADO-007); gates invoice creation.
 | `orgId` | string | Tenant key |
 | `entityType` | string | `WorkOrder` \| `MaterialTxn` \| `ItemIssueReturn` |
 | `entityId` | string | ROWID of that row |
-| `level` | number | 1 or 2 |
+| `approvalLevel` | number | 1 or 2 (`level` is reserved in some SQL dialects) |
 | `status` | string | `Pending` \| `Approved` \| `Rejected` |
 | `approverEmail` | string | |
 | `actedAt` | datetime? | |
@@ -349,7 +365,7 @@ sub-module.
 | `entityType` / `entityId` | string | What was touched |
 | `action` | string | e.g. `wo.status`, `txn.confirm`, `bom.revise` |
 | `userId` | string | AppUser ROWID |
-| `at` | datetime | |
+| `loggedAt` | datetime | (`at` is reserved in some SQL dialects) |
 | `detail` | text? | JSON before/after |
 
 ### Extended existing tables
@@ -374,9 +390,9 @@ Newest first. One row per applied schema change; link the CR that requested it.
 
 | Date | CR | Change | Applied |
 |------|----|--------|---------|
-| 2026-07-23 | [CR-013](CHANGES.md) | 13 Work Order tables: `OrgSetting`, `WorkOrder`, `WorkOrderFG`, `WorkOrderLine`, `BomRevision`, `MaterialTxn`, `MaterialTxnLine`, `PurchaseRequest`, `PurchaseRequestLine`, `CompositeItemCache`, `Approval`, `AlertLog`, `ActivityLog` | ⏳ create in console |
-| 2026-07-23 | [CR-013](CHANGES.md) | `ReservationLine` + `workOrderId`, `workOrderFgId` (string), `requestedPoQty` (number) | ⏳ create in console |
-| 2026-07-23 | [CR-013](CHANGES.md) | `ItemStockSnapshot` + `availableStock` (number), `source` (string); `warehouseId` now populated | ⏳ create in console |
+| 2026-07-23 | [CR-013](CHANGES.md) | 13 Work Order tables: `OrgSetting`, `WorkOrder`, `WorkOrderFG`, `WorkOrderLine`, `BomRevision`, `MaterialTxn`, `MaterialTxnLine`, `PurchaseRequest`, `PurchaseRequestLine`, `CompositeItemCache`, `Approval`, `AlertLog`, `ActivityLog` | ✅ live |
+| 2026-07-23 | [CR-013](CHANGES.md) | `ReservationLine` + `workOrderId`, `workOrderFgId` (string), `requestedPoQty` (number) | ✅ live |
+| 2026-07-23 | [CR-013](CHANGES.md) | `ItemStockSnapshot` + `availableStock` (number), `source` (string); `warehouseId` now populated | ✅ live |
 | 2026-07-23 | [CR-009](CHANGES.md) | `Property.activeInSku` (boolean, nullable, no default) — property takes part in SKU generation | ✅ live |
 | 2026-07-23 | [CR-009](CHANGES.md) | `Property.includeInName` (boolean, nullable, no default) — property's value appears in the item name | ✅ live |
 | 2026-07-23 | [CR-009](CHANGES.md) | Checked `SKUItem.description` — already `text` (max 10000), holds the 24-line block | n/a — no change needed |
