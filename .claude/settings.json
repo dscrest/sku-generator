@@ -28,7 +28,11 @@
       "Bash(node --check routes/auth.js)",
       "Bash(node --check session.js)",
       "Bash(node -e \"require\\('./index.js'\\); console.log\\('index.js loads clean'\\)\")",
-      "Bash(node --check functions/skuapi/routes/admin.js)"
+      "Bash(node --check functions/skuapi/routes/admin.js)",
+      "Bash(git -C /Users/octfistechnollp/oct-dev-projects/sku-generator push -u origin feat/zoho-auth-multitenant)",
+      "Bash(git -C /Users/octfistechnollp/oct-dev-projects/sku-generator switch -c feat/zoho-field-mapping)",
+      "Bash(git -C /Users/octfistechnollp/oct-dev-projects/sku-generator push -u origin feat/zoho-field-mapping)",
+      "Bash(node -e \"require\\('./zoho/import.js'\\); require\\('./zoho/booksApi.js'\\); require\\('./routes/properties.js'\\); console.log\\('syntax ok'\\)\")"
     ]
   }
 }

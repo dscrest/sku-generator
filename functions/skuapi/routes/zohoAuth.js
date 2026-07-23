@@ -15,10 +15,11 @@ const {
 const router = express.Router();
 const FRONTEND = process.env.FRONTEND_URL || "http://localhost:5173";
 
-// Public: kick off the OAuth consent flow.
-router.get("/", (_req, res) => {
+// Public: kick off the OAuth consent flow. ?consent=1 forces the Zoho consent
+// screen (needed to re-obtain a refresh token).
+router.get("/", (req, res) => {
   try {
-    res.redirect(getAuthUrl());
+    res.redirect(getAuthUrl(req.query.consent === "1"));
   } catch (err) {
     res.status(503).json({ error: err.message });
   }
@@ -28,9 +29,10 @@ router.get("/", (_req, res) => {
 // find-or-create from the Zoho profile), store the per-user token, set the
 // session cookie, and auto-pick the org if there's exactly one. Shared by the
 // GET redirect callback and the SPA's POST /exchange. Returns { orgSelected }.
-async function completeZohoLogin(req, res, code) {
-  const tokenData = await exchangeCode(code);
-  const profile = await getProfile(tokenData.access_token);
+// `dc` is the callback's `location` param — the Zoho DC that issued the code.
+async function completeZohoLogin(req, res, code, dc) {
+  const tokenData = await exchangeCode(code, dc);
+  const profile = await getProfile(tokenData.access_token, dc);
 
   let userId = currentUserId(req);
   if (userId) {
@@ -38,13 +40,16 @@ async function completeZohoLogin(req, res, code) {
     await linkZuid(req.catalyst, userId, profile.zuid);
   } else {
     const user =
-      (await findUserByZuid(req.catalyst, profile.zuid)) || (await findUserByEmail(req.catalyst, profile.email));
+      (await findUserByZuid(req.catalyst, profile.zuid)) ||
+      (profile.email ? await findUserByEmail(req.catalyst, profile.email) : null);
     if (user) {
       userId = user.ROWID;
       if (!user.zuid) await linkZuid(req.catalyst, userId, profile.zuid);
     } else {
       const created = await createUser(req.catalyst, {
-        email: profile.email,
+        // AppUser.email is mandatory+unique; phone-registered Zoho accounts
+        // have none, so fall back to a stable per-ZUID placeholder.
+        email: profile.email || `zuid-${profile.zuid}@zoho.invalid`,
         name: [profile.firstName, profile.lastName].filter(Boolean).join(" ") || profile.email,
         zuid: profile.zuid,
       });
@@ -55,7 +60,14 @@ async function completeZohoLogin(req, res, code) {
 
   req.catalyst.__userId = String(userId);
   const prior = await loadToken(req.catalyst, userId);
-  await saveToken(req.catalyst, userId, tokenData);
+  // Zoho returns a refresh token only on a consent grant. Grant already on
+  // file at Zoho but nothing stored here (failed first exchange, disconnect)
+  // → the no-prompt flow would loop forever; bounce through consent instead.
+  // The session cookie is already set, so the user stays logged in.
+  if (!tokenData.refresh_token && !(prior && prior.refreshToken)) {
+    return { needsConsent: true };
+  }
+  await saveToken(req.catalyst, userId, tokenData, dc);
 
   // Returning user who already picked an org: keep it, skip re-selection.
   if (prior && prior.orgId) return { orgSelected: true };
@@ -72,10 +84,10 @@ async function completeZohoLogin(req, res, code) {
 // browser; the SPA immediately POSTs it here for the secure server-side exchange.
 // Public (no requireAuth) — this is itself part of logging in.
 router.post("/exchange", async (req, res) => {
-  const { code } = req.body || {};
+  const { code, location } = req.body || {};
   if (!code) return res.status(400).json({ error: "no_code" });
   try {
-    const result = await completeZohoLogin(req, res, code);
+    const result = await completeZohoLogin(req, res, code, location);
     res.json({ ok: true, ...result });
   } catch (err) {
     console.error("Zoho exchange error:", err);
@@ -86,11 +98,12 @@ router.post("/exchange", async (req, res) => {
 // Kept for the backend-callback style (unused while redirect URI = /app/, but
 // harmless and lets us switch back by only changing ZOHO_REDIRECT_URI).
 router.get("/callback", async (req, res) => {
-  const { code, error } = req.query;
+  const { code, error, location } = req.query;
   if (error) return res.redirect(`${FRONTEND}/#/connect?error=${encodeURIComponent(error)}`);
   if (!code) return res.redirect(`${FRONTEND}/#/connect?error=no_code`);
   try {
-    const { orgSelected } = await completeZohoLogin(req, res, code);
+    const { orgSelected, needsConsent } = await completeZohoLogin(req, res, code, location);
+    if (needsConsent) return res.redirect(getAuthUrl(true));
     return res.redirect(`${FRONTEND}/#/${orgSelected ? "?zoho=connected" : "connect?zoho=select_org"}`);
   } catch (err) {
     console.error("Zoho callback error:", err);

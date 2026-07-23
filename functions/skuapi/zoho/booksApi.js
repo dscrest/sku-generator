@@ -1,15 +1,14 @@
 "use strict";
-const { getAccessToken, getOrgId } = require("./auth");
-
-const DC = process.env.ZOHO_DC || "com";
+const { getAccessToken, getOrgId, dcHosts } = require("./auth");
 
 // service: "books" (v3) | "inventory" (v1) — both APIs share auth, org param
 // and the { code, message } response envelope.
 async function apiRequest(catalyst, method, path, body, service = "books") {
-  const [accessToken, orgId] = await Promise.all([getAccessToken(catalyst), getOrgId(catalyst)]);
+  const [{ accessToken, dc }, orgId] = await Promise.all([getAccessToken(catalyst), getOrgId(catalyst)]);
   if (!orgId) throw new Error("Zoho org ID not set. Set ZOHO_ORG_ID or reconnect via /auth/zoho.");
 
-  const base = service === "inventory" ? `https://www.zohoapis.${DC}/inventory/v1` : `https://www.zohoapis.${DC}/books/v3`;
+  const api = dcHosts(dc).api;
+  const base = service === "inventory" ? `https://${api}/inventory/v1` : `https://${api}/books/v3`;
   const sep = path.includes("?") ? "&" : "?";
   const url = `${base}${path}${sep}organization_id=${orgId}`;
   const res = await fetch(url, {
@@ -68,6 +67,14 @@ async function getItem(catalyst, zohoItemId) {
   return data.item;
 }
 
+// Custom-field definitions configured on Books items — the source list for the
+// field-mapping screen.
+async function listItemCustomFields(catalyst) {
+  const data = await apiRequest(catalyst, "GET", "/settings/fields?entity=item");
+  const fields = data.fields || data.customfields || [];
+  return fields.map((f) => ({ api_name: f.api_name, label: f.label, data_type: f.data_type }));
+}
+
 // ---- reserve add-on reads ----
 
 async function getSalesOrder(catalyst, soId) {
@@ -93,8 +100,8 @@ async function getPurchaseOrder(catalyst, poId) {
 }
 
 async function getOrganizations(catalyst) {
-  const accessToken = await getAccessToken(catalyst);
-  const res = await fetch(`https://www.zohoapis.${DC}/books/v3/organizations`, {
+  const { accessToken, dc } = await getAccessToken(catalyst);
+  const res = await fetch(`https://${dcHosts(dc).api}/books/v3/organizations`, {
     headers: { Authorization: `Zoho-oauthtoken ${accessToken}` },
   });
   const data = await res.json();
@@ -108,6 +115,7 @@ module.exports = {
   getOrganizations,
   listItems,
   getItem,
+  listItemCustomFields,
   getSalesOrder,
   listSalesOrders,
   listPurchaseOrdersForItem,

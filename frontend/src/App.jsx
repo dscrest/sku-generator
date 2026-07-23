@@ -373,14 +373,30 @@ export default function App() {
     // Zoho redirects back to /app/?code=… (the registered redirect URI is the
     // SPA). Hand the code to the backend for the secure exchange, then scrub it
     // from the URL and load the now-authenticated user.
-    const code = new URLSearchParams(window.location.search).get('code');
+    const cbParams = new URLSearchParams(window.location.search);
+    const code = cbParams.get('code');
     if (code) {
       fetch(`${API}/auth/zoho/exchange`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // location = the Zoho DC that issued the code (multi-DC); the backend
+        // must exchange it against that DC's accounts server.
+        body: JSON.stringify({ code, location: cbParams.get('location') }),
       })
-        .then(async r => { if (!r.ok) setAuthError((await r.json().catch(() => ({}))).error || 'Zoho sign-in failed.'); })
-        .catch(() => setAuthError('Network error during Zoho sign-in.'))
-        .finally(() => {
+        .then(async r => {
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) { setAuthError(data.error || 'Zoho sign-in failed.'); return false; }
+          if (data.needsConsent) {
+            // Zoho didn't issue a refresh token (grant exists but we have no
+            // stored token) — re-run OAuth with the consent screen forced.
+            window.location.replace(`${API}/auth/zoho?consent=1`);
+            return true; // navigating away; skip the reload below
+          }
+          return false;
+        })
+        .catch(() => { setAuthError('Network error during Zoho sign-in.'); return false; })
+        .then(navigating => {
+          if (navigating) return;
           window.history.replaceState({}, '', window.location.pathname + window.location.hash);
           loadUser().finally(() => setLoading(false));
         });
