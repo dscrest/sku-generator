@@ -48,7 +48,7 @@ router.get("/properties", async (req, res) => {
 });
 
 router.post("/properties", async (req, res) => {
-  const { name, caption, unit, valueType, skuPosition, industryId, rangeMin, rangeMax, required, zohoCfApiName } = req.body;
+  const { name, caption, unit, valueType, skuPosition, industryId, rangeMin, rangeMax, required, zohoCfApiName, activeInSku, includeInName } = req.body;
   if (!name || !caption || !valueType || skuPosition === undefined || !industryId) {
     return res.status(400).json({ error: "name, caption, valueType, skuPosition, industryId are required" });
   }
@@ -66,6 +66,8 @@ router.post("/properties", async (req, res) => {
       rangeMin: rangeMin !== undefined && rangeMin !== null ? parseFloat(rangeMin) : null,
       rangeMax: rangeMax !== undefined && rangeMax !== null ? parseFloat(rangeMax) : null,
       required: required ? "true" : "false",
+      activeInSku: activeInSku === false ? "false" : "true", // new properties join the SKU by default
+      includeInName: includeInName ? "true" : "false",
       zohoCfApiName: zohoCfApiName || null,
       orgId: req.orgId,
     });
@@ -79,7 +81,7 @@ router.put("/properties/:id", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
   if (!(await ownsRow(req.catalyst, TABLE, id))) return res.status(404).json({ error: "Not found" });
-  const { name, caption, unit, valueType, skuPosition, rangeMin, rangeMax, required, zohoCfApiName } = req.body;
+  const { name, caption, unit, valueType, skuPosition, rangeMin, rangeMax, required, zohoCfApiName, activeInSku, includeInName } = req.body;
   const data = { ROWID: id };
   if (name) data.name = name;
   if (caption) data.caption = caption;
@@ -89,6 +91,8 @@ router.put("/properties/:id", async (req, res) => {
   if (rangeMin !== undefined) data.rangeMin = rangeMin === null ? null : parseFloat(rangeMin);
   if (rangeMax !== undefined) data.rangeMax = rangeMax === null ? null : parseFloat(rangeMax);
   if (required !== undefined) data.required = required ? "true" : "false";
+  if (activeInSku !== undefined) data.activeInSku = activeInSku ? "true" : "false";
+  if (includeInName !== undefined) data.includeInName = includeInName ? "true" : "false";
   if (zohoCfApiName !== undefined) data.zohoCfApiName = zohoCfApiName || null;
   try {
     const row = await req.catalyst.datastore().table(TABLE).updateRow(data);

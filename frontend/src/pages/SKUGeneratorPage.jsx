@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
@@ -26,7 +26,6 @@ const T = {
 };
 
 const shadowSm = '0 1px 2px rgba(15,23,42,0.04), 0 1px 4px rgba(15,23,42,0.04)';
-const shadowLg = '0 12px 32px -8px rgba(15,23,42,0.12), 0 4px 8px -4px rgba(15,23,42,0.06)';
 
 function CheckIcon() {
   return <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>;
@@ -36,6 +35,58 @@ function WarnIcon() {
 }
 function DotIcon() {
   return <svg width="6" height="6" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>;
+}
+// Mirrors isActive() on the server so the list can never show a property the
+// server would drop. The UI for moving properties in/out is hidden (CR-011) —
+// every property is in the SKU — but the column and the gate stay for later.
+const isActive = p => p.activeInSku !== false;
+
+const ctrlStyle = {
+  width: '100%', height: 32, boxSizing: 'border-box',
+  padding: '0 10px', border: `1.5px solid ${T.borderStrong}`, borderRadius: 6,
+  fontFamily: T.sans, fontSize: 13, color: T.ink, background: T.bgElev, outline: 'none',
+};
+
+function Badge({ children, tone }) {
+  const c = tone === 'warn'
+    ? { fg: '#be123c', bg: '#fef2f2', bd: '#fecdd3' }
+    : { fg: T.accentInk, bg: T.accentSoft, bd: '#c7d2fe' };
+  return (
+    <span style={{
+      fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', padding: '1px 5px',
+      borderRadius: 8, color: c.fg, background: c.bg, border: `1px solid ${c.bd}`, flexShrink: 0,
+    }}>{children}</span>
+  );
+}
+
+function SectionHead({ label }) {
+  return (
+    <div style={{
+      padding: '9px 16px', background: T.bgSubtle, borderTop: `1px solid ${T.border}`,
+      fontSize: 10.5, fontWeight: 600, color: T.ink3, textTransform: 'uppercase', letterSpacing: '0.07em',
+    }}>
+      {label}
+    </div>
+  );
+}
+
+// caption | value control | resulting SKU fragment
+function PropRow({ prop, children }) {
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 230px 74px',
+      alignItems: 'center', gap: 12, padding: '7px 16px',
+      borderTop: `1px solid ${T.border}`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, fontSize: 13, color: T.ink }}>
+        <span style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{prop.caption}</span>
+        {prop.unit && <span style={{ color: T.ink4, flexShrink: 0 }}>({prop.unit})</span>}
+        {prop.required && <Badge tone="warn">REQ</Badge>}
+        {prop.includeInName && <Badge>NAME</Badge>}
+      </div>
+      {children}
+    </div>
+  );
 }
 
 export default function SKUGeneratorPage() {
@@ -49,69 +100,18 @@ export default function SKUGeneratorPage() {
   const [itemType, setItemType] = useState('Trading');
   const [creating, setCreating] = useState(false);
   const [recentSKUs, setRecentSKUs] = useState([]);
-  const [stats, setStats] = useState({ totalSKUs: 0, industries: 0, thisWeek: 0 });
-  const [cmdkOpen, setCmdkOpen] = useState(false);
-  const [cmdkQuery, setCmdkQuery] = useState('');
-
-  // Popover state
-  const [popover, setPopover] = useState(null); // { propId, top, left }
-  const [popQuery, setPopQuery] = useState('');
-  const [popRangeVal, setPopRangeVal] = useState('');
-  const popoverRef = useRef(null);
-  const builderRef = useRef(null);
-  const popSearchRef = useRef(null);
 
   const [searchParams] = useSearchParams();
 
   useEffect(() => {
-    function onKey(e) {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); setCmdkOpen(v => !v); }
-      if (e.key === 'Escape') {
-        setCmdkOpen(false);
-        setPopover(null);
-      }
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
-  // Close popover on outside click
-  useEffect(() => {
-    if (!popover) return;
-    function onDown(e) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target)) {
-        setPopover(null);
-      }
-    }
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [popover]);
-
-  // Focus search when popover opens
-  useEffect(() => {
-    if (popover && popSearchRef.current) {
-      setTimeout(() => popSearchRef.current?.focus(), 30);
-    }
-  }, [popover?.propId]);
-
-  useEffect(() => {
     axios.get('/api/industries').then(({ data }) => {
       setIndustries(data);
-      setStats(s => ({ ...s, industries: data.length }));
       const qInd = searchParams.get('industry');
-      if (qInd) {
-        const found = data.find(i => String(i.id) === String(qInd));
-        if (found) setSelectedIndustry(found);
-      }
+      const found = qInd && data.find(i => String(i.id) === String(qInd));
+      // No industry in the permalink: open on the first one so the properties
+      // are already on screen instead of an empty prompt.
+      if (found || data.length) setSelectedIndustry(found || data[0]);
     });
-    axios.get('/api/sku-items').then(({ data }) => {
-      const total = data.length;
-      const week = data.filter(item => {
-        if (!item.createdAt) return false;
-        return Date.now() - new Date(item.createdAt).getTime() < 7 * 86400000;
-      }).length;
-      setStats(s => ({ ...s, totalSKUs: total, thisWeek: week }));
-    }).catch(() => {});
   }, []);
 
   const loadRecent = useCallback(async (industryId) => {
@@ -152,7 +152,6 @@ export default function SKUGeneratorPage() {
       setProperties([]);
       setSelections({});
       setPreview(null);
-      setPopover(null);
       loadProperties(selectedIndustry);
       loadRecent(selectedIndustry.id);
     }
@@ -170,7 +169,6 @@ export default function SKUGeneratorPage() {
 
   function handleSelect(propId, value) {
     setSelections(prev => ({ ...prev, [propId]: value }));
-    setPopover(null);
   }
 
   async function handleCreateItem() {
@@ -186,7 +184,6 @@ export default function SKUGeneratorPage() {
         selectedValues: selections,
       });
       toast.success(`SKU "${preview.sku}" created`);
-      setStats(s => ({ ...s, totalSKUs: s.totalSKUs + 1, thisWeek: s.thisWeek + 1 }));
       loadRecent(selectedIndustry.id);
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to create item');
@@ -209,30 +206,13 @@ export default function SKUGeneratorPage() {
     return v?.sku || null;
   }
 
-  function openPopover(prop, chipEl) {
-    if (!chipEl || !builderRef.current) return;
-    const chipRect = chipEl.getBoundingClientRect();
-    const builderRect = builderRef.current.getBoundingClientRect();
-    const left = Math.max(0, chipRect.left - builderRect.left);
-    const top = chipRect.bottom - builderRect.top + 8;
-    const currentVal = selections[prop.id];
-    setPopRangeVal(prop.valueType === 'Range' ? (currentVal || '') : '');
-    setPopQuery('');
-    setPopover({ propId: prop.id, top, left });
-  }
+  const activeProps = properties.filter(isActive);
 
-  const activeProp = popover ? properties.find(p => p.id === popover.propId) : null;
-  const popOptions = activeProp
-    ? (propertyValues[activeProp.id] || []).filter(v =>
-        !popQuery || v.sku.toLowerCase().includes(popQuery.toLowerCase()) ||
-        v.displayValue.toLowerCase().includes(popQuery.toLowerCase()))
-    : [];
-
-  const filledCount = properties.filter(p => selections[p.id] !== undefined && selections[p.id] !== '').length;
-  const totalCount = properties.length;
+  const filledCount = activeProps.filter(p => selections[p.id] !== undefined && selections[p.id] !== '').length;
+  const totalCount = activeProps.length;
   const progress = totalCount > 0 ? Math.round((filledCount / totalCount) * 100) : 0;
 
-  const missingRequired = properties
+  const missingRequired = activeProps
     .filter(p => p.required && (selections[p.id] === undefined || selections[p.id] === ''))
     .map(p => p.caption);
 
@@ -249,70 +229,12 @@ export default function SKUGeneratorPage() {
     },
   ];
 
-  const filteredRecent = cmdkQuery
-    ? recentSKUs.filter(s =>
-        s.sku.toLowerCase().includes(cmdkQuery.toLowerCase()) ||
-        s.name.toLowerCase().includes(cmdkQuery.toLowerCase()))
-    : recentSKUs;
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: T.bg, fontFamily: T.sans }}>
 
-      {/* ── Topbar */}
-      <div style={{
-        background: T.bgElev, borderBottom: `1px solid ${T.border}`,
-        padding: '0 24px', height: 50,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0,
-        boxShadow: shadowSm,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-          <span style={{ color: T.ink4 }}>Home</span>
-          <span style={{ color: T.ink4 }}>/</span>
-          <span style={{ color: T.ink3, fontWeight: 600 }}>SKU Generator</span>
-        </div>
-        <button
-          onClick={() => setCmdkOpen(true)}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 7,
-            padding: '6px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 500,
-            cursor: 'pointer', background: T.bgSubtle, color: T.ink3,
-            border: `1px solid ${T.borderStrong}`, fontFamily: T.sans, boxShadow: shadowSm,
-          }}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>
-          </svg>
-          Search
-          <span style={{ fontFamily: T.mono, fontSize: 10, opacity: 0.6, padding: '1px 5px', border: `1px solid ${T.borderStrong}`, borderRadius: 3, lineHeight: 1 }}>⌘K</span>
-        </button>
-      </div>
-
-      {/* ── Scrollable body */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '24px 24px 32px' }}>
-
-        {/* Page head */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.ink, letterSpacing: '-0.02em', lineHeight: 1.2 }}>
-              SKU Generator
-            </h1>
-            <div style={{ fontSize: 13, color: T.ink3, marginTop: 5 }}>
-              Configure properties to build a unique product identifier
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 28, flexShrink: 0, marginLeft: 24 }}>
-            {[
-              { v: stats.totalSKUs, l: 'Total SKUs' },
-              { v: stats.industries, l: 'Industries' },
-              { v: `+${stats.thisWeek}`, l: 'This week' },
-            ].map(({ v, l }) => (
-              <div key={l} style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 20, fontWeight: 700, color: T.ink, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{v}</div>
-                <div style={{ fontSize: 11, color: T.ink4, marginTop: 3 }}>{l}</div>
-              </div>
-            ))}
-          </div>
-        </div>
+      {/* ── Scrollable body. No page head: the SKU tab bar above already names
+          the page, and the stats row moved out with it. */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px 32px' }}>
 
         {/* Two-column layout */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 268px', gap: 20, alignItems: 'flex-start' }}>
@@ -356,7 +278,6 @@ export default function SKUGeneratorPage() {
             {/* Hero Builder */}
             {selectedIndustry && (
               <div
-                ref={builderRef}
                 style={{ background: T.bgElev, border: `1px solid ${T.border}`, borderRadius: 12, padding: '24px 24px 20px', boxShadow: shadowSm, position: 'relative' }}
               >
                 <div style={{
@@ -370,8 +291,10 @@ export default function SKUGeneratorPage() {
 
                 {/* SKU chip display */}
                 <div style={{
-                  fontFamily: T.mono, fontWeight: 600, fontSize: 48,
-                  lineHeight: 1.05, letterSpacing: '-0.01em',
+                  fontFamily: T.mono, fontWeight: 600,
+                  // 24 segments at 48px is three wrapped lines — scale down past ~10.
+                  fontSize: activeProps.length > 10 ? 24 : 48,
+                  lineHeight: 1.15, letterSpacing: '-0.01em',
                   display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end',
                   gap: '6px 10px', marginBottom: 14,
                 }}>
@@ -379,48 +302,34 @@ export default function SKUGeneratorPage() {
                     <span style={{ color: T.ink4, fontSize: 28, fontWeight: 400 }}>Loading…</span>
                   ) : properties.length === 0 ? (
                     <span style={{ color: T.ink4, fontSize: 22, fontWeight: 400, fontFamily: T.sans }}>Add properties to generate a SKU</span>
-                  ) : properties.map(prop => {
+                  ) : activeProps.length === 0 ? (
+                    <span style={{ color: T.ink4, fontSize: 22, fontWeight: 400, fontFamily: T.sans }}>No properties in SKU generation</span>
+                  ) : activeProps.map(prop => {
                     const code = getSegCode(prop);
-                    const isOpen = popover?.propId === prop.id;
                     return (
-                      <span key={prop.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-                        <span style={{
-                          fontFamily: T.sans, fontSize: 10, fontWeight: 600, color: isOpen ? T.accentInk : T.ink4,
-                          textTransform: 'uppercase', letterSpacing: '0.05em',
-                          maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                        }}>
-                          {prop.caption}
-                        </span>
-                        <span
-                          title={prop.caption}
-                          onClick={e => openPopover(prop, e.currentTarget)}
-                          style={{
-                            padding: '2px 8px', borderRadius: 8, cursor: 'pointer',
-                            border: `1.5px ${code ? 'solid' : 'dashed'} ${isOpen ? T.accent : (code ? 'transparent' : T.borderStrong)}`,
-                            background: isOpen ? T.accentSoft : (code ? 'transparent' : T.bgSubtle),
-                            color: isOpen ? T.accentInk : (code ? T.ink : T.ink4),
-                            transition: 'background 0.12s, border-color 0.12s, color 0.12s',
-                            userSelect: 'none',
-                          }}
-                        >
-                          {code || '?'}
-                        </span>
+                      <span
+                        key={prop.id}
+                        title={prop.caption}
+                        style={{
+                          padding: '2px 8px', borderRadius: 8,
+                          border: `1.5px ${code ? 'solid' : 'dashed'} ${code ? 'transparent' : T.borderStrong}`,
+                          background: code ? 'transparent' : T.bgSubtle,
+                          color: code ? T.ink : T.ink4,
+                          userSelect: 'none',
+                        }}
+                      >
+                        {code || '?'}
                       </span>
                     );
                   })}
                 </div>
 
-                {/* Name / description */}
-                {preview ? (
-                  <div style={{ fontSize: 13.5, color: T.ink3, marginBottom: 14, lineHeight: 1.4 }}>
-                    <strong style={{ color: T.ink2 }}>{preview.name || '—'}</strong>
-                    {preview.description && (
-                      <span style={{ color: T.ink4 }}>&nbsp;· {preview.description.slice(0, 80)}</span>
-                    )}
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 13, color: T.ink4, marginBottom: 14 }}>Click any segment above to configure properties</div>
-                )}
+                {/* Name */}
+                <div style={{ fontSize: 13.5, color: T.ink3, marginBottom: 14, lineHeight: 1.4 }}>
+                  {preview
+                    ? <strong style={{ color: T.ink2 }}>{preview.name || '—'}</strong>
+                    : 'Pick values below to build a SKU'}
+                </div>
 
                 {/* Progress bar */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -432,133 +341,57 @@ export default function SKUGeneratorPage() {
                   </div>
                 </div>
 
-                {/* ── Popover */}
-                {popover && activeProp && (
-                  <div
-                    ref={popoverRef}
-                    style={{
-                      position: 'absolute',
-                      top: popover.top,
-                      left: popover.left,
-                      zIndex: 100,
-                      width: 280,
-                      background: T.bgElev,
-                      border: `1px solid ${T.border}`,
-                      borderRadius: 10,
-                      boxShadow: shadowLg,
-                      overflow: 'hidden',
-                      animation: 'fadeIn 0.1s ease',
-                    }}
-                  >
-                    {/* Popover header */}
-                    <div style={{ padding: '10px 12px 8px', borderBottom: `1px solid ${T.border}` }}>
-                      <div style={{ fontSize: 11.5, fontWeight: 600, color: T.ink2, marginBottom: 6 }}>
-                        {activeProp.caption}
-                        {activeProp.unit && <span style={{ fontWeight: 400, color: T.ink4 }}> ({activeProp.unit})</span>}
-                      </div>
+              </div>
+            )}
 
-                      {activeProp.valueType === 'Range' ? (
-                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                          <input
-                            autoFocus
-                            type="number"
-                            value={popRangeVal}
-                            onChange={e => setPopRangeVal(e.target.value)}
-                            onKeyDown={e => {
-                              if (e.key === 'Enter' && popRangeVal) handleSelect(activeProp.id, popRangeVal);
-                            }}
-                            min={activeProp.rangeMin ?? undefined}
-                            max={activeProp.rangeMax ?? undefined}
-                            placeholder={activeProp.rangeMin != null && activeProp.rangeMax != null
-                              ? `${activeProp.rangeMin} – ${activeProp.rangeMax}`
-                              : 'Enter value'}
-                            style={{
-                              flex: 1, height: 32, padding: '0 10px',
-                              border: `1.5px solid ${T.borderStrong}`,
-                              borderRadius: 6, fontFamily: T.sans, fontSize: 13, color: T.ink,
-                              outline: 'none', background: T.bgElev,
-                            }}
-                          />
-                          <button
-                            onClick={() => popRangeVal && handleSelect(activeProp.id, popRangeVal)}
-                            style={{
-                              height: 32, padding: '0 12px', borderRadius: 6,
-                              background: T.accent, color: '#fff', border: 'none',
-                              fontFamily: T.sans, fontSize: 12.5, fontWeight: 500,
-                              cursor: 'pointer',
-                            }}
-                          >Set</button>
-                        </div>
+            {/* ── Property list — one row per property, all of them in the SKU */}
+            {selectedIndustry && activeProps.length > 0 && (
+              <div style={{ background: T.bgElev, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: shadowSm, overflow: 'hidden' }}>
+
+                <SectionHead label={`Properties · ${activeProps.length}`} />
+                {activeProps.map(prop => {
+                  const code = getSegCode(prop);
+                  const val = selections[prop.id] ?? '';
+                  return (
+                    <PropRow key={prop.id} prop={prop}>
+                      {prop.valueType === 'Range' ? (
+                        <input
+                          type="number"
+                          value={val}
+                          onChange={e => handleSelect(prop.id, e.target.value)}
+                          min={prop.rangeMin ?? undefined}
+                          max={prop.rangeMax ?? undefined}
+                          placeholder={prop.rangeMin != null && prop.rangeMax != null ? `${prop.rangeMin} – ${prop.rangeMax}` : 'Enter value'}
+                          style={ctrlStyle}
+                        />
                       ) : (
-                        <div style={{ position: 'relative' }}>
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={T.ink4} strokeWidth="2" strokeLinecap="round"
-                            style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
-                            <circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>
-                          </svg>
-                          <input
-                            ref={popSearchRef}
-                            value={popQuery}
-                            onChange={e => setPopQuery(e.target.value)}
-                            placeholder={`Search ${activeProp.caption}…`}
-                            style={{
-                              width: '100%', height: 32, padding: '0 10px 0 30px',
-                              border: `1.5px solid ${T.borderStrong}`,
-                              borderRadius: 6, fontFamily: T.sans, fontSize: 13, color: T.ink,
-                              outline: 'none', background: T.bgElev, boxSizing: 'border-box',
-                            }}
-                          />
-                        </div>
+                        <select value={val} onChange={e => handleSelect(prop.id, e.target.value)} style={{ ...ctrlStyle, cursor: 'pointer' }}>
+                          <option value="">— select —</option>
+                          {(propertyValues[prop.id] || []).map(v => (
+                            <option key={v.id} value={String(v.id)}>{v.sku} — {v.displayValue}</option>
+                          ))}
+                        </select>
                       )}
-                    </div>
+                      <span style={{
+                        fontFamily: T.mono, fontSize: 12.5, fontWeight: 600,
+                        color: code ? T.accentInk : T.ink4, textAlign: 'right',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>{code || '—'}</span>
+                    </PropRow>
+                  );
+                })}
+              </div>
+            )}
 
-                    {/* Options list (Manual only) */}
-                    {activeProp.valueType === 'Manual' && (
-                      <div style={{ maxHeight: 220, overflowY: 'auto' }}>
-                        {popOptions.length === 0 ? (
-                          <div style={{ padding: '12px 14px', fontSize: 12.5, color: T.ink4, textAlign: 'center' }}>No matches</div>
-                        ) : popOptions.map(v => {
-                          const isSelected = String(selections[activeProp.id]) === String(v.id);
-                          return (
-                            <div
-                              key={v.id}
-                              onClick={() => handleSelect(activeProp.id, String(v.id))}
-                              style={{
-                                display: 'flex', alignItems: 'center', gap: 10,
-                                padding: '8px 12px', cursor: 'pointer',
-                                background: isSelected ? T.accentSoft : 'transparent',
-                                transition: 'background 0.08s',
-                              }}
-                              onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = T.bgSubtle; }}
-                              onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
-                            >
-                              <span style={{
-                                fontFamily: T.mono, fontWeight: 600, fontSize: 12.5,
-                                color: isSelected ? T.accentInk : T.ink,
-                                minWidth: 36,
-                              }}>{v.sku}</span>
-                              <span style={{ fontSize: 12.5, color: isSelected ? T.accentInk : T.ink3, flex: 1 }}>{v.displayValue}</span>
-                              {isSelected && (
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={T.accentInk} strokeWidth="3" strokeLinecap="round">
-                                  <polyline points="20 6 9 17 4 12"/>
-                                </svg>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* Popover footer */}
-                    <div style={{ padding: '6px 12px', borderTop: `1px solid ${T.border}`, display: 'flex', gap: 10, fontSize: 11, color: T.ink4 }}>
-                      {(activeProp.valueType === 'Manual'
-                        ? [['↑↓', 'navigate'], ['↵', 'select'], ['esc', 'close']]
-                        : [['↵', 'confirm'], ['esc', 'close']]
-                      ).map(([k, l]) => (
-                        <span key={k}><kbd style={{ fontFamily: T.mono, padding: '1px 4px', border: `1px solid ${T.border}`, borderRadius: 3 }}>{k}</kbd> {l}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
+            {/* ── Description preview — exactly what Zoho Books receives */}
+            {selectedIndustry && preview?.description && (
+              <div style={{ background: T.bgElev, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: shadowSm, overflow: 'hidden' }}>
+                <SectionHead label="Item & sales description" />
+                <pre style={{
+                  margin: 0, padding: '12px 16px', maxHeight: 260, overflowY: 'auto',
+                  fontFamily: T.sans, fontSize: 12.5, lineHeight: 1.6, color: T.ink2,
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                }}>{preview.description}</pre>
               </div>
             )}
 
@@ -672,22 +505,6 @@ export default function SKUGeneratorPage() {
                     </svg>
                     Copy permalink
                   </button>
-
-                  <button
-                    onClick={() => toast.success('Submitted to helpdesk')}
-                    style={{
-                      width: '100%', padding: '9px 14px', borderRadius: 8,
-                      fontSize: 13, fontWeight: 500, border: 'none',
-                      cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                      background: 'transparent', color: T.ink3, fontFamily: T.sans,
-                    }}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-                    </svg>
-                    Submit to helpdesk
-                  </button>
                 </div>
               </div>
             </div>
@@ -756,89 +573,6 @@ export default function SKUGeneratorPage() {
           </div>
         </div>
       </div>
-
-      {/* ── Command Palette */}
-      {cmdkOpen && (
-        <div
-          onClick={() => setCmdkOpen(false)}
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)',
-            zIndex: 200, display: 'flex', alignItems: 'flex-start',
-            justifyContent: 'center', paddingTop: '12vh',
-            animation: 'fadeIn 0.15s ease',
-          }}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{
-              width: 560, maxWidth: '90vw',
-              background: T.bgElev, border: `1px solid ${T.border}`,
-              borderRadius: 12, boxShadow: shadowLg, overflow: 'hidden',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: `1px solid ${T.border}` }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={T.ink3} strokeWidth="2" strokeLinecap="round">
-                <circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>
-              </svg>
-              <input
-                autoFocus
-                value={cmdkQuery}
-                onChange={e => setCmdkQuery(e.target.value)}
-                onKeyDown={e => e.key === 'Escape' && setCmdkOpen(false)}
-                placeholder="Search SKUs, properties, actions…"
-                style={{ flex: 1, border: 'none', outline: 'none', fontFamily: T.sans, fontSize: 14.5, color: T.ink, background: 'transparent' }}
-              />
-              <span style={{ fontSize: 11, color: T.ink4 }}>esc</span>
-            </div>
-
-            <div style={{ maxHeight: 360, overflowY: 'auto', padding: 6 }}>
-              <div style={{ fontSize: 10.5, fontWeight: 600, color: T.ink4, textTransform: 'uppercase', letterSpacing: '0.06em', padding: '8px 10px 6px' }}>Actions</div>
-              {[
-                { code: '⌘N', label: 'Create new SKU' },
-                { code: '⌘B', label: 'Bulk generate from matrix' },
-                { code: '⌘I', label: 'Import from CSV' },
-              ].map(row => (
-                <div
-                  key={row.code}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13.5 }}
-                  onMouseEnter={e => e.currentTarget.style.background = T.bgSubtle}
-                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                >
-                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.ink3, minWidth: 36 }}>{row.code}</span>
-                  <span style={{ color: T.ink2 }}>{row.label}</span>
-                </div>
-              ))}
-
-              {filteredRecent.length > 0 && (
-                <>
-                  <div style={{ fontSize: 10.5, fontWeight: 600, color: T.ink4, textTransform: 'uppercase', letterSpacing: '0.06em', padding: '8px 10px 6px', marginTop: 4 }}>Recent SKUs</div>
-                  {filteredRecent.slice(0, 5).map(item => (
-                    <div
-                      key={item.id}
-                      style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13.5 }}
-                      onMouseEnter={e => e.currentTarget.style.background = T.bgSubtle}
-                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                      onClick={() => { navigator.clipboard.writeText(item.sku); setCmdkOpen(false); toast.success('SKU copied'); }}
-                    >
-                      <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.accentInk, minWidth: 80 }}>{item.sku}</span>
-                      <span style={{ color: T.ink3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
-                    </div>
-                  ))}
-                </>
-              )}
-            </div>
-
-            <div style={{ padding: '8px 14px', borderTop: `1px solid ${T.border}`, display: 'flex', gap: 14, fontSize: 11, color: T.ink4 }}>
-              {[['↑↓', 'navigate'], ['↵', 'select'], ['esc', 'close']].map(([k, l]) => (
-                <span key={k}>
-                  <kbd style={{ fontFamily: T.mono, padding: '1px 4px', border: `1px solid ${T.border}`, borderRadius: 3 }}>{k}</kbd>
-                  {' '}{l}
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use strict";
 const express = require("express");
-const { rowList, out, idOk, orgClause, ownsRow, findSkuRowId } = require("../store");
+const { rowList, out, idOk, orgClause, ownsRow, findSkuRowId, isActive, nameFilter } = require("../store");
 const { pushToZoho } = require("../zoho/push");
 const { saveItemValues, missingRequired } = require("../itemValues");
 
@@ -25,7 +25,9 @@ router.post("/generate", async (req, res) => {
       await zcql.executeZCQLQuery(
         `SELECT * FROM Property WHERE industryId = ${industryId} AND ${orgClause(req.catalyst)} ORDER BY skuPosition`,
       ),
-    ).map(out);
+    ).map(out).filter(isActive);
+
+    const inName = nameFilter(properties);
 
     const skuParts = [];
     const nameParts = [];
@@ -47,7 +49,7 @@ router.post("/generate", async (req, res) => {
         if (prop.rangeMax !== null && num > prop.rangeMax)
           return res.status(400).json({ error: `${prop.caption} must be <= ${prop.rangeMax}` });
         skuParts.push(String(rawValue));
-        nameParts.push(String(rawValue));
+        if (inName(prop)) nameParts.push(String(rawValue));
         descParts.push(`${prop.caption}: ${rawValue}${prop.unit ? " " + prop.unit : ""}`);
       } else {
         if (!idOk(rawValue)) return res.status(400).json({ error: `Invalid value for ${prop.caption}` });
@@ -57,8 +59,8 @@ router.post("/generate", async (req, res) => {
         if (!pvs.length) return res.status(404).json({ error: `Value ${rawValue} not found` });
         const pv = out(pvs[0]);
         skuParts.push(pv.sku);
-        nameParts.push(pv.name);
-        descParts.push(pv.description || pv.displayValue || pv.name);
+        if (inName(prop)) nameParts.push(pv.name);
+        descParts.push(`${prop.caption}: ${pv.displayValue || pv.name}${prop.unit ? " " + prop.unit : ""}`);
       }
     }
 
@@ -66,8 +68,10 @@ router.post("/generate", async (req, res) => {
     const sku = skuParts.join(sep);
     res.json({
       sku,
-      name: nameParts.join(", "),
-      description: descParts.join(" | "),
+      name: nameParts.join(" "),
+      // One "Caption: Value" line per filled property — this block is what lands
+      // in the Books item (sales) and purchase descriptions.
+      description: descParts.join("\n"),
       missingRequired,
       duplicate: sku ? Boolean(await findSkuRowId(req.catalyst, sku)) : false,
     });

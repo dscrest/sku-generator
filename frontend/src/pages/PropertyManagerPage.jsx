@@ -22,7 +22,7 @@ const selectStyle = {
   backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center', paddingRight: 30,
 };
 
-const emptyProp = { name: '', caption: '', unit: '', valueType: 'Manual', rangeMin: '', rangeMax: '', required: false, zohoCfApiName: '' };
+const emptyProp = { name: '', caption: '', unit: '', valueType: 'Manual', rangeMin: '', rangeMax: '', required: false, includeInName: false, zohoCfApiName: '' };
 const emptyVal = { displayValue: '', name: '', sku: '', description: '' };
 
 function PropForm({ form, setForm, onSubmit, onCancel, label }) {
@@ -56,6 +56,11 @@ function PropForm({ form, setForm, onSubmit, onCancel, label }) {
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
         <input type="checkbox" checked={!!form.required} onChange={e => setForm(f => ({ ...f, required: e.target.checked }))} />
         Required for SKU generation
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
+        <input type="checkbox" checked={!!form.includeInName} onChange={e => setForm(f => ({ ...f, includeInName: e.target.checked }))} />
+        Include in item name
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>— tick none and every property is used</span>
       </label>
       <ModalFooter><ModalBtn onClick={onCancel}>Cancel</ModalBtn><ModalBtn onClick={onSubmit} variant="primary">{label}</ModalBtn></ModalFooter>
     </>
@@ -137,7 +142,7 @@ export default function PropertyManagerPage() {
 
   function openEditProp(prop) {
     setSelectedProp(prop);
-    setPropForm({ name: prop.name, caption: prop.caption, unit: prop.unit || '', valueType: prop.valueType, rangeMin: prop.rangeMin ?? '', rangeMax: prop.rangeMax ?? '', required: !!prop.required, zohoCfApiName: prop.zohoCfApiName || '' });
+    setPropForm({ name: prop.name, caption: prop.caption, unit: prop.unit || '', valueType: prop.valueType, rangeMin: prop.rangeMin ?? '', rangeMax: prop.rangeMax ?? '', required: !!prop.required, includeInName: !!prop.includeInName, zohoCfApiName: prop.zohoCfApiName || '' });
     setShowEditProp(true);
   }
 
@@ -239,6 +244,8 @@ export default function PropertyManagerPage() {
                       <div style={{ fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 }}>
                         {prop.name}
                         {prop.required && <span style={{ fontSize: 9, fontWeight: 700, color: '#e11d48', background: '#fef2f2', border: '1px solid #fecdd3', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>REQUIRED</span>}
+                        {prop.includeInName && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--blue)', background: 'var(--blue-light)', border: '1px solid var(--blue-border)', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>IN NAME</span>}
+                        {prop.activeInSku === false && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>NOT IN SKU</span>}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{prop.caption}{prop.unit ? ` · ${prop.unit}` : ''}</div>
                     </div>

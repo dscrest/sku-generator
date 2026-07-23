@@ -1,5 +1,5 @@
 "use strict";
-const { rowList, out, idOk, zStr, reqOrg, orgClause } = require("./store");
+const { rowList, out, idOk, zStr, reqOrg, orgClause, isActive } = require("./store");
 
 const TABLE = "SKUItemValue";
 
@@ -14,7 +14,7 @@ async function saveItemValues(catalyst, skuItemId, industryId, selectedValues) {
   const zcql = catalyst.zcql();
   const props = rowList(
     await zcql.executeZCQLQuery(`SELECT * FROM Property WHERE industryId = ${industryId} AND ${orgClause(catalyst)}`),
-  ).map(out);
+  ).map(out).filter(isActive);
 
   const table = catalyst.datastore().table(TABLE);
   for (const prop of props) {
@@ -47,6 +47,7 @@ async function saveItemValues(catalyst, skuItemId, industryId, selectedValues) {
 
 // Required-property captions for an industry that have no value in selectedValues.
 // Empty array = all required props are satisfied. The hard gate for SKU creation.
+// Properties moved out of SKU generation can't be filled in, so they can't gate it.
 async function missingRequired(catalyst, industryId, selectedValues) {
   if (!idOk(industryId)) return [];
   const sv = selectedValues || {};
@@ -54,6 +55,7 @@ async function missingRequired(catalyst, industryId, selectedValues) {
     await catalyst.zcql().executeZCQLQuery(`SELECT * FROM Property WHERE industryId = ${industryId} AND ${orgClause(catalyst)}`),
   ).map(out);
   return props
+    .filter(isActive)
     .filter((p) => p.required)
     .filter((p) => { const v = sv[p.id]; return v === undefined || v === null || v === ""; })
     .map((p) => p.caption);

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
@@ -36,10 +37,13 @@ export default function SKUItemsPage() {
   const [saving, setSaving] = useState(false);
 
   // Text filters (free-text + SKU), debounced so we don't fire per keystroke.
-  const [q, setQ] = useState('');
+  // ?q= seeds the box so a global-search hit lands on a filtered grid.
+  const [searchParams] = useSearchParams();
+  const initialQ = searchParams.get('q') || '';
+  const [q, setQ] = useState(initialQ);
   const [skuFilter, setSkuFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
-  const [debounced, setDebounced] = useState({ q: '', sku: '' });
+  const [debounced, setDebounced] = useState({ q: initialQ, sku: '' });
   useEffect(() => {
     const t = setTimeout(() => setDebounced({ q: q.trim(), sku: skuFilter.trim() }), 300);
     return () => clearTimeout(t);
@@ -394,7 +398,7 @@ export default function SKUItemsPage() {
           <div><label style={labelStyle}>SKU <span style={{ color: '#e11d48' }}>*</span></label>
             <input style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} value={editForm.sku} onChange={e => setEditForm(f => ({ ...f, sku: e.target.value }))} /></div>
           <div><label style={labelStyle}>Description</label>
-            <input style={inputStyle} value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} /></div>
+            <textarea rows={10} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} /></div>
           <div><label style={labelStyle}>Type</label>
             <select style={{ ...inputStyle, cursor: 'pointer' }} value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}>
               <option value="Trading">Trading</option>
