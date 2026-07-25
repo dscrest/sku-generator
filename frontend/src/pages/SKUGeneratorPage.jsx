@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
@@ -99,9 +99,9 @@ export default function SKUGeneratorPage() {
   const [preview, setPreview] = useState(null);
   const [itemType, setItemType] = useState('Trading');
   const [creating, setCreating] = useState(false);
-  const [recentSKUs, setRecentSKUs] = useState([]);
 
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   useEffect(() => {
     axios.get('/api/industries').then(({ data }) => {
@@ -112,13 +112,6 @@ export default function SKUGeneratorPage() {
       // are already on screen instead of an empty prompt.
       if (found || data.length) setSelectedIndustry(found || data[0]);
     });
-  }, []);
-
-  const loadRecent = useCallback(async (industryId) => {
-    try {
-      const { data } = await axios.get('/api/sku-items', { params: { industryId } });
-      setRecentSKUs(data.slice(0, 6));
-    } catch {}
   }, []);
 
   const loadProperties = useCallback(async (industry) => {
@@ -153,7 +146,6 @@ export default function SKUGeneratorPage() {
       setSelections({});
       setPreview(null);
       loadProperties(selectedIndustry);
-      loadRecent(selectedIndustry.id);
     }
   }, [selectedIndustry]);
 
@@ -184,7 +176,7 @@ export default function SKUGeneratorPage() {
         selectedValues: selections,
       });
       toast.success(`SKU "${preview.sku}" created`);
-      loadRecent(selectedIndustry.id);
+      navigate('/sku/items'); // land on the list with the new SKU visible
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to create item');
     } finally { setCreating(false); }
@@ -235,6 +227,10 @@ export default function SKUGeneratorPage() {
       {/* ── Scrollable body. No page head: the SKU tab bar above already names
           the page, and the stats row moved out with it. */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px 32px' }}>
+
+        <Link to="/sku/items" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 600, color: T.ink3, textDecoration: 'none', marginBottom: 12 }}>
+          ← Back to SKUs
+        </Link>
 
         {/* Two-column layout */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 268px', gap: 20, alignItems: 'flex-start' }}>
@@ -539,37 +535,6 @@ export default function SKUGeneratorPage() {
                 ))}
               </div>
             </div>
-
-            {/* Recent SKUs */}
-            {recentSKUs.length > 0 && (
-              <div style={{ background: T.bgElev, border: `1px solid ${T.border}`, borderRadius: 12, overflow: 'hidden', boxShadow: shadowSm }}>
-                <div style={{ padding: '10px 14px', borderBottom: `1px solid ${T.border}`, fontSize: 10.5, fontWeight: 600, color: T.ink4, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  Recent SKUs
-                </div>
-                {recentSKUs.slice(0, 5).map(item => (
-                  <div
-                    key={item.id}
-                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', cursor: 'pointer', borderBottom: `1px solid ${T.border}`, transition: 'background 0.1s' }}
-                    onMouseEnter={e => e.currentTarget.style.background = T.bgSubtle}
-                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                    onClick={() => navigator.clipboard.writeText(item.sku).then(() => toast.success('SKU copied'))}
-                  >
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: T.mono, fontWeight: 600, fontSize: 12.5, color: T.ink }}>{item.sku}</div>
-                      <div style={{ fontSize: 11, color: T.ink4, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</div>
-                    </div>
-                    <span style={{
-                      fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4,
-                      background: item.type === 'Trading' ? T.accentSoft : T.bgSubtle,
-                      color: item.type === 'Trading' ? T.accentInk : T.ink3,
-                      textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap',
-                    }}>
-                      {item.type ? item.type[0] : '—'}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       </div>

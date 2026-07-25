@@ -240,12 +240,14 @@ Old-scope tokens (pre-Inventory) make reserve endpoints return `409 {error:"reau
 
 HashRouter (`/app/#/…`) — Catalyst web hosting has no SPA fallback.
 Left nav renders one entry per **enabled add-on**; SKU Generator is one entry
-with a tab bar (`SkuLayout` in `App.jsx`).
+with a tab bar (`SkuLayout` in `App.jsx`). Tabs follow the setup order:
+Industries → Properties → SKU Generator (`/sku/items`, the combined
+list+generator page — CR-014); default landing is `/sku/industries`.
 
 | Route | Page | Purpose |
 |-------|------|---------|
-| `/sku/generator` | `SKUGeneratorPage` | Opens on the first industry; vertical list of all its properties → live SKU + name + description preview → create item. No page head — the tab bar is the only header |
-| `/sku/items` | `SKUItemsPage` | Browse/search/edit/delete items (free-text + SKU/Type/Industry/property filters, paginated grid), manual Zoho push, import from Zoho |
+| `/sku/items` | `SKUItemsPage` | The "SKU Generator" tab: browse/search items (free-text + SKU/Type/Industry/property filters, paginated grid), **+ New** → `/sku/generator`, Zoho push/import. Row click → Zoho-Books master–detail (narrow left list + right edit panel) |
+| `/sku/generator` | `SKUGeneratorPage` | The "+ New" sub-page (kept as a route for permalinks): opens on the first industry; vertical list of all its properties → live SKU + name + description preview → create item, then back to the list |
 | `/sku/industries` | `IndustriesPage` | Manage industries |
 | `/sku/industries/:id/properties` | `PropertyManagerPage` | Manage one industry's properties + values (incl. Books custom-field mapping) |
 | `/sku/properties` | `PropertiesPage` | All org properties in one grid, filterable by industry/type/required |
@@ -266,7 +268,8 @@ Shared components: `GridFooter.jsx` (`usePager`, `<GridFooter>`, `FilterSelect`,
 `distinct`), `RowEditButton.jsx`, `RowDeleteButton.jsx`, `Modal.jsx`,
 `Toolbar.jsx`, `SKUPreview.jsx`, `GlobalSearch.jsx` (⌘K catalog search over SKU
 items + properties, rendered in the SKU tab bar). Grid conventions: pinned footer pagination
-(25 default), value-based filters, hover pencil/trash — **no row-click edit**.
+(25 default), value-based filters, hover pencil/trash — **no row-click edit**
+(exception: `SKUItemsPage` row click opens its master–detail panel, CR-014).
 
 App access is gated in `App.jsx`: it loads `/auth/me`, then blocks the main UI
 until Zoho is `connected` **and** an `orgId` is selected.

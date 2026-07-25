@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
-import Modal, { ModalFooter, ModalBtn } from '../components/Modal.jsx';
+import { ModalBtn } from '../components/Modal.jsx';
 import RowDeleteButton from '../components/RowDeleteButton.jsx';
+import GridFooter, { usePager } from '../components/GridFooter.jsx';
 
 const inputStyle = {
   width: '100%', background: 'var(--bg-secondary)', border: '1px solid var(--border)',
@@ -28,11 +29,16 @@ const selectStyle = {
 };
 
 export default function SKUItemsPage() {
+  const navigate = useNavigate();
   const [items, setItems] = useState([]);
   const [industries, setIndustries] = useState([]);
   const [filterIndustry, setFilterIndustry] = useState('');
   const [sortCol, setSortCol] = useState('createdAt');
   const [sortDir, setSortDir] = useState('desc');
+  // Zoho Books master–detail: selected item id opens the left-list + detail
+  // layout; editForm is the detail panel's working copy.
+  // ponytail: local state; promote to a /sku/items/:id route if deep-linking is needed
+  const [selected, setSelected] = useState(null);
   const [editForm, setEditForm] = useState(null); // { id, name, sku, description, type } | null
   const [saving, setSaving] = useState(false);
 
@@ -48,11 +54,6 @@ export default function SKUItemsPage() {
     const t = setTimeout(() => setDebounced({ q: q.trim(), sku: skuFilter.trim() }), 300);
     return () => clearTimeout(t);
   }, [q, skuFilter]);
-
-  // Client-side pagination. ponytail: pages the already-fetched result set
-  // (one 300-row ZCQL page); switch to server LIMIT/OFFSET when data outgrows it.
-  const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(25);
 
   // Property search
   const [properties, setProperties] = useState([]);
@@ -71,7 +72,6 @@ export default function SKUItemsPage() {
         filters: filters.map(({ propertyId, valueId, text }) => ({ propertyId, valueId, text })),
       });
       setItems(data);
-      setPage(0);
     } catch { toast.error('Failed to load SKU items'); }
   }, [filterIndustry, filters, debounced, typeFilter]);
 
@@ -130,6 +130,8 @@ export default function SKUItemsPage() {
     return sortDir === 'asc' ? v : -v;
   });
 
+  const { pageRows: paged, pager } = usePager(sorted);
+
   function toggleSort(col) {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortCol(col); setSortDir('asc'); }
@@ -159,8 +161,14 @@ export default function SKUItemsPage() {
     }
   }
 
-  function openEdit(item) {
+  function openDetail(item) {
+    setSelected(item.id);
     setEditForm({ id: item.id, name: item.name, sku: item.sku, description: item.description || '', type: item.type });
+  }
+
+  function closeDetail() {
+    setSelected(null);
+    setEditForm(null);
   }
 
   async function handleEditSave() {
@@ -170,7 +178,7 @@ export default function SKUItemsPage() {
       await axios.put(`/api/sku-items/${editForm.id}`, {
         name: editForm.name, sku: editForm.sku, description: editForm.description, type: editForm.type,
       });
-      toast.success('SKU updated'); setEditForm(null); load();
+      toast.success('SKU updated'); load();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to update');
     } finally { setSaving(false); }
@@ -180,7 +188,9 @@ export default function SKUItemsPage() {
     if (!confirm(`Delete SKU "${item.sku}"?`)) return;
     try {
       await axios.delete(`/api/sku-items/${item.id}`);
-      toast.success('Item deleted'); load();
+      toast.success('Item deleted');
+      if (String(item.id) === String(selected)) closeDetail();
+      load();
     } catch { toast.error('Failed to delete item'); }
   }
 
@@ -190,28 +200,25 @@ export default function SKUItemsPage() {
     </span>
   );
 
-  const total = sorted.length;
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  const curPage = Math.min(page, pageCount - 1);
-  const paged = sorted.slice(curPage * pageSize, (curPage + 1) * pageSize);
-
-  const PageBtn = ({ onClick, disabled, title, path }) => (
-    <button
-      onClick={onClick} disabled={disabled} title={title}
-      style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-card)', color: disabled ? 'var(--text-muted)' : 'var(--text-secondary)', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1 }}
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d={path} /></svg>
-    </button>
-  );
+  // Detail mode needs the fresh row for the read-only bits (industry, Zoho);
+  // editForm keeps the user's in-progress edits.
+  const selectedItem = selected != null ? items.find(i => String(i.id) === String(selected)) : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', padding: '0 24px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 600 }}>SKU Items</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Home / SKU Items</div>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>SKUs</div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Home / SKU Generator</div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button
+            onClick={() => navigate('/sku/generator')}
+            title="Generate a new SKU"
+            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--blue)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
+          >
+            + New
+          </button>
           <button
             onClick={handleImportZoho}
             disabled={!filterIndustry}
@@ -297,118 +304,192 @@ export default function SKUItemsPage() {
         )}
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', padding: '20px 24px' }}>
-        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-          <Toolbar onRefresh={load} />
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr>
-                  <th style={thStyle} onClick={() => toggleSort('name')}>Name <SortArrow col="name" /></th>
-                  <th style={thStyle} onClick={() => toggleSort('sku')}>SKU <SortArrow col="sku" /></th>
-                  <th style={thStyle} onClick={() => toggleSort('description')}>Description <SortArrow col="description" /></th>
-                  <th style={thStyle} onClick={() => toggleSort('type')}>Type <SortArrow col="type" /></th>
-                  <th style={thStyle} onClick={() => toggleSort('industry')}>Industry <SortArrow col="industry" /></th>
-                  <th style={thStyle} onClick={() => toggleSort('createdAt')}>Created <SortArrow col="createdAt" /></th>
-                  <th style={{ ...thStyle, width: 110 }}>Zoho</th>
-                  <th style={{ ...thStyle, width: 48 }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.length === 0 && (
-                  <tr><td colSpan={8} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No SKU items yet. Create one from SKU Generator.</td></tr>
-                )}
-                {paged.map(item => {
-                  return (
-                    <tr
-                      key={item.id}
-                      onClick={() => openEdit(item)}
-                      title="Click to edit"
-                      style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
-                      onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                    >
-                      <td style={{ padding: '10px 16px', fontWeight: 500 }}>{item.name}</td>
-                      <td style={{ padding: '10px 16px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--blue)', fontWeight: 500 }}>{item.sku}</td>
-                      <td style={{ padding: '10px 16px', color: 'var(--text-secondary)', maxWidth: 240 }}>
-                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description || '—'}</div>
-                      </td>
-                      <td style={{ padding: '10px 16px' }}>
-                        <span style={{ fontSize: 11, fontWeight: 500, padding: '2px 8px', borderRadius: 10, background: item.type === 'Trading' ? '#f0fdf4' : '#faf5ff', color: item.type === 'Trading' ? '#16a34a' : '#7c3aed', border: `1px solid ${item.type === 'Trading' ? '#bbf7d0' : '#e9d5ff'}` }}>
-                          {item.type}
-                        </span>
-                      </td>
-                      <td style={{ padding: '10px 16px', color: 'var(--text-secondary)' }}>{item.industry?.name || '—'}</td>
-                      <td style={{ padding: '10px 16px', color: 'var(--text-muted)', fontSize: 12 }}>{new Date(item.createdAt).toLocaleDateString()}</td>
-                      <td style={{ padding: '8px 16px' }} onClick={e => e.stopPropagation()}>
-                        <button
-                          onClick={e => handlePushZoho(item, e)}
-                          title={item.zohoItemId ? `Zoho ID: ${item.zohoItemId}` : 'Push to Zoho Books'}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 5,
-                            padding: '4px 10px', fontSize: 11, fontWeight: 600,
-                            background: item.zohoItemId ? '#f0fdf4' : '#fff7ed',
-                            color: item.zohoItemId ? '#16a34a' : '#ea580c',
-                            border: `1px solid ${item.zohoItemId ? '#bbf7d0' : '#fed7aa'}`,
-                            borderRadius: 'var(--radius-sm)', cursor: 'pointer', whiteSpace: 'nowrap',
-                          }}
-                        >
-                          <span style={{ fontWeight: 700 }}>Z</span>
-                          {item.zohoItemId ? 'Synced' : 'Push'}
-                        </button>
-                      </td>
-                      <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
-                        <RowDeleteButton onDelete={() => handleDelete(item)} title={`Delete ${item.sku}`} />
-                      </td>
+      {!selected ? (
+        <>
+          <div style={{ flex: 1, overflow: 'auto', padding: '20px 24px' }}>
+            <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+              <Toolbar onRefresh={load} />
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle} onClick={() => toggleSort('name')}>Name <SortArrow col="name" /></th>
+                      <th style={thStyle} onClick={() => toggleSort('sku')}>SKU <SortArrow col="sku" /></th>
+                      <th style={thStyle} onClick={() => toggleSort('description')}>Description <SortArrow col="description" /></th>
+                      <th style={thStyle} onClick={() => toggleSort('type')}>Type <SortArrow col="type" /></th>
+                      <th style={thStyle} onClick={() => toggleSort('industry')}>Industry <SortArrow col="industry" /></th>
+                      <th style={thStyle} onClick={() => toggleSort('createdAt')}>Created <SortArrow col="createdAt" /></th>
+                      <th style={{ ...thStyle, width: 110 }}>Zoho</th>
+                      <th style={{ ...thStyle, width: 48 }}></th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody>
+                    {sorted.length === 0 && (
+                      <tr><td colSpan={8} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No SKU items yet. Click "+ New" to generate one.</td></tr>
+                    )}
+                    {paged.map(item => {
+                      return (
+                        <tr
+                          key={item.id}
+                          onClick={() => openDetail(item)}
+                          title="Click to view details"
+                          style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                        >
+                          <td style={{ padding: '10px 16px', fontWeight: 500 }}>{item.name}</td>
+                          <td style={{ padding: '10px 16px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--blue)', fontWeight: 500 }}>{item.sku}</td>
+                          <td style={{ padding: '10px 16px', color: 'var(--text-secondary)', maxWidth: 240 }}>
+                            <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description || '—'}</div>
+                          </td>
+                          <td style={{ padding: '10px 16px' }}>
+                            <span style={{ fontSize: 11, fontWeight: 500, padding: '2px 8px', borderRadius: 10, background: item.type === 'Trading' ? '#f0fdf4' : '#faf5ff', color: item.type === 'Trading' ? '#16a34a' : '#7c3aed', border: `1px solid ${item.type === 'Trading' ? '#bbf7d0' : '#e9d5ff'}` }}>
+                              {item.type}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px 16px', color: 'var(--text-secondary)' }}>{item.industry?.name || '—'}</td>
+                          <td style={{ padding: '10px 16px', color: 'var(--text-muted)', fontSize: 12 }}>{new Date(item.createdAt).toLocaleDateString()}</td>
+                          <td style={{ padding: '8px 16px' }} onClick={e => e.stopPropagation()}>
+                            <button
+                              onClick={e => handlePushZoho(item, e)}
+                              title={item.zohoItemId ? `Zoho ID: ${item.zohoItemId}` : 'Push to Zoho Books'}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 5,
+                                padding: '4px 10px', fontSize: 11, fontWeight: 600,
+                                background: item.zohoItemId ? '#f0fdf4' : '#fff7ed',
+                                color: item.zohoItemId ? '#16a34a' : '#ea580c',
+                                border: `1px solid ${item.zohoItemId ? '#bbf7d0' : '#fed7aa'}`,
+                                borderRadius: 'var(--radius-sm)', cursor: 'pointer', whiteSpace: 'nowrap',
+                              }}
+                            >
+                              <span style={{ fontWeight: 700 }}>Z</span>
+                              {item.zohoItemId ? 'Synced' : 'Push'}
+                            </button>
+                          </td>
+                          <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
+                            <RowDeleteButton onDelete={() => handleDelete(item)} title={`Delete ${item.sku}`} />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
+          <GridFooter pager={pager} />
+        </>
+      ) : (
+        /* Zoho Books master–detail: narrow item list on the left, detail on the right */
+        <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
+          <div style={{ width: 300, flexShrink: 0, borderRight: '1px solid var(--border)', overflowY: 'auto', background: 'var(--bg-card)' }}>
+            {sorted.length === 0 && (
+              <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No matching items</div>
+            )}
+            {sorted.map(item => {
+              const active = String(item.id) === String(selected);
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => openDetail(item)}
+                  style={{
+                    padding: '10px 13px', borderBottom: '1px solid var(--border)', cursor: 'pointer',
+                    background: active ? 'var(--blue-light)' : 'transparent',
+                    borderLeft: `3px solid ${active ? 'var(--blue)' : 'transparent'}`,
+                    transition: 'background 0.1s',
+                  }}
+                  onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+                  onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent'; }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {item.name}
+                    </div>
+                    {item.zohoItemId && <span title={`Zoho ID: ${item.zohoItemId}`} style={{ fontSize: 10, fontWeight: 700, color: '#16a34a', flexShrink: 0 }}>Z</span>}
+                  </div>
+                  <div style={{ fontSize: 11.5, fontFamily: 'var(--font-mono)', color: 'var(--blue)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {item.sku}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
 
-      {/* Pagination footer — page-level, pinned below the scroll area (never moves or resizes) */}
-      <div style={{ height: 44, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', borderTop: '1px solid var(--border)', background: 'var(--bg-card)', flexShrink: 0 }}>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-          {total === 0 ? 'No records' : `Showing ${curPage * pageSize + 1}–${Math.min((curPage + 1) * pageSize, total)} of ${total} record${total !== 1 ? 's' : ''}`}
-        </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <select
-            value={pageSize}
-            onChange={e => { setPageSize(Number(e.target.value)); setPage(0); }}
-            style={{ ...selectStyle, padding: '4px 8px' }}
-            title="Records per page"
-          >
-            {[10, 25, 50, 100].map(n => <option key={n} value={n}>{n} / page</option>)}
-          </select>
-          <PageBtn title="First page" disabled={curPage === 0} onClick={() => setPage(0)} path="M11 17l-5-5 5-5M18 17l-5-5 5-5" />
-          <PageBtn title="Previous page" disabled={curPage === 0} onClick={() => setPage(p => Math.max(0, p - 1))} path="M15 18l-6-6 6-6" />
-          <span style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '0 4px' }}>{curPage + 1} / {pageCount}</span>
-          <PageBtn title="Next page" disabled={curPage >= pageCount - 1} onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))} path="M9 18l6-6-6-6" />
-          <PageBtn title="Last page" disabled={curPage >= pageCount - 1} onClick={() => setPage(pageCount - 1)} path="M13 17l5-5-5-5M6 17l5-5-5-5" />
-        </div>
-      </div>
+          {editForm && (
+            <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+              <div style={{ maxWidth: 760, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+                <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 15, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{editForm.name || '—'}</div>
+                    <div style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--blue)', marginTop: 2 }}>{editForm.sku}</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                    {selectedItem && (
+                      <button
+                        onClick={e => handlePushZoho(selectedItem, e)}
+                        title={selectedItem.zohoItemId ? `Zoho ID: ${selectedItem.zohoItemId}` : 'Push to Zoho Books'}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', fontSize: 11, fontWeight: 600,
+                          background: selectedItem.zohoItemId ? '#f0fdf4' : '#fff7ed',
+                          color: selectedItem.zohoItemId ? '#16a34a' : '#ea580c',
+                          border: `1px solid ${selectedItem.zohoItemId ? '#bbf7d0' : '#fed7aa'}`,
+                          borderRadius: 'var(--radius-sm)', cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        <span style={{ fontWeight: 700 }}>Z</span>
+                        {selectedItem.zohoItemId ? 'Synced' : 'Push to Zoho'}
+                      </button>
+                    )}
+                    <button
+                      onClick={closeDetail}
+                      title="Close details"
+                      style={{ width: 28, height: 28, border: '1px solid var(--border)', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
 
-      {editForm && (
-        <Modal title="Edit SKU Item" onClose={() => setEditForm(null)}>
-          <div><label style={labelStyle}>Name <span style={{ color: '#e11d48' }}>*</span></label>
-            <input style={inputStyle} value={editForm.name} autoFocus onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} /></div>
-          <div><label style={labelStyle}>SKU <span style={{ color: '#e11d48' }}>*</span></label>
-            <input style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} value={editForm.sku} onChange={e => setEditForm(f => ({ ...f, sku: e.target.value }))} /></div>
-          <div><label style={labelStyle}>Description</label>
-            <textarea rows={10} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} /></div>
-          <div><label style={labelStyle}>Type</label>
-            <select style={{ ...inputStyle, cursor: 'pointer' }} value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}>
-              <option value="Trading">Trading</option>
-              <option value="Manufacturing">Manufacturing</option>
-            </select></div>
-          <ModalFooter>
-            <ModalBtn onClick={() => setEditForm(null)}>Cancel</ModalBtn>
-            <ModalBtn onClick={handleEditSave} variant="primary" disabled={saving}>{saving ? 'Saving…' : 'Save'}</ModalBtn>
-          </ModalFooter>
-        </Modal>
+                <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                    <div><label style={labelStyle}>Name <span style={{ color: '#e11d48' }}>*</span></label>
+                      <input style={inputStyle} value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} /></div>
+                    <div><label style={labelStyle}>SKU <span style={{ color: '#e11d48' }}>*</span></label>
+                      <input style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} value={editForm.sku} onChange={e => setEditForm(f => ({ ...f, sku: e.target.value }))} /></div>
+                  </div>
+                  <div><label style={labelStyle}>Description</label>
+                    <textarea rows={8} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} /></div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
+                    <div><label style={labelStyle}>Type</label>
+                      <select style={{ ...inputStyle, cursor: 'pointer' }} value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}>
+                        <option value="Trading">Trading</option>
+                        <option value="Manufacturing">Manufacturing</option>
+                      </select></div>
+                    <div><label style={labelStyle}>Industry</label>
+                      <div style={{ ...inputStyle, background: 'transparent', border: '1px solid transparent', padding: '9px 0' }}>{selectedItem?.industry?.name || '—'}</div></div>
+                    <div><label style={labelStyle}>Created</label>
+                      <div style={{ ...inputStyle, background: 'transparent', border: '1px solid transparent', padding: '9px 0' }}>{selectedItem ? new Date(selectedItem.createdAt).toLocaleDateString() : '—'}</div></div>
+                  </div>
+                </div>
+
+                <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button
+                    onClick={() => selectedItem && handleDelete(selectedItem)}
+                    style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', fontSize: 13, fontWeight: 500, fontFamily: 'var(--font)', border: '1px solid #fecdd3', background: 'transparent', color: '#e11d48', cursor: 'pointer' }}
+                  >
+                    Delete
+                  </button>
+                  <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                    <ModalBtn onClick={closeDetail}>Close</ModalBtn>
+                    <ModalBtn onClick={handleEditSave} variant="primary" disabled={saving}>{saving ? 'Saving…' : 'Save'}</ModalBtn>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

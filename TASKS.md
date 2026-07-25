@@ -10,11 +10,18 @@ Related docs: [CHANGES.md](CHANGES.md) (change requests + shipped log),
 [SCHEMA.md](SCHEMA.md) (DB), [ARCHITECTURE.md](ARCHITECTURE.md) (system),
 [ZOHO_AUTH.md](ZOHO_AUTH.md) (OAuth setup).
 
-Last updated: 2026-07-23.
+Last updated: 2026-07-24.
 
 ---
 
 ## In progress
+
+### CR-014 — SKU tabs in setup order + combined SKUs page (branch `feat/zoho-field-mapping`)
+- [x] Tabs reordered Industries → Properties → SKU Generator; default landing `/sku/industries`
+- [x] SKU Items + Generator merged: `/sku/items` list with **+ New** → `/sku/generator`
+- [x] Row click → Zoho-Books master–detail (left list + right edit panel); edit modal removed
+- [x] Recent SKUs rail removed from generator; create navigates back to the list
+- [x] `SKUItemsPage` pagination folded onto shared `GridFooter`/`usePager`
 
 ### CR-012 — CRM Deal → SKU master item picker (specified, blocked)
 Widget in a CRM Deal → search SKU master → multi-select → rows land in the

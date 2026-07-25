@@ -7,6 +7,7 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 | CR | Date | Title | Status |
 |----|------|-------|--------|
+| CR-014 | 2026-07-24 | SKU tabs in setup order + combined SKUs page (Zoho Books master–detail) | ✅ shipped |
 | CR-013 | 2026-07-23 | Work Order module (MSUN BRD) — BOM, Reserve/Issue/Return, Purchase Request | 🚧 in progress |
 | CR-012 | 2026-07-23 | CRM Deal → SKU master item picker (widget) | 📋 specified, blocked on CRM console work |
 | CR-011 | 2026-07-23 | Generator chrome cleanup + catalog-wide search | ✅ shipped |
@@ -19,6 +20,38 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 | CR-003 | 2026-07-02 | Item search, grid filters, pagination, sidebar, branding | ✅ shipped |
 | CR-002 | 2026-06-30 | Migrate backend to Catalyst Data Store | ✅ shipped |
 | CR-001 | 2026-05-28 | SKU editing + Zoho Books value sync & import | ✅ shipped |
+
+---
+
+## CR-014 — SKU tabs in setup order + combined SKUs page (2026-07-24) — ✅ shipped
+
+**Requested:** (1) tab sequence should follow the creation flow — Industries →
+Properties → SKU Generation; (2) drop the Recent SKUs rail from the generator;
+(3) merge SKU Items and SKU Generator into one tab: the tab shows the items
+list, a **New** button opens the generator, and clicking an item uses the Zoho
+Books item model (list collapses to a narrow left panel, details on the right).
+
+**Shipped:**
+
+- `App.jsx`: `SKU_TABS` is now Industries → Properties → **SKU Generator**
+  (`/sku/items`, the combined page); the separate "SKU Items" tab is gone.
+  Default landing (sidebar entry, `/` and `*` redirects) moved to
+  `/sku/industries`. `/sku/generator` stays a live route for permalinks.
+- `SKUItemsPage.jsx`: **+ New** button → `/sku/generator`. Row click opens the
+  master–detail layout — 300px left list (name/SKU, Zoho badge, selected
+  highlight) + right detail card (Name/SKU/Description/Type editable, Industry/
+  Created read-only, Push to Zoho, Delete, × close back to the full grid). The
+  Edit modal is deleted; the hand-rolled pagination footer is replaced with the
+  shared `GridFooter`/`usePager`.
+- `SKUGeneratorPage.jsx`: Recent SKUs card, `recentSKUs` state and `loadRecent`
+  removed. Create Item now navigates to `/sku/items` (new SKU visible at the
+  top); "← Back to SKUs" link added above the builder.
+
+**Not done:** no `/sku/items/:id` deep-link route — the selected item is local
+state (`ponytail:` comment marks the upgrade path). Grid-mode row actions
+(hover trash, Z push) unchanged. Note: this page is a deliberate exception to
+the "no row-click edit" grid convention — the user asked for the Zoho Books
+row-click master–detail here.
 
 ---
 
@@ -89,6 +122,30 @@ written to the documented shape but have never been posted.
 
 Every non-trivial rule is self-checked without a Data Store:
 `node functions/skuapi/workorder/<module>.js --selftest`.
+
+**2026-07-23 fix — Zoho Locations orgs.** First live WO (WO-0001) showed a false
+shortage: `ItemStockSnapshot` was empty (no cron/webhook/refresh had ever run)
+and the settings warehouse dropdown was missing branch locations, because the
+client org has Books **Locations** enabled. Legacy `/warehouses` returns only
+warehouse-type entries — branches like "Surat - Head Office" (which held the
+stock) never appeared. `listWarehouses` now prefers `GET /locations` (normalised
+to the warehouse shape, legacy fallback kept) and `writeStock` reads
+`item.locations[]` alongside `item.warehouses[]`. Also found in the live org:
+`mainWarehouseId` = `reserveWarehouseId` — must be re-picked in WO Settings once
+the full location list shows. The transfer-order payload was verified the hard
+way on first Confirm Reserve: Zoho requires `from_location_id`/`to_location_id`,
+`line_items[].name` (its absence was the "Invalid value passed for name" code 4)
+and `quantity_transfer` — plain `quantity` is ignored. `createTransferOrder`
+now sends all three. Follow-up the same day: the snapshot
+stayed empty because nothing could trigger a sync (no cron, no webhooks, and
+the grid's Refresh button only re-read the local table). `buildGrid` now
+self-heals never-synced items with one live pull per item, and the Materials
+grid's ⟳ Refresh calls `POST /api/wo/refresh` (full reconcile) before
+re-reading. The reconcile's bulk `/items` sweep is gone: on Locations orgs that
+payload reports `stock_on_hand: 0` with no per-location breakdown (verified
+live), so the reconcile now makes one item-detail call per working-set item —
+still bounded by open work orders — and a single item's failure logs instead of
+aborting the whole refresh.
 
 ### Out of scope (stated to the client)
 

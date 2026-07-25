@@ -183,7 +183,7 @@ function HeaderBar({ zoho, onLogout, onSwitchOrg }) {
 // enabled addons from /auth/me.
 const NAV_LINKS = [
   { section: 'Add-ons' },
-  { to: '/sku/generator', match: '/sku', addon: 'sku-generator', label: 'SKU Generator', icon: <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17h7M17 14v7"/></> },
+  { to: '/sku/industries', match: '/sku', addon: 'sku-generator', label: 'SKU Generator', icon:<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17h7M17 14v7"/></> },
   { to: '/wo', match: '/wo', addon: 'work-order', label: 'Work Order', icon: <><path d="M20 7h-3V4a1 1 0 00-1-1H8a1 1 0 00-1 1v3H4a1 1 0 00-1 1v11a1 1 0 001 1h16a1 1 0 001-1V8a1 1 0 00-1-1z"/><path d="M9 7V5h6v2"/><path d="M8 13h8M8 17h5"/></> },
   { to: '/reserve', addon: 'reserve', label: 'Reserve / De-reserve', icon: <><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></> },
   // OCTFIS super-admin only (user.isAdmin)
@@ -191,11 +191,13 @@ const NAV_LINKS = [
   { to: '/admin/addons', adminOnly: true, label: 'Customer add-ons', icon: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></> },
 ];
 
+// Tab order follows the setup flow: create Industries → their Properties →
+// generate SKUs. "SKU Generator" is the combined items-list + generator page
+// (/sku/generator is its "New" sub-page, kept as a route for permalinks).
 const SKU_TABS = [
-  { to: '/sku/generator', label: 'SKU Generator' },
-  { to: '/sku/items', label: 'SKU Items' },
   { to: '/sku/industries', label: 'Industries', end: true },
   { to: '/sku/properties', label: 'Properties' },
+  { to: '/sku/items', label: 'SKU Generator' },
 ];
 
 function TabBar({ tabs }) {
@@ -254,7 +256,7 @@ function SkuLayout() {
           <Route path="industries" element={<IndustriesPage />} />
           <Route path="industries/:id/properties" element={<PropertyManagerPage />} />
           <Route path="properties" element={<PropertiesPage />} />
-          <Route path="*" element={<Navigate to="generator" replace />} />
+          <Route path="*" element={<Navigate to="industries" replace />} />
         </Routes>
       </div>
     </>
@@ -370,7 +372,7 @@ function AppShell({ user, refreshUser, onLogout }) {
       <div style={S.main} key={user.orgId}>
         <HeaderBar zoho={zoho} onLogout={onLogout} onSwitchOrg={() => setSwitchOrg(true)} />
         <Routes>
-          <Route path="/" element={<Navigate to="/sku/generator" replace />} />
+          <Route path="/" element={<Navigate to="/sku/industries" replace />} />
           <Route path="/sku/*" element={<SkuLayout />} />
           {/* Deep link from Zoho Books custom button: /app/#/reserve?soId=… ;
               backend 403s if the addon is off — the page shows a clear notice. */}
@@ -383,7 +385,7 @@ function AppShell({ user, refreshUser, onLogout }) {
           <Route path="/admin/industries" element={<Navigate to="/sku/industries" replace />} />
           <Route path="/admin/properties" element={<Navigate to="/sku/properties" replace />} />
           <Route path="/admin/industries/:id/properties" element={<LegacyPropertiesRedirect />} />
-          <Route path="*" element={<Navigate to="/sku/generator" replace />} />
+          <Route path="*" element={<Navigate to="/sku/industries" replace />} />
         </Routes>
       </div>
     </>
