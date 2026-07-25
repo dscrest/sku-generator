@@ -17,7 +17,7 @@
  */
 const { rowList, zStr } = require("../store");
 const { dsDate } = require("../zoho/auth");
-const { listItemsWithStock, getItemStock } = require("../zoho/inventoryApi");
+const { getItemStock } = require("../zoho/inventoryApi");
 const { byOrg, inList, warehouses, logActivity } = require("./store");
 const { refreshPurchaseOrders } = require("./purchase");
 const { refreshComposite } = require("./bom");
@@ -54,12 +54,15 @@ async function writeStock(catalyst, orgId, item, source) {
   const existing = await byOrg(catalyst, orgId, "ItemStockSnapshot", `itemId = ${zStr(itemId)}`);
   const byWarehouse = new Map(existing.map((r) => [String(r.warehouseId || ""), r]));
 
+  // Locations-enabled orgs report the breakdown as locations[] with location_*
+  // field names; legacy orgs as warehouses[] with warehouse_* names.
+  const pick = (...vs) => vs.find((v) => v !== undefined);
   const targets = [{ warehouseId: "", stockOnHand: n(item.stock_on_hand), availableStock: n(item.available_stock) }];
-  for (const w of item.warehouses || []) {
+  for (const w of [...(item.warehouses || []), ...(item.locations || [])]) {
     targets.push({
-      warehouseId: String(w.warehouse_id),
-      stockOnHand: n(w.warehouse_stock_on_hand !== undefined ? w.warehouse_stock_on_hand : w.stock_on_hand),
-      availableStock: n(w.warehouse_available_stock !== undefined ? w.warehouse_available_stock : w.available_stock),
+      warehouseId: String(pick(w.warehouse_id, w.location_id)),
+      stockOnHand: n(pick(w.warehouse_stock_on_hand, w.location_stock_on_hand, w.stock_on_hand)),
+      availableStock: n(pick(w.warehouse_available_stock, w.location_available_stock, w.available_stock)),
     });
   }
 
@@ -81,18 +84,21 @@ async function writeStock(catalyst, orgId, item, source) {
  */
 async function reconcileOrg(catalyst, orgId) {
   const { itemIds, fgItemIds } = await workingSet(catalyst, orgId);
-  const result = { items: 0, itemPages: 0, purchaseOrders: 0, compositeItems: 0, skipped: 0 };
+  const result = { items: 0, purchaseOrders: 0, compositeItems: 0 };
   if (!itemIds.length) return result;
 
-  // One bulk sweep, then keep only the working set. Cheaper than one call per
-  // item as soon as an org has more than a couple of hundred raw materials.
-  const wanted = new Set(itemIds);
-  const all = await listItemsWithStock(catalyst);
-  result.itemPages = Math.ceil(all.length / 200) || 1;
-  for (const item of all) {
-    if (!wanted.has(String(item.item_id))) { result.skipped++; continue; }
-    await writeStock(catalyst, orgId, item, "cron");
-    result.items++;
+  // One detail call per working-set item, not the bulk /items sweep: on
+  // Locations-enabled orgs the bulk payload reports stock_on_hand 0 with no
+  // per-location breakdown, and only the item detail carries locations[].
+  // The working set is bounded by open work orders, so this stays cheap.
+  for (const itemId of itemIds) {
+    try {
+      await writeStock(catalyst, orgId, await getItemStock(catalyst, itemId), "cron");
+      result.items++;
+    } catch (err) {
+      console.error(`item ${itemId} stock refresh failed:`, err && err.message);
+    }
+    await sleep(DELAY_MS);
   }
 
   const po = await refreshPurchaseOrders(catalyst, orgId);

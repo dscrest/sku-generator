@@ -6,7 +6,9 @@
  * Every input is read from our own Data Store — the frozen BOM lines, the stock
  * snapshot, our reservation balances and our purchase-request lines. Opening a
  * work order therefore costs **zero** Zoho API calls; freshness comes from the
- * webhook sink and the nightly reconcile in sync.js.
+ * webhook sink and the nightly reconcile in sync.js. The one exception: an item
+ * with no snapshot row at all is pulled live once (self-heal below) — otherwise
+ * it reads as zero stock and every new work order opens with a false shortage.
  */
 const { zStr } = require("../store");
 const { gridRow } = require("./formulas");
@@ -94,6 +96,23 @@ async function buildGrid(catalyst, orgId, wo, fg) {
     balanceMap(catalyst, orgId, wo.ROWID, fg.ROWID),
     poSums(catalyst, orgId, wo.ROWID),
   ]);
+
+  // Self-heal: never-synced items read as zero stock → false shortage. Pull
+  // them live once; the webhook/reconcile keeps them fresh from then on.
+  const missing = [...new Set(itemIds.filter((id) => !stock.has(id)))];
+  if (missing.length) {
+    const { getItemStock } = require("../zoho/inventoryApi");
+    const { writeStock } = require("./sync");
+    for (const itemId of missing) {
+      try {
+        await writeStock(catalyst, orgId, await getItemStock(catalyst, itemId), "grid");
+      } catch (err) {
+        console.error(`stock self-heal ${itemId}:`, err && err.message);
+      }
+    }
+    const healed = await stockMap(catalyst, orgId, missing, mainWarehouseId);
+    for (const [k, v] of healed.map) stock.set(k, v);
+  }
 
   const rows = lines.map((l) =>
     gridRow(l, stock.get(String(l.rmItemId)), balances.get(String(l.rmItemId)), po.get(String(l.rmItemId))),

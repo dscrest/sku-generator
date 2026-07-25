@@ -49,6 +49,7 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
   const [qty, setQty] = useState({});          // itemId -> typed quantity
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const act = ACTIONS.find(a => a.key === action);
 
   function load(id = fgId) {
@@ -60,6 +61,19 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
       .finally(() => setLoading(false));
   }
   useEffect(() => { load(fgId); /* eslint-disable-next-line */ }, [fgId, workOrderId]);
+
+  // Refresh = re-pull stock/PO numbers from Zoho, then re-read the grid.
+  async function syncStock() {
+    setSyncing(true);
+    try {
+      await axios.post('/api/wo/refresh');
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Stock sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   const rows = grid?.rows || [];
   const entered = useMemo(
@@ -133,7 +147,7 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{act.move}</span>
         <div style={{ flex: 1 }} />
         <button onClick={fillAll} style={btn}>Fill maximum</button>
-        <button onClick={() => load()} style={btn}>⟳ Refresh</button>
+        <button onClick={syncStock} disabled={syncing} style={btn}>{syncing ? 'Syncing…' : '⟳ Refresh'}</button>
         <button
           onClick={confirm}
           disabled={busy || !entered.length}

@@ -16,7 +16,24 @@ async function updateCompositeItem(catalyst, itemId, mappedItems) {
   return data.composite_item;
 }
 
+/**
+ * Orgs with Books "Locations" enabled keep branches (e.g. a head office) out of
+ * the legacy /warehouses payload — only warehouse-type entries come back, so
+ * the settings dropdown misses the locations that actually hold stock. Prefer
+ * /locations and normalise to the warehouse shape callers already expect.
+ */
 async function listWarehouses(catalyst) {
+  try {
+    const data = await apiRequest(catalyst, "GET", "/locations", null, "books");
+    const locs = (data.locations || []).filter((l) => l.status !== "inactive");
+    if (locs.length) {
+      return locs.map((l) => ({
+        warehouse_id: String(l.location_id),
+        warehouse_name: `${l.location_name}${l.type === "warehouse" ? " (Warehouse)" : ""}`,
+        is_primary_warehouse: Boolean(l.is_primary),
+      }));
+    }
+  } catch { /* org without Locations — fall through to the legacy endpoint */ }
   const data = await apiRequest(catalyst, "GET", "/warehouses", null, "inventory");
   return data.warehouses || [];
 }
@@ -51,18 +68,26 @@ async function listItemsWithStock(catalyst) {
  * between two warehouses. Reserve = Main→Reserve, de-reserve = Reserve→Main,
  * issue = Reserve→Issue, return = Issue→Main — the caller supplies the pair.
  *
- * lines: [{ rmItemId, qty }]
+ * lines: [{ rmItemId, qty, name }]
  */
 async function createTransferOrder(catalyst, { date, fromWarehouseId, toWarehouseId, lines, reason }) {
   const data = await apiRequest(catalyst, "POST", "/transferorders", {
     date,
-    from_warehouse_id: String(fromWarehouseId),
-    to_warehouse_id: String(toWarehouseId),
+    // Location ids are the required pair (warehouse ids are the legacy alias);
+    // our OrgSetting values come from /locations, so they are location ids.
+    from_location_id: String(fromWarehouseId),
+    to_location_id: String(toWarehouseId),
     // Not in transit: the move is immediate, so stock lands in the destination
-    // warehouse as soon as the action is confirmed.
+    // location as soon as the action is confirmed.
     is_intransit_order: false,
-    reason: reason || undefined,
-    line_items: lines.map((l) => ({ item_id: String(l.rmItemId), quantity: Number(l.qty) || 0 })),
+    description: reason || undefined,
+    // name and quantity_transfer are the documented required line fields —
+    // plain `quantity` is ignored and `name` missing is rejected (code 4).
+    line_items: lines.map((l) => ({
+      item_id: String(l.rmItemId),
+      name: l.name || String(l.rmItemId),
+      quantity_transfer: Number(l.qty) || 0,
+    })),
   }, "inventory");
   return data.transfer_order;
 }
