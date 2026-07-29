@@ -148,6 +148,22 @@ async function createPurchaseOrder(catalyst, { vendorId, date, referenceNumber, 
   return data.purchaseorder;
 }
 
+// PUT replaces the PO wholesale — callers must echo back every line they keep
+// (see purchase.js poPutBody), or Books drops rate/warehouse/description.
+async function updatePurchaseOrder(catalyst, poId, body) {
+  const data = await apiRequest(catalyst, "PUT", `/purchaseorders/${poId}`, body);
+  return data.purchaseorder;
+}
+
+async function deletePurchaseOrder(catalyst, poId) {
+  await apiRequest(catalyst, "DELETE", `/purchaseorders/${poId}`);
+}
+
+// status: "issued" | "cancelled" — Books enforces what transitions are legal.
+async function setPurchaseOrderStatus(catalyst, poId, status) {
+  await apiRequest(catalyst, "POST", `/purchaseorders/${poId}/status/${status}`);
+}
+
 async function getOrganizations(catalyst) {
   const { accessToken, dc } = await getAccessToken(catalyst);
   const res = await fetch(`https://${dcHosts(dc).api}/books/v3/organizations`, {
@@ -169,4 +185,9 @@ module.exports = {
   listSalesOrders,
   listPurchaseOrdersForItem,
   getPurchaseOrder,
+  listVendors,
+  createPurchaseOrder,
+  updatePurchaseOrder,
+  deletePurchaseOrder,
+  setPurchaseOrderStatus,
 };

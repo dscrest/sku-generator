@@ -7,6 +7,9 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 | CR | Date | Title | Status |
 |----|------|-------|--------|
+| CR-017 | 2026-07-28 | Nav: "Order Management" sidebar submenu, Settings → account menu | ✅ shipped |
+| CR-016 | 2026-07-27 | PO detail view in Purchase tab: edit lines, issue/cancel, delete | ✅ shipped |
+| CR-015 | 2026-07-27 | Purchase tab: vendor list errors + ⟳ re-sync, draft-PR shortfall dedup | ✅ shipped |
 | CR-014 | 2026-07-24 | SKU tabs in setup order + combined SKUs page (Zoho Books master–detail) | ✅ shipped |
 | CR-013 | 2026-07-23 | Work Order module (MSUN BRD) — BOM, Reserve/Issue/Return, Purchase Request | 🚧 in progress |
 | CR-012 | 2026-07-23 | CRM Deal → SKU master item picker (widget) | 📋 specified, blocked on CRM console work |
@@ -20,6 +23,106 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 | CR-003 | 2026-07-02 | Item search, grid filters, pagination, sidebar, branding | ✅ shipped |
 | CR-002 | 2026-06-30 | Migrate backend to Catalyst Data Store | ✅ shipped |
 | CR-001 | 2026-05-28 | SKU editing + Zoho Books value sync & import | ✅ shipped |
+
+---
+
+## CR-017 — Nav restructure: Order Management + Settings in account menu (2026-07-28) — ✅ shipped
+
+**Requested:** (1) move the WO Settings tab into the user/account menu; (2) move
+Work Orders and Reports into a sidebar submenu; (3) rename the sidebar entry
+"Work Order" → "Order Management".
+
+**Shipped (all `App.jsx` + one string in `MaterialsGrid.jsx`):**
+
+- Sidebar entry renamed **Order Management**; it now carries a `children`
+  submenu (Work Orders `/wo`, Reports `/wo/reports`) rendered as indented
+  NavLinks when the sidebar is expanded — longest-matching child gets the
+  highlight, so `/wo/:id` lights Work Orders and `/wo/reports` lights Reports.
+  Collapsed sidebar shows the parent icon only.
+- The WO content-area tab bar is gone (`WO_TABS` deleted); routes unchanged.
+- Account dropdown gains a **Settings** item (gear icon, above "Submit to
+  helpdesk", only when the `work-order` addon is enabled) → `/wo/settings`.
+- `MaterialsGrid` warehouse hint now points at "Settings (account menu, top
+  right)".
+
+**Not done / trade-off:** `GlobalSearch` lived inside the WO tab bar, so the
+Order Management pages no longer show the catalog search box (it searches the
+SKU catalog; the SKU section keeps it). Re-add to the WO header if missed.
+
+---
+
+## CR-016 — PO detail view: edit lines, issue/cancel, delete (2026-07-27) — ✅ shipped
+
+**Requested:** clear items from / delete a PO from the app, and a Books-like
+order-detail view: click the PO in the Purchase tab → master–detail window with
+line items, receive/bill status, and actions (edit item, delete, status).
+
+**Shipped:**
+
+- Clicking a PO number on a PR line opens a master–detail split (SKUItemsPage
+  CR-014 pattern): left, the WO's POs; right, a live Books detail card —
+  number, status chip, vendor, date, SO reference, total, receive/bill status,
+  and the line items (qty, rate, received, billed).
+- Actions, gated by status (`editable = not billed/closed/cancelled`):
+  **Save changes** (qty edits + per-line ✕ remove; removed items return to the
+  shortfall), **Mark Issued** (draft only), **Mark Cancelled**, **Delete PO**
+  (Modal confirm). Books' own rejections (e.g. deleting a billed PO) surface
+  verbatim in a toast; Books is called before any local write.
+- `zoho/booksApi.js`: `updatePurchaseOrder`, `deletePurchaseOrder`,
+  `setPurchaseOrderStatus` (exported!).
+- `workorder/purchase.js`: `poDetail` (org-gated via the PR lines that created
+  the PO — cross-org probe 404s), `resetPoLines` (detach PR lines → item back
+  in shortfall, PR back to Draft so re-confirm works), `deletePo`,
+  `setPoStatus`, `updatePoLines` with pure `poPutBody` (Books PUT replaces
+  lines wholesale, so kept lines echo item/rate/description/warehouse from the
+  fetched PO; an item counts as removed only when on none of the kept lines).
+  Qty edits write back to `purchaseQty` (the grid's on-order column sums it).
+  `listPRs` now exposes `poId`. New selftest asserts for `poPutBody`.
+- Routes: `GET/PUT/DELETE /api/wo/po/:poId`, `POST /api/wo/po/:poId/status`.
+
+**Not done:** send-PO-email (not requested); qty sync skipped when one item
+maps to multiple PR lines (`ponytail:` comment — the PO refresh still corrects
+received/billed). POs cancelled/deleted directly inside Books still leave
+stale local lines until touched from the app (reconcile gap, pre-existing).
+
+---
+
+## CR-015 — Purchase tab fixes: vendors, duplicate PRs (2026-07-27) — ✅ shipped
+
+**Requested:** (1) vendor dropdown empty when raising a PO; (2) hint when a
+PR/PO already covers a shortfall item; (3) SO reference on PO line items;
+(4) never merge identical items into one PO line (they can trace to different
+SOs); (5) combined-item PO-team template — later; (6) instant vendor re-sync
+button (vendor master only, not items — API cost).
+
+**Shipped:**
+
+- **Root cause of the empty dropdown:** `listVendors` and `createPurchaseOrder`
+  were defined in `zoho/booksApi.js` but missing from its `module.exports` —
+  `GET /api/wo/vendors` (and PR confirm) died with "is not a function", and the
+  UI swallowed the 500. Both added to the exports.
+- `WorkOrderPage.jsx` (PurchaseTab): vendor fetch errors are no longer
+  swallowed — a warn `Banner` shows the backend message (incl. reauth) when a
+  draft PR needs a vendor; a **⟳** button next to each vendor select re-fetches
+  `/api/wo/vendors` live from Books (point 6 — press after adding the vendor
+  there). Shortfall rows render a `prHint` line ("PR-0001 covers 902").
+- `workorder/purchase.js`: new pure `applyDraftCoverage(lines, draftLines)` —
+  draft (unconfirmed) PR quantities are deducted from the shortfall greedily
+  per item, rows fully covered disappear, partially covered rows carry
+  `prHint`. Covered by new `--selftest` asserts.
+- `routes/workorder.js` `GET /:id/shortfall`: loads the WO's Draft PRs, their
+  lines with no `zohoPoId` (lines already on a PO are counted as on-order by
+  `poSums` — counting them again would double-deduct), and applies the
+  coverage. Raising twice can no longer duplicate a pending request.
+
+**Verified, no change needed:** PO lines already carry `description: "SO
+<number>"`, `reference_number` = SO number, notes = `PR · WO · SO` (point 3);
+`groupByVendor`/`createPurchaseOrder` map PR lines 1:1 — identical items are
+never merged (point 4; comment added).
+
+**Not done:** combined-item list template for the PO team (point 5, deferred by
+request); no local vendor cache table — the list is one live paginated Books
+call, cheap enough on demand.
 
 ---
 

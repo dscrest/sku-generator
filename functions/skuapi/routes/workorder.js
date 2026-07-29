@@ -141,6 +141,24 @@ router.post("/pr/:prId/confirm", ok(async (req, res) => {
   res.json(await purchase.confirmPR(req.catalyst, req.orgId, req.params.prId, req.userId));
 }));
 
+// ---- purchase orders (live Books detail + actions) ------------------------
+
+router.get("/po/:poId", ok(async (req, res) => {
+  res.json(await purchase.poDetail(req.catalyst, req.orgId, req.params.poId));
+}));
+
+router.put("/po/:poId", ok(async (req, res) => {
+  res.json(await purchase.updatePoLines(req.catalyst, req.orgId, req.params.poId, (req.body || {}).lines, req.userId));
+}));
+
+router.delete("/po/:poId", ok(async (req, res) => {
+  res.json(await purchase.deletePo(req.catalyst, req.orgId, req.params.poId, req.userId));
+}));
+
+router.post("/po/:poId/status", ok(async (req, res) => {
+  res.json(await purchase.setPoStatus(req.catalyst, req.orgId, req.params.poId, String((req.body || {}).status || ""), req.userId));
+}));
+
 // ---- work orders ----------------------------------------------------------
 
 router.get("/", ok(async (req, res) => {
@@ -481,7 +499,20 @@ router.get("/:id/shortfall", ok(async (req, res) => {
     const grid = await buildGrid(req.catalyst, req.orgId, wo, fg);
     lines.push(...purchase.shortfallLines(grid));
   }
-  res.json(lines);
+  // Draft PRs are not on a PO yet (poSums can't see them) — deduct their
+  // quantities here so raising again never duplicates a pending request.
+  const draftPrs = await byOrg(
+    req.catalyst, req.orgId, "PurchaseRequest",
+    `workOrderId = ${zStr(String(wo.ROWID))} AND status = 'Draft'`,
+  );
+  const prIds = inList(draftPrs.map((p) => p.ROWID));
+  const prNo = new Map(draftPrs.map((p) => [String(p.ROWID), p.prNumber]));
+  const draftLines = prIds
+    ? (await byOrg(req.catalyst, req.orgId, "PurchaseRequestLine", `purchaseRequestId IN (${prIds})`))
+        .filter((l) => !l.zohoPoId)
+        .map((l) => ({ ...l, prNumber: prNo.get(String(l.purchaseRequestId)) }))
+    : [];
+  res.json(purchase.applyDraftCoverage(lines, draftLines));
 }));
 
 router.post("/:id/purchase-request", ok(async (req, res) => {

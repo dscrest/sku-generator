@@ -8,7 +8,10 @@
  */
 const { zStr } = require("../store");
 const { dsDate } = require("../zoho/auth");
-const { createPurchaseOrder, getPurchaseOrder } = require("../zoho/booksApi");
+const {
+  createPurchaseOrder, getPurchaseOrder, updatePurchaseOrder,
+  deletePurchaseOrder, setPurchaseOrderStatus,
+} = require("../zoho/booksApi");
 const { warehouses, nextNumber, logActivity, byOrg, settings, inList } = require("./store");
 
 const n = (v) => Number(v) || 0;
@@ -36,6 +39,37 @@ function shortfallLines(grid) {
 }
 
 /**
+ * Pure: reduce shortfall rows by quantities already sitting on draft
+ * (unconfirmed) purchase-request lines, so "Raise purchase request" never
+ * duplicates a draft PR. Lines already pushed to a PO are excluded by the
+ * caller — the grid's poSums counts those as on order. The pool is consumed
+ * greedily so the same draft qty is not deducted twice across FGs.
+ */
+function applyDraftCoverage(lines, draftLines) {
+  const pool = new Map(); // rmItemId -> { qty, prNumbers }
+  for (const d of draftLines || []) {
+    const key = String(d.rmItemId);
+    const cur = pool.get(key) || { qty: 0, prNumbers: new Set() };
+    cur.qty += n(d.purchaseQty);
+    if (d.prNumber) cur.prNumbers.add(d.prNumber);
+    pool.set(key, cur);
+  }
+  return lines
+    .map((l) => {
+      const c = pool.get(String(l.rmItemId));
+      if (!c || c.qty <= 0) return l;
+      const covered = Math.min(c.qty, l.purchaseQty);
+      c.qty -= covered;
+      return {
+        ...l,
+        purchaseQty: l.purchaseQty - covered,
+        prHint: `${[...c.prNumbers].join(", ")} covers ${covered}`,
+      };
+    })
+    .filter((l) => l.purchaseQty > 0);
+}
+
+/**
  * Pure: confirm-time validation (FR-PRQ-001) — a vendor on every line and a
  * quantity greater than zero. Returns every problem at once.
  */
@@ -51,7 +85,8 @@ function validatePR(lines) {
 }
 
 // Pure: one PO per vendor (BRD §6.6.6 — "one Purchase Order is generated per
-// vendor by all selected line items").
+// vendor by all selected line items"). Lines are never merged, even for the
+// same item — they can trace to different Sales Orders.
 function groupByVendor(lines) {
   const groups = new Map();
   for (const l of lines) {
@@ -190,6 +225,164 @@ async function confirmPR(catalyst, orgId, prId, userId) {
   };
 }
 
+// ---- PO detail & actions --------------------------------------------------
+
+/**
+ * Pure: the PUT body that keeps a PO's untouched fields intact. Books' PUT
+ * replaces line items wholesale, so every kept line echoes back item_id, rate,
+ * description and warehouse_id from the freshly fetched PO. `kept` is
+ * [{ lineItemId, quantity }]; a fetched line absent from it is removed.
+ * Returns { body, removedItemIds } — an item counts as removed only when it is
+ * on none of the kept lines (same item can sit on several lines, one per SO).
+ */
+function poPutBody(po, kept) {
+  const keptById = new Map(kept.map((k) => [String(k.lineItemId), k]));
+  const lineItems = [];
+  const keptItemIds = new Set();
+  const allItemIds = new Set();
+  for (const li of po.line_items || []) {
+    allItemIds.add(String(li.item_id));
+    const k = keptById.get(String(li.line_item_id));
+    if (!k) continue;
+    keptItemIds.add(String(li.item_id));
+    lineItems.push({
+      line_item_id: String(li.line_item_id),
+      item_id: String(li.item_id),
+      quantity: n(k.quantity),
+      rate: li.rate,
+      description: li.description || undefined,
+      warehouse_id: li.warehouse_id ? String(li.warehouse_id) : undefined,
+    });
+  }
+  const removedItemIds = new Set([...allItemIds].filter((id) => !keptItemIds.has(id)));
+  return { body: { line_items: lineItems }, removedItemIds };
+}
+
+// Org-isolation gate: a PO is only visible if one of this org's PR lines
+// created it. Cross-org probing gets the same 404 as a bogus id.
+async function poLines(catalyst, orgId, poId) {
+  const lines = await byOrg(catalyst, orgId, "PurchaseRequestLine", `zohoPoId = ${zStr(String(poId))}`);
+  if (!lines.length) { const e = new Error("Purchase order not found"); e.status = 404; throw e; }
+  return lines;
+}
+
+async function poDetail(catalyst, orgId, poId) {
+  await poLines(catalyst, orgId, poId);
+  const po = await getPurchaseOrder(catalyst, poId);
+  return {
+    id: String(po.purchaseorder_id),
+    number: po.purchaseorder_number,
+    status: po.status,
+    vendorName: po.vendor_name,
+    date: po.date,
+    referenceNumber: po.reference_number || "",
+    notes: po.notes || "",
+    total: n(po.total),
+    receivedStatus: po.received_status || "",
+    billedStatus: po.billed_status || "",
+    lineItems: (po.line_items || []).map((li) => ({
+      lineItemId: String(li.line_item_id),
+      itemId: String(li.item_id),
+      name: li.name,
+      description: li.description || "",
+      quantity: n(li.quantity),
+      rate: n(li.rate),
+      amount: n(li.item_total),
+      received: n(li.quantity_received),
+      billed: n(li.quantity_billed),
+    })),
+  };
+}
+
+/**
+ * Detach PR lines from a PO that no longer covers them (deleted, cancelled, or
+ * the item was removed from it): the item returns to the shortfall and the
+ * parent request drops back to Draft so it can be confirmed again.
+ */
+async function resetPoLines(catalyst, orgId, poId, itemFilter) {
+  const lines = await byOrg(catalyst, orgId, "PurchaseRequestLine", `zohoPoId = ${zStr(String(poId))}`);
+  const table = catalyst.datastore().table("PurchaseRequestLine");
+  const prIds = new Set();
+  for (const l of lines) {
+    if (itemFilter && !itemFilter.has(String(l.rmItemId))) continue;
+    await table.updateRow({
+      ROWID: l.ROWID,
+      zohoPoId: "", zohoPoNumber: "", poStatus: "",
+      receivedQty: 0, billedQty: 0, lastPoSyncAt: null,
+    });
+    prIds.add(String(l.purchaseRequestId));
+  }
+  const prTable = catalyst.datastore().table("PurchaseRequest");
+  for (const prId of prIds) {
+    await prTable.updateRow({ ROWID: prId, status: "Draft", confirmedAt: null });
+  }
+  return prIds.size;
+}
+
+async function deletePo(catalyst, orgId, poId, userId) {
+  const lines = await poLines(catalyst, orgId, poId);
+  // Books first: if it refuses (billed PO), local rows stay untouched.
+  await deletePurchaseOrder(catalyst, poId);
+  await resetPoLines(catalyst, orgId, poId);
+  await logActivity(catalyst, orgId, "PurchaseRequest", lines[0].purchaseRequestId, "po.delete", userId, {
+    poNumber: lines[0].zohoPoNumber, lines: lines.length,
+  });
+  return { deleted: true };
+}
+
+async function setPoStatus(catalyst, orgId, poId, status, userId) {
+  if (!["issued", "cancelled"].includes(status)) {
+    const e = new Error("Status must be issued or cancelled"); e.status = 400; throw e;
+  }
+  const lines = await poLines(catalyst, orgId, poId);
+  await setPurchaseOrderStatus(catalyst, poId, status);
+  if (status === "cancelled") {
+    await resetPoLines(catalyst, orgId, poId);
+  } else {
+    await refreshPurchaseOrders(catalyst, orgId, { poIds: [poId] });
+  }
+  await logActivity(catalyst, orgId, "PurchaseRequest", lines[0].purchaseRequestId, `po.${status}`, userId, {
+    poNumber: lines[0].zohoPoNumber,
+  });
+  return { status };
+}
+
+/**
+ * Edit a PO's lines: `kept` = [{ lineItemId, quantity }]; omitted lines are
+ * removed and their items return to the shortfall. Quantity changes write back
+ * to the local purchaseQty — the grid's on-order column sums it.
+ */
+async function updatePoLines(catalyst, orgId, poId, kept, userId) {
+  const localLines = await poLines(catalyst, orgId, poId);
+  if (!kept || !kept.length) {
+    const e = new Error("A purchase order needs at least one line — delete the PO instead");
+    e.status = 400; throw e;
+  }
+  const po = await getPurchaseOrder(catalyst, poId);
+  const { body, removedItemIds } = poPutBody(po, kept);
+  if (!body.line_items.length) {
+    const e = new Error("None of the kept lines exist on this purchase order"); e.status = 400; throw e;
+  }
+  await updatePurchaseOrder(catalyst, poId, body);
+
+  if (removedItemIds.size) await resetPoLines(catalyst, orgId, poId, removedItemIds);
+
+  // ponytail: purchaseQty sync only when the item maps to exactly one PR line;
+  // ambiguous multi-line matches are left to the PO refresh below.
+  const table = catalyst.datastore().table("PurchaseRequestLine");
+  for (const li of body.line_items) {
+    const matches = localLines.filter((l) => String(l.rmItemId) === String(li.item_id));
+    if (matches.length === 1 && n(matches[0].purchaseQty) !== li.quantity) {
+      await table.updateRow({ ROWID: matches[0].ROWID, purchaseQty: li.quantity });
+    }
+  }
+  await refreshPurchaseOrders(catalyst, orgId, { poIds: [poId] });
+  await logActivity(catalyst, orgId, "PurchaseRequest", localLines[0].purchaseRequestId, "po.edit", userId, {
+    poNumber: localLines[0].zohoPoNumber, kept: body.line_items.length, removedItems: removedItemIds.size,
+  });
+  return { kept: body.line_items.length, removedItems: removedItemIds.size };
+}
+
 // ---- PO status refresh ----------------------------------------------------
 
 /**
@@ -258,6 +451,7 @@ async function listPRs(catalyst, orgId, workOrderId) {
       purchaseQty: n(l.purchaseQty),
       vendorId: l.vendorId || null,
       vendorName: l.vendorName || null,
+      poId: l.zohoPoId ? String(l.zohoPoId) : null,
       poNumber: l.zohoPoNumber || null,
       poStatus: l.poStatus || null,
       receivedQty: n(l.receivedQty),
@@ -267,8 +461,9 @@ async function listPRs(catalyst, orgId, workOrderId) {
 }
 
 module.exports = {
-  SETTLED_PO, shortfallLines, validatePR, groupByVendor,
+  SETTLED_PO, shortfallLines, applyDraftCoverage, validatePR, groupByVendor,
   createPR, updatePRLine, confirmPR, refreshPurchaseOrders, listPRs,
+  poPutBody, poDetail, deletePo, setPoStatus, updatePoLines,
 };
 
 // ponytail self-check: `node functions/skuapi/workorder/purchase.js --selftest`
@@ -302,6 +497,36 @@ if (require.main === module && process.argv.includes("--selftest")) {
   };
   assert.strictEqual(shortfallLines(covered).length, 0, "nothing left to order");
 
+  // Draft-PR coverage: a draft request hides its quantities from the shortfall.
+  const short = [
+    { rmItemId: "11", rmName: "Shaft", requiredQty: 8, purchaseQty: 8 },
+    { rmItemId: "22", rmName: "Seal", requiredQty: 4, purchaseQty: 4 },
+  ];
+  const fully = applyDraftCoverage(short, [
+    { rmItemId: "11", purchaseQty: 8, prNumber: "PR-0001" },
+  ]);
+  assert.strictEqual(fully.length, 1, "fully covered row disappears");
+  assert.strictEqual(fully[0].rmItemId, "22", "uncovered row survives untouched");
+  assert.strictEqual(fully[0].prHint, undefined);
+
+  const partly2 = applyDraftCoverage(short, [
+    { rmItemId: "22", purchaseQty: 3, prNumber: "PR-0002" },
+  ]);
+  const seal = partly2.find((l) => l.rmItemId === "22");
+  assert.strictEqual(seal.purchaseQty, 1, "4 short − 3 on draft PR = 1");
+  assert.strictEqual(seal.prHint, "PR-0002 covers 3");
+
+  // Same item on two FG rows: the draft qty is consumed greedily, not doubled.
+  const twoFgs = applyDraftCoverage(
+    [
+      { rmItemId: "11", purchaseQty: 5 },
+      { rmItemId: "11", purchaseQty: 5 },
+    ],
+    [{ rmItemId: "11", purchaseQty: 6, prNumber: "PR-0003" }],
+  );
+  assert.strictEqual(twoFgs.length, 1, "first row fully covered, second partly");
+  assert.strictEqual(twoFgs[0].purchaseQty, 4, "10 across FGs − 6 on draft = 4");
+
   // Validation.
   assert.deepStrictEqual(
     validatePR([{ rmName: "Shaft", purchaseQty: 5, vendorId: "V1" }]), [], "a complete line passes",
@@ -323,6 +548,31 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(groups.find((g) => g.vendorId === "V2").vendorName, "Bolt Co");
 
   assert.ok(SETTLED_PO.has("billed") && !SETTLED_PO.has("open"), "settled POs stop being refreshed");
+
+  // PO edit body: kept lines echo rate/description/warehouse, omitted = removed.
+  const fetchedPo = {
+    line_items: [
+      { line_item_id: "L1", item_id: "11", quantity: 5, rate: 12.5, description: "SO SO-1", warehouse_id: "W1" },
+      { line_item_id: "L2", item_id: "22", quantity: 3, rate: 7, description: "SO SO-1", warehouse_id: "W1" },
+      { line_item_id: "L3", item_id: "11", quantity: 2, rate: 12.5, description: "SO SO-2", warehouse_id: "W1" },
+    ],
+  };
+  const edit = poPutBody(fetchedPo, [{ lineItemId: "L1", quantity: 4 }, { lineItemId: "L3", quantity: 2 }]);
+  assert.strictEqual(edit.body.line_items.length, 2, "omitted line L2 is dropped");
+  assert.strictEqual(edit.body.line_items[0].quantity, 4, "kept line takes the edited quantity");
+  assert.strictEqual(edit.body.line_items[0].rate, 12.5, "rate echoed from the fetched PO");
+  assert.strictEqual(edit.body.line_items[0].warehouse_id, "W1", "warehouse routing preserved");
+  assert.deepStrictEqual([...edit.removedItemIds], ["22"], "only item 22 counts as removed");
+
+  // Same item on two lines: dropping one line does NOT mark the item removed.
+  const halfDrop = poPutBody(fetchedPo, [{ lineItemId: "L1", quantity: 5 }, { lineItemId: "L2", quantity: 3 }]);
+  assert.ok(!halfDrop.removedItemIds.has("11"), "item 11 still lives on L1");
+  assert.strictEqual(halfDrop.removedItemIds.size, 0);
+
+  // Nothing kept → empty body; updatePoLines 400s before Books is called.
+  const none = poPutBody(fetchedPo, []);
+  assert.strictEqual(none.body.line_items.length, 0);
+  assert.strictEqual(none.removedItemIds.size, 3 - 1, "both distinct items removed");
 
   console.log("workorder/purchase.js self-check passed");
 }

@@ -10,7 +10,7 @@ Related docs: [CHANGES.md](CHANGES.md) (change requests + shipped log),
 [SCHEMA.md](SCHEMA.md) (DB), [ARCHITECTURE.md](ARCHITECTURE.md) (system),
 [ZOHO_AUTH.md](ZOHO_AUTH.md) (OAuth setup).
 
-Last updated: 2026-07-24.
+Last updated: 2026-07-28.
 
 ---
 
@@ -131,11 +131,15 @@ Reference + setup procedure: [WORKORDER.md](WORKORDER.md).
 | Two-way sync / conflict UI on import | Import is create-only by decision | Overwrite semantics are actually wanted |
 | `AppUser.role` column | `ADMIN_EMAILS` env allowlist is enough | Admins need self-service management |
 | Per-org add-on cache | One ZCQL per request is not measurable | It shows up in latency |
+| Combined-item PO template for the PO team | PO lines stay 1:1 per SO by design (CR-015); combined view is a print/report concern | The PO team asks for it |
 
 ---
 
 ## Done (recent — full detail in CHANGES.md)
 
+- [x] CR-017 Nav: Order Management submenu (Work Orders/Reports), Settings moved to account menu (2026-07-28)
+- [x] CR-016 PO detail view in Purchase tab: edit/remove lines, issue/cancel, delete with shortfall reset (2026-07-27)
+- [x] CR-015 Purchase tab: vendor error surfacing + ⟳ re-sync, draft-PR shortfall dedup + hint (2026-07-27)
 - [x] CR-007 Multi-DC Zoho login + phone-registered (email-less) accounts (2026-07-23)
 - [x] CR-006 Import find-or-create PropertyValues for mapped properties (2026-07-23)
 - [x] CR-005 Multi-add-on platform, entitlements admin, reserve read path, record-grid standard (2026-07-03)
