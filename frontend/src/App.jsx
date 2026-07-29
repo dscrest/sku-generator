@@ -1,4 +1,4 @@
-import { HashRouter, Routes, Route, Navigate, NavLink, useLocation, useParams } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, NavLink, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import GlobalSearch from './components/GlobalSearch.jsx';
@@ -69,9 +69,10 @@ function navItemStyle({ isActive }, collapsed) {
 
 // Account menu (top-right): org avatar + name + chevron → dropdown with org
 // details, switch-org and logout.
-function HeaderBar({ zoho, onLogout, onSwitchOrg }) {
+function HeaderBar({ zoho, addons, onLogout, onSwitchOrg }) {
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const navigate = useNavigate();
   const orgName = zoho.orgName || 'Zoho Books';
   const initials = orgName.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
 
@@ -136,6 +137,20 @@ function HeaderBar({ zoho, onLogout, onSwitchOrg }) {
                 </div>
               </div>
               <div style={{ height: 1, background: 'var(--border)', margin: '2px 6px 6px' }} />
+              {addons?.includes('work-order') && (
+                <button
+                  style={menuItem}
+                  onClick={() => { setOpen(false); navigate('/wo/settings'); }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+                  </svg>
+                  Settings
+                </button>
+              )}
               <button
                 style={menuItem}
                 onClick={() => { setOpen(false); toast.success('Submitted to helpdesk'); }}
@@ -184,7 +199,11 @@ function HeaderBar({ zoho, onLogout, onSwitchOrg }) {
 const NAV_LINKS = [
   { section: 'Add-ons' },
   { to: '/sku/industries', match: '/sku', addon: 'sku-generator', label: 'SKU Generator', icon:<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17h7M17 14v7"/></> },
-  { to: '/wo', match: '/wo', addon: 'work-order', label: 'Work Order', icon: <><path d="M20 7h-3V4a1 1 0 00-1-1H8a1 1 0 00-1 1v3H4a1 1 0 00-1 1v11a1 1 0 001 1h16a1 1 0 001-1V8a1 1 0 00-1-1z"/><path d="M9 7V5h6v2"/><path d="M8 13h8M8 17h5"/></> },
+  { to: '/wo', match: '/wo', addon: 'work-order', label: 'Order Management', icon: <><path d="M20 7h-3V4a1 1 0 00-1-1H8a1 1 0 00-1 1v3H4a1 1 0 00-1 1v11a1 1 0 001 1h16a1 1 0 001-1V8a1 1 0 00-1-1z"/><path d="M9 7V5h6v2"/><path d="M8 13h8M8 17h5"/></>,
+    children: [
+      { to: '/wo', label: 'Work Orders' },
+      { to: '/wo/reports', label: 'Reports' },
+    ] },
   { to: '/reserve', addon: 'reserve', label: 'Reserve / De-reserve', icon: <><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></> },
   // OCTFIS super-admin only (user.isAdmin)
   { section: 'Admin', adminOnly: true },
@@ -221,17 +240,11 @@ function TabBar({ tabs }) {
   );
 }
 
-const WO_TABS = [
-  { to: '/wo', label: 'Work Orders', end: true },
-  { to: '/wo/reports', label: 'Reports' },
-  { to: '/wo/settings', label: 'Settings' },
-];
-
-// One nav entry for the whole Work Order module; the tab bar is its only header.
+// The Order Management module: second-level nav lives in the sidebar submenu
+// (Work Orders / Reports); Settings is reached from the account menu.
 function WorkOrderLayout() {
   return (
     <>
-      <TabBar tabs={WO_TABS} />
       <div style={{ flex: 1, minHeight: 0 }}>
         <Routes>
           <Route index element={<WorkOrderListPage />} />
@@ -314,16 +327,32 @@ function Sidebar({ addons, isAdmin }) {
       <nav style={S.nav}>
         {NAV_LINKS
           .filter(l => (!l.adminOnly || isAdmin) && (l.section || !l.addon || addons.includes(l.addon)))
-          .map((l, i) => l.section ? (
-            !collapsed && <div key={i} style={{ ...S.navLabel, marginTop: i ? 8 : 0 }}>{l.section}</div>
-          ) : (
-            // Active on the whole add-on's path prefix (tabs live below it)
-            <NavLink key={l.to} to={l.to} title={l.label}
-              style={() => navItemStyle({ isActive: pathname.startsWith(l.match || l.to) }, collapsed)}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>{l.icon}</svg>
-              {!collapsed && l.label}
-            </NavLink>
-          ))}
+          .map((l, i) => {
+            if (l.section) {
+              return !collapsed && <div key={i} style={{ ...S.navLabel, marginTop: i ? 8 : 0 }}>{l.section}</div>;
+            }
+            // Longest matching child wins the highlight (so /wo/reports lights
+            // Reports, not Work Orders); collapsed sidebar shows the parent only.
+            const activeChild = !collapsed && l.children
+              ? l.children.filter(c => pathname.startsWith(c.to)).sort((a, b) => b.to.length - a.to.length)[0]
+              : null;
+            return (
+              <div key={l.to}>
+                {/* Active on the whole add-on's path prefix (submenu/pages live below it) */}
+                <NavLink to={l.to} title={l.label}
+                  style={() => navItemStyle({ isActive: pathname.startsWith(l.match || l.to) }, collapsed)}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>{l.icon}</svg>
+                  {!collapsed && l.label}
+                </NavLink>
+                {!collapsed && l.children?.map(c => (
+                  <NavLink key={c.to} to={c.to}
+                    style={() => ({ ...navItemStyle({ isActive: c === activeChild }, false), padding: '6px 10px 6px 36px', fontSize: 12.5 })}>
+                    {c.label}
+                  </NavLink>
+                ))}
+              </div>
+            );
+          })}
       </nav>
       {!collapsed && <div style={S.footer}>
         <div style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -370,7 +399,7 @@ function AppShell({ user, refreshUser, onLogout }) {
       {/* key on orgId: switching org remounts the pages so they refetch the new
           org's catalog instead of showing the previous org's data. */}
       <div style={S.main} key={user.orgId}>
-        <HeaderBar zoho={zoho} onLogout={onLogout} onSwitchOrg={() => setSwitchOrg(true)} />
+        <HeaderBar zoho={zoho} addons={addons} onLogout={onLogout} onSwitchOrg={() => setSwitchOrg(true)} />
         <Routes>
           <Route path="/" element={<Navigate to="/sku/industries" replace />} />
           <Route path="/sku/*" element={<SkuLayout />} />

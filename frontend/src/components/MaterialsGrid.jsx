@@ -164,7 +164,7 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
       {grid && !grid.warehousesConfigured && (
         <Banner tone="warn">
           Warehouses are not configured yet — material cannot be moved. Set the Main, Reserve and Issue
-          warehouses in <b>Work Order → Settings</b>.
+          warehouses in <b>Settings</b> (account menu, top right).
         </Banner>
       )}
       {grid?.lastSyncAt && (
