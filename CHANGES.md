@@ -7,6 +7,7 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 | CR | Date | Title | Status |
 |----|------|-------|--------|
+| CR-022 | 2026-08-04 | Work Order material-reservation screen redesigned — plain-language table, coverage bars, shortage bar, live confirm bar | ✅ shipped |
 | CR-021 | 2026-08-02 | Zoho Books item sync is manual only — drop automatic push on create/edit, keep the "Push" button | ✅ shipped |
 | CR-020 | 2026-07-30 | Orders tab lists all Zoho Books POs; delete wrongly-created POs with lock mark | ✅ shipped |
 | CR-019 | 2026-07-30 | PR same-item line merge; BOM/Purchase pages get their own grids; item-pipeline report | ✅ shipped |
@@ -29,6 +30,43 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 | CR-001 | 2026-05-28 | SKU editing + Zoho Books value sync & import | ✅ shipped |
 
 ---
+
+## CR-022 — Work Order material-reservation redesign (2026-08-04) — ✅ shipped
+
+**Requested:** redesign the Work Order reservation screen from the mockup —
+Direction 1a ("plain-language table · bulk select · live confirm bar"), wired to
+existing endpoints only.
+
+**Shipped:** `MaterialsGrid.jsx` rewritten. Same data (`GET /:id/grid`) and same
+actions (`POST /:id/txn`, `POST /refresh`) — the redesign is all presentation.
+
+- **Plain-language columns** replace the A–I BRD letters as the default:
+  `Item · Needed · In stock · Reserved · Issued · Coverage · {verb} now`. Needed
+  shows the full BOM requirement. The five extra BRD columns (PO/Received/Billed/
+  Reservable/Extra reserved) are hidden by default behind the existing column
+  picker (storage key bumped to `materialsGridCols2`).
+- **Per-row coverage bar** (client-derived): issued (green) + reserved (blue) +
+  outstanding — hatched red when short, neutral track otherwise. Caption reads
+  `covered` / `{n} left to reserve` / `{n} missing`.
+- **Shortage warning bar** when `shortCount > 0`: total units missing, a "Show
+  short items" filter shortcut, and "Request purchase" → the existing
+  `#/wo/purchase` flow.
+- **Filter chips** `All / Short / Fully covered / Left to {verb}` and an item/code
+  search, both client-side derivations.
+- **Bulk select** + per-row **MAX** + "{verb} everything available" (scoped to
+  ticked rows, else the current filter).
+- **Live confirm bar** pinned to the bottom (tallies units/lines; Discard /
+  confirm), replacing the top Confirm button. Table header goes light (drops the
+  navy `#1e3a5f`).
+- **Preview harness** (dev-only, not in the app bundle): `materialsPreview.html`
+  + `src/dev/materialsPreview.jsx` render the grid with the mockup's eight sample
+  lines and stubbed axios — open `/materialsPreview.html` under `npm run dev` to
+  see the screen without a backend.
+
+**Not done:** the 1b/1c shortage-resolution panels (transfer from another
+warehouse, view incoming PO) — they need net-new backend data (other-warehouse
+availability, incoming-PO matching). Out of scope this pass. No backend or schema
+change; no `SCHEMA.md`/`ARCHITECTURE.md` effect.
 
 ## CR-021 — Manual Zoho Books item sync only (2026-08-02) — ✅ shipped
 
