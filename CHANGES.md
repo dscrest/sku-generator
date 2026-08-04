@@ -7,6 +7,10 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 | CR | Date | Title | Status |
 |----|------|-------|--------|
+| CR-021 | 2026-08-02 | Zoho Books item sync is manual only — drop automatic push on create/edit, keep the "Push" button | ✅ shipped |
+| CR-020 | 2026-07-30 | Orders tab lists all Zoho Books POs; delete wrongly-created POs with lock mark | ✅ shipped |
+| CR-019 | 2026-07-30 | PR same-item line merge; BOM/Purchase pages get their own grids; item-pipeline report | ✅ shipped |
+| CR-018 | 2026-07-30 | WO Zoho-Books UI: split-view detail, Approve ▾, Print PDF, delete; BOM & Purchase as sidebar pages | ✅ shipped |
 | CR-017 | 2026-07-28 | Nav: "Order Management" sidebar submenu, Settings → account menu | ✅ shipped |
 | CR-016 | 2026-07-27 | PO detail view in Purchase tab: edit lines, issue/cancel, delete | ✅ shipped |
 | CR-015 | 2026-07-27 | Purchase tab: vendor list errors + ⟳ re-sync, draft-PR shortfall dedup | ✅ shipped |
@@ -23,6 +27,151 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 | CR-003 | 2026-07-02 | Item search, grid filters, pagination, sidebar, branding | ✅ shipped |
 | CR-002 | 2026-06-30 | Migrate backend to Catalyst Data Store | ✅ shipped |
 | CR-001 | 2026-05-28 | SKU editing + Zoho Books value sync & import | ✅ shipped |
+
+---
+
+## CR-021 — Manual Zoho Books item sync only (2026-08-02) — ✅ shipped
+
+**Requested:** items sync to Zoho Books automatically on save; make it a
+user-triggered action instead — a "Push to ZB" button.
+
+**Shipped:** the manual button and its endpoint (`POST
+/sku-items/:id/push-zoho`) already existed — so this CR removed the automatic
+push and clarified the button.
+
+- Removed the three fire-and-forget `pushToZoho(...)` calls that fired on save:
+  SKU create from the generator (`routes/sku.js`, also dropped the now-unused
+  import), and SKU-item create + update (`routes/skuItems.js`). Nothing reaches
+  Zoho Books now until the user clicks Push.
+- `zoho/push.js`, `zoho/booksApi.js`, and the manual route are unchanged — sync
+  logic (create-or-update by `zohoItemId`, custom fields) is identical.
+- **Button clarity** (`SKUItemsPage.jsx`): synced rows now read `✓ Synced ·
+  Re-push` (was a terminal-looking "Synced"), with a title explaining a click
+  re-pushes edits. A `pushingId` state disables the button and shows "Pushing…"
+  while a request is in flight, blocking double-clicks.
+
+**Not done:** a "needs re-sync / edited since last push" indicator — needs a new
+`zohoSyncedAt` column and a reliable modified-vs-synced comparison (Catalyst
+`MODIFIEDTIME` is bumped by the sync write itself). Presence of `zohoItemId`
+remains the only sync signal. Add when staleness visibility is actually asked
+for.
+
+## CR-020 — Orders tab: all Books POs, delete with lock mark (2026-07-30) — ✅ shipped
+
+**Requested:** POs created directly in Zoho Books (not from a purchase request)
+don't appear in the app and can't be deleted from it — the buyer wants to
+delete a wrongly-created PO from the Orders tab, with a lock mark on POs that
+Books would refuse to delete (receives/bills exist).
+
+**Shipped:**
+
+- **`booksApi.listPurchaseOrders`**: paginated `GET /purchaseorders`
+  (`per_page=200`, `has_more_page` loop — same pattern as `listVendors`).
+- **`purchase.listAllPOs`** + pure `poListRow` behind new **`GET
+  /api/wo/purchase-orders`**: every PO in the Books org; app-created ones
+  stamped with their PR # / WO # via one local `PurchaseRequestLine` query;
+  `locked` = received or billed status ≠ pending. Selftest asserts added.
+- **Gates relaxed for Books-only POs**: `poDetail` and `deletePo` no longer
+  404 when no local PR lines reference the PO (Books calls are already
+  org-scoped by `organization_id`); `deletePo` skips the shortfall reset and
+  logs `po.delete` against the PO itself when nothing local exists.
+  `updatePoLines`/`setPoStatus` keep the local-lines gate.
+- **Orders grid** now reads the endpoint (was: derived from PR lines): PO # ·
+  Date · Vendor · Status · PR # (or "Books") · Work order · Received · Billed
+  · Total, 🔒 beside locked PO numbers. Row click opens the PO detail view as
+  before — which now works for Books-only POs too.
+- **Delete PO button** in the detail view disables with 🔒 + tooltip when the
+  PO has receives/bills, pre-empting Books' raw error; Books stays the
+  backstop if a receive races in.
+
+**Not done / trade-off:** line editing and Mark Issued/Cancelled for Books-only
+POs still go through Zoho Books (only view + delete added here); the Orders
+tab now costs one live Books list call per load.
+
+---
+
+## CR-019 — PR line merge, BOM/Purchase grid pages, item-pipeline report (2026-07-30) — ✅ shipped
+
+**Requested:** (1) a PO came out with the same item twice at the same qty —
+prevent it; (2) WO, BOM and Purchase pages all lead with the same work-order
+sidebar — keep the pages but give BOM and Purchase their own primary content;
+(3) a report showing what stage each item is at (PR / PO / received / billed).
+
+**Shipped:**
+
+- **Same-item PR lines merged** (`purchase.collapseLines`, used in `createPR`):
+  the shortfall is computed per finished good, so one raw material needed by
+  two FGs posted two identical lines; both then landed on one PO and the
+  received/billed refresh (matched by `rmItemId`) double-counted. Lines now
+  collapse to one per item with summed quantities before insert. Selftest
+  asserts added.
+- **`/wo/purchase` rewrite** (`WorkOrderPurchasePage.jsx`): Requests/Orders
+  grid toggle replaces the WO rail. Requests = all PRs (`GET
+  /api/wo/purchase-requests`); Orders = POs derived client-side from PR lines
+  (no new endpoint). Status filter, pagination (`GridFooter`), row click drills
+  into the existing `PurchaseTab` (per WO, with back bar) or `PoSplit` (per
+  PO). "Raise request for…" select keeps the first-request flow for WOs with
+  no purchases.
+- **`/wo/bom` rewrite** (`WorkOrderBomPage.jsx`): grid of WOs with Finished
+  goods, Rev and BOM-imported date (BOMs first, search kept) → row click
+  drills into the existing `BomTab` with back bar.
+- **Item-pipeline report**: `reports.pipelineRollup` + `reports.itemPipeline`
+  (zero Zoho calls, `PurchaseRequestLine` only) behind **`GET
+  /api/wo/reports/item-pipeline?workOrderId=&vendorId=`**. One row per item:
+  Requested · On draft PR · On draft PO · On open PO · Received · Billed
+  (parallel sums, not exclusive buckets), vendor list joined. Third view on
+  `/wo/reports` with WO + vendor filters; CSV export works as-is.
+- **Extraction**: the reports `Table` grid moved to `woCommon.jsx`, shared by
+  Reports/Purchase/BOM pages.
+
+**Not done / trade-off:** existing duplicate draft-PR lines are not migrated —
+the one known bad PO is fixable in the PO detail view (remove the extra line;
+it returns to the shortfall). No "No PR yet" stage in the pipeline report — it
+needs the per-WO shortfall computation and the Shortfall report's "PO raised:
+No" column already covers it. Duplicate PRs per WO stay allowed (re-requests
+are legitimate); only same-item lines within one PR merge.
+
+---
+
+## CR-018 — Work Order UI restructure, Zoho Books style (2026-07-30) — ✅ shipped
+
+**Requested:** move the per-order tabs into the sidebar menu (Materials becomes
+the work order itself; BOM and Purchase become module pages); Approvals and
+History stay per order like Zoho Books quotes; Approve/Reject in the toolbar;
+Edit; a left list rail; ⋯ menu with Delete and Print PDF; grid view like the
+Books quotes list.
+
+**Shipped:**
+
+- **Sidebar submenu** (Order Management): Work Orders `/wo` · BOM `/wo/bom` ·
+  Purchase `/wo/purchase` · Reports `/wo/reports`.
+- **`/wo/:id` split view** (`WorkOrderPage.jsx` rewrite): 260px left rail of
+  all work orders (number, status chip, customer, click to switch) + right
+  detail. Toolbar: **✎ Edit** (modal → `PUT /:id`: project, date, costs,
+  notes) · **Approve ▾** (targets the first non-approved level; both approved
+  → green ✓ chip; per-level buttons remain on the Approvals sub-tab) · status
+  lifecycle buttons (unchanged) · **⋯** (Print / PDF, Delete). Sub-tabs:
+  **Details** (Materials A–I grid) · Approvals · History. X returns to `/wo`.
+- **`/wo/bom`** (`WorkOrderBomPage.jsx`): WO picker rail (rev + BOM date,
+  search) → existing `BomTab` unchanged.
+- **`/wo/purchase`** (`WorkOrderPurchasePage.jsx`): rail of WOs with PRs
+  (count badge, red dot for drafts) + other open WOs → existing `PurchaseTab`
+  unchanged. Backed by new **`GET /api/wo/purchase-requests`**
+  (`purchase.listAllPRs`, PRs stamped with woNumber/customer).
+- **`DELETE /api/wo/:id`**: only Draft/Cancelled; 409 while POs exist or
+  material is reserved/issued; cascades all child tables; `ActivityLog` kept
+  (`wo.delete` logged). Confirm modal in the UI; menu item disabled otherwise.
+- **Print / PDF**: hidden `WoPrintSheet` (header, FGs, BOM materials, costs,
+  notes) + `@media print` visibility CSS → `window.print()`; user saves as PDF
+  from the browser dialog. No new dependencies.
+- **Extraction**: `components/woCommon.jsx` (StatusChip, AccessNotice, style
+  consts) and `components/PurchaseTab.jsx` (PurchaseTab + PoSplit, moved
+  verbatim); Settings/Reports/List pages re-import from `woCommon`.
+
+**Not done / trade-off:** real server-generated PDF (browser print is enough
+until letterhead templates are needed); no grid-view changes to `/wo` (already
+matched the Books pattern); left rail loads the full WO list unpaginated —
+fine at current volumes.
 
 ---
 

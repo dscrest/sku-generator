@@ -1,7 +1,6 @@
 "use strict";
 const express = require("express");
 const { rowList, out, idOk, orgClause, ownsRow, findSkuRowId, isActive, nameFilter } = require("../store");
-const { pushToZoho } = require("../zoho/push");
 const { saveItemValues, missingRequired } = require("../itemValues");
 
 const router = express.Router();
@@ -110,11 +109,8 @@ router.post("/create-item", async (req, res) => {
     // Persist structured selections so the item is searchable by property.
     await saveItemValues(req.catalyst, item.id, industryId, selectedValues);
 
-    // Push to Zoho Books — non-blocking, best-effort.
-    pushToZoho(req.catalyst, item, description).catch((err) =>
-      console.error("[Zoho] push failed for SKU", sku, ":", err.message),
-    );
-
+    // Zoho Books sync is manual only — user clicks "Push" on the SKU Items page
+    // (POST /sku-items/:id/push-zoho). No automatic push on create (CR-021).
     res.status(201).json(item);
   } catch (err) {
     res.status(500).json({ error: err.message });

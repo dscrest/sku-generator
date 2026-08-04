@@ -157,8 +157,10 @@ ROWID (List props) or a raw number string (Range props).
 | GET/POST | `/api/wo/:id/purchase-request(s)` | List / raise a purchase request |
 | PUT | `/api/wo/pr-line/:lineId` | Set vendor + quantity on a line |
 | POST | `/api/wo/pr/:prId/confirm` | One **draft PO per vendor**, delivery = Reserve warehouse, SO referenced |
+| GET | `/api/wo/purchase-orders` | Orders grid: every Books PO, app-created ones stamped with PR/WO, `locked` when received/billed |
+| GET/PUT/DELETE | `/api/wo/po/:poId` (+ POST `/status`) | Live Books PO detail · edit lines · delete (Books-only POs too) · issue/cancel |
 | POST | `/api/wo/:id/approve` · GET `/invoice-gate` | Two-level approval; the gate blocks invoicing until both |
-| GET | `/api/wo/reports/so-bom` · `/reports/shortfall` | ZCQL-only reports |
+| GET | `/api/wo/reports/so-bom` · `/reports/shortfall` · `/reports/item-pipeline` | ZCQL-only reports |
 | GET | `/api/wo/:id/history` · POST `/api/wo/refresh` | Audit trail · manual reconcile |
 
 `POST /internal/reconcile` (nightly cron) and `POST /internal/zoho-event`
@@ -204,7 +206,7 @@ Old-scope tokens (pre-Inventory) make reserve endpoints return `409 {error:"reau
 | `zoho/auth.js` | OAuth config, multi-DC host resolution (`dcHosts`), token load/exchange/refresh, org selection |
 | `zoho/booksApi.js` | Zoho Books v3 / Inventory v1 client (`createItem`, `updateItem`, `getOrganizations`, `listItems`, `getItem`, `listItemCustomFields`, SO/PO reads) |
 | `zoho/inventoryApi.js` | `getCompositeItem` (BOM), `listWarehouses`, `getItemStock` + write stubs |
-| `zoho/push.js` | `pushToZoho` — best-effort create-or-update of a Books item (incl. custom fields), no-op until configured |
+| `zoho/push.js` | `pushToZoho` — best-effort create-or-update of a Books item (incl. custom fields), no-op until configured. Invoked **only** by the manual `POST /sku-items/:id/push-zoho` route (not on create/update — CR-021) |
 | `zoho/import.js` | `importFromBooks` — create-only import of Books items, mapping custom fields to SKUItemValue (find-or-create PropertyValue) |
 | `reserve/sync.js` | Legacy per-item stock sync (superseded by `workorder/sync.js`'s bulk reconcile) |
 | `reserve/zohoDocs.js` | Legacy seam — the real document mapping now lives in `workorder/formulas.js` `ROUTES` |
@@ -252,8 +254,10 @@ list+generator page — CR-014); default landing is `/sku/industries`.
 | `/sku/industries/:id/properties` | `PropertyManagerPage` | Manage one industry's properties + values (incl. Books custom-field mapping) |
 | `/sku/properties` | `PropertiesPage` | All org properties in one grid, filterable by industry/type/required |
 | `/wo` | `WorkOrderListPage` | Work order grid + "new from sales order" flow (tick the FG lines, BOMs seed from Zoho) |
-| `/wo/:id` | `WorkOrderPage` | One work order, five tabs: **Materials** (the A–I grid + Reserve/De-reserve/Issue/Return), BOM (upload + coloured diff + revisions), Purchase, Approvals, History |
-| `/wo/reports` | `WorkOrderReportsPage` | SO–BOM status + shortfall/pending, CSV export |
+| `/wo/:id` | `WorkOrderPage` | Zoho-Books-style split view (CR-018): left rail of all work orders, right detail with toolbar (Edit modal · Approve ▾ two-level dropdown · status actions · ⋯ Print PDF / Delete) and sub-tabs **Details** (the A–I Materials grid), Approvals, History |
+| `/wo/bom` | `WorkOrderBomPage` | Global BOM page: grid of WOs (FGs, Rev, BOM date; BOMs first) → row drills into `BomTab` (upload + coloured diff + revisions) |
+| `/wo/purchase` | `WorkOrderPurchasePage` | Global Purchase page: Requests/Orders grids (Orders = all Books POs via `/api/wo/purchase-orders`, 🔒 when received/billed) → row drills into `PurchaseTab` (per WO) or `PoSplit` (per PO) |
+| `/wo/reports` | `WorkOrderReportsPage` | SO–BOM status + shortfall/pending + item pipeline (WO/vendor filters), CSV export |
 | `/wo/settings` | `WorkOrderSettingsPage` | Warehouse map, alert recipients, thresholds, number prefixes |
 | `/reserve` | `ReservePage` | Superseded by `/wo` — kept one release for the Books custom button |
 | `/admin/addons` | `AddonAdminPage` | Super-admin: per-org add-on entitlements + org delete |

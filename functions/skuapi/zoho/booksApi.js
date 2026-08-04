@@ -100,6 +100,19 @@ async function listPurchaseOrdersForItem(catalyst, itemId) {
   return data.purchaseorders || [];
 }
 
+// Every PO in the Books org (header rows) — the app's Orders grid (CR-020).
+async function listPurchaseOrders(catalyst) {
+  const pos = [];
+  let page = 1;
+  for (;;) {
+    const data = await apiRequest(catalyst, "GET", `/purchaseorders?page=${page}&per_page=200`);
+    pos.push(...(data.purchaseorders || []));
+    if (!data.page_context || !data.page_context.has_more_page) break;
+    page++;
+  }
+  return pos;
+}
+
 async function getPurchaseOrder(catalyst, poId) {
   const data = await apiRequest(catalyst, "GET", `/purchaseorders/${poId}`);
   return data.purchaseorder;
@@ -184,6 +197,7 @@ module.exports = {
   getSalesOrder,
   listSalesOrders,
   listPurchaseOrdersForItem,
+  listPurchaseOrders,
   getPurchaseOrder,
   listVendors,
   createPurchaseOrder,

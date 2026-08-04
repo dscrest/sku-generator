@@ -88,3 +88,21 @@ tr:hover .row-actions,
 .list-row:hover .row-actions,
 .row-actions:focus-within { opacity: 1; }
 @media (hover: none) { .row-actions { opacity: 1; } }
+
+/* Work-order print sheet (CR-018): hidden on screen; in print it is the only
+   visible thing. Visibility (not display) because the sheet sits deep inside
+   the app's flex shell. */
+.wo-print-sheet { display: none; }
+@media print {
+  body * { visibility: hidden; }
+  .wo-print-sheet, .wo-print-sheet * { visibility: visible; }
+  .wo-print-sheet {
+    display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    padding: 24px;
+    background: #fff;
+    color: #000;
+  }
+}

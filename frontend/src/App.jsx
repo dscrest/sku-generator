@@ -16,6 +16,8 @@ import WorkOrderListPage from './pages/WorkOrderListPage.jsx';
 import WorkOrderPage from './pages/WorkOrderPage.jsx';
 import WorkOrderSettingsPage from './pages/WorkOrderSettingsPage.jsx';
 import WorkOrderReportsPage from './pages/WorkOrderReportsPage.jsx';
+import WorkOrderBomPage from './pages/WorkOrderBomPage.jsx';
+import WorkOrderPurchasePage from './pages/WorkOrderPurchasePage.jsx';
 
 const API = '/server/skuapi';
 
@@ -202,6 +204,8 @@ const NAV_LINKS = [
   { to: '/wo', match: '/wo', addon: 'work-order', label: 'Order Management', icon: <><path d="M20 7h-3V4a1 1 0 00-1-1H8a1 1 0 00-1 1v3H4a1 1 0 00-1 1v11a1 1 0 001 1h16a1 1 0 001-1V8a1 1 0 00-1-1z"/><path d="M9 7V5h6v2"/><path d="M8 13h8M8 17h5"/></>,
     children: [
       { to: '/wo', label: 'Work Orders' },
+      { to: '/wo/bom', label: 'BOM' },
+      { to: '/wo/purchase', label: 'Purchase' },
       { to: '/wo/reports', label: 'Reports' },
     ] },
   { to: '/reserve', addon: 'reserve', label: 'Reserve / De-reserve', icon: <><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></> },
@@ -248,6 +252,8 @@ function WorkOrderLayout() {
       <div style={{ flex: 1, minHeight: 0 }}>
         <Routes>
           <Route index element={<WorkOrderListPage />} />
+          <Route path="bom" element={<WorkOrderBomPage />} />
+          <Route path="purchase" element={<WorkOrderPurchasePage />} />
           <Route path="reports" element={<WorkOrderReportsPage />} />
           <Route path="settings" element={<WorkOrderSettingsPage />} />
           <Route path=":id" element={<WorkOrderPage />} />

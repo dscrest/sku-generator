@@ -115,7 +115,7 @@ router.post("/", async (req, res) => {
       orgId: req.orgId,
     });
     const item = out(row);
-    pushToZoho(req.catalyst, item, description).catch((err) => console.error("[Zoho] push failed:", err.message));
+    // Zoho Books sync is manual only (CR-021) — user clicks Push (/:id/push-zoho).
     const [withInd] = await withIndustry(req.catalyst, [item]);
     res.status(201).json(withInd);
   } catch (err) {
@@ -139,7 +139,7 @@ router.put("/:id", async (req, res) => {
     }
     const row = await req.catalyst.datastore().table(TABLE).updateRow(data);
     const item = out(row);
-    pushToZoho(req.catalyst, item, description).catch((err) => console.error("[Zoho] push failed:", err.message));
+    // Zoho Books sync is manual only (CR-021) — user clicks Push (/:id/push-zoho).
     const [withInd] = await withIndustry(req.catalyst, [item]);
     res.json(withInd);
   } catch (err) {

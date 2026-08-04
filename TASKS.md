@@ -10,11 +10,37 @@ Related docs: [CHANGES.md](CHANGES.md) (change requests + shipped log),
 [SCHEMA.md](SCHEMA.md) (DB), [ARCHITECTURE.md](ARCHITECTURE.md) (system),
 [ZOHO_AUTH.md](ZOHO_AUTH.md) (OAuth setup).
 
-Last updated: 2026-07-28.
+Last updated: 2026-08-02.
 
 ---
 
 ## In progress
+
+### CR-021 — Manual Zoho Books item sync only (branch `feat/zoho-field-mapping`)
+- [x] Removed automatic `pushToZoho` on SKU/item create + item update (`routes/sku.js`, `routes/skuItems.js`); dropped unused import
+- [x] Clarified the existing Push button: `✓ Synced · Re-push`, in-flight "Pushing…" + double-click guard (`SKUItemsPage.jsx`)
+- [ ] Verify on deploy: save creates/edits nothing in Books until Push clicked; Push then Re-push updates (no duplicate)
+
+### CR-020 — Orders tab: all Books POs + delete with lock (branch `feat/zoho-field-mapping`)
+- [x] `booksApi.listPurchaseOrders` (paginated) + `GET /api/wo/purchase-orders` (`purchase.listAllPOs`)
+- [x] `poDetail`/`deletePo` work for Books-only POs (no local PR lines); shortfall reset only when app-created
+- [x] Orders grid from the endpoint with PR#/"Books" origin + 🔒 on received/billed POs; Delete disabled with 🔒 in detail view
+- [ ] Verify on deploy: Books-only POs listed and deletable when unlocked; locked ones blocked; app PO delete still resets shortfall
+
+### CR-019 — PR line merge, grid pages, item-pipeline report (branch `feat/zoho-field-mapping`)
+- [x] `collapseLines` in `createPR`: same-item lines merge (root cause of the duplicate PO line + double-counted received/billed)
+- [x] `/wo/purchase` → Requests/Orders grids (POs derived from PR lines, no new endpoint) with drill-in to `PurchaseTab`/`PoSplit`
+- [x] `/wo/bom` → BOM grid (FGs, Rev, BOM date) with drill-in to `BomTab`
+- [x] `GET /api/wo/reports/item-pipeline` + third Reports view with WO/vendor filters
+- [ ] Verify on deploy: shared-RM shortfall raises one merged line; purchase/BOM grids and drill-ins; pipeline totals reconcile
+
+### CR-018 — WO Zoho-Books UI (branch `feat/zoho-field-mapping`)
+- [x] Sidebar submenu: Work Orders / BOM / Purchase / Reports
+- [x] `/wo/:id` split view: left WO rail + toolbar (Edit · Approve ▾ · status · ⋯) + Details/Approvals/History sub-tabs
+- [x] `DELETE /api/wo/:id` (Draft/Cancelled only, guards + cascade) and `GET /api/wo/purchase-requests`
+- [x] `/wo/bom` and `/wo/purchase` global pages reusing `BomTab`/`PurchaseTab`
+- [x] Print / PDF via hidden print sheet + `window.print()`
+- [ ] Verify on deploy: approve flow, delete guards, print layout, global purchase page
 
 ### CR-014 — SKU tabs in setup order + combined SKUs page (branch `feat/zoho-field-mapping`)
 - [x] Tabs reordered Industries → Properties → SKU Generator; default landing `/sku/industries`

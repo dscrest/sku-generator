@@ -113,6 +113,17 @@ router.get("/so/:soId", ok(async (req, res) => {
 
 router.get("/vendors", ok(async (req, res) => res.json(await listVendors(req.catalyst))));
 
+// Global Purchase page (CR-018). Static path — must stay above /:id.
+router.get("/purchase-requests", ok(async (req, res) => {
+  res.json(await purchase.listAllPRs(req.catalyst, req.orgId));
+}));
+
+// Orders grid (CR-020): every PO in the Books org, app-created ones stamped
+// with their PR / work order. Static path — must stay above /:id.
+router.get("/purchase-orders", ok(async (req, res) => {
+  res.json(await purchase.listAllPOs(req.catalyst, req.orgId));
+}));
+
 // ---- reports --------------------------------------------------------------
 
 router.get("/reports/so-bom", ok(async (req, res) => {
@@ -121,6 +132,12 @@ router.get("/reports/so-bom", ok(async (req, res) => {
 
 router.get("/reports/shortfall", ok(async (req, res) => {
   res.json(await reports.shortfall(req.catalyst, req.orgId));
+}));
+
+router.get("/reports/item-pipeline", ok(async (req, res) => {
+  res.json(await reports.itemPipeline(req.catalyst, req.orgId, {
+    workOrderId: req.query.workOrderId, vendorId: req.query.vendorId,
+  }));
 }));
 
 // ---- material transactions (ids are not work-order ids → before /:id) ------
@@ -296,6 +313,56 @@ router.put("/:id", ok(async (req, res) => {
   await req.catalyst.datastore().table("WorkOrder").updateRow(fields);
   await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.update", req.userId, fields);
   res.json({ ok: true });
+}));
+
+/**
+ * Delete a work order and its child rows (CR-018). Only Draft/Cancelled, and
+ * only when nothing irreversible happened: no POs raised, no material moved.
+ * ActivityLog rows stay — the audit trail outlives the record.
+ */
+router.delete("/:id", ok(async (req, res) => {
+  const wo = await loadWo(req);
+  const woId = String(wo.ROWID);
+  if (!["Draft", "Cancelled"].includes(String(wo.status))) {
+    const e = new Error(`${wo.woNumber} is ${wo.status} — only Draft or Cancelled work orders can be deleted. Cancel it first.`);
+    e.status = 409;
+    throw e;
+  }
+
+  const prs = await byOrg(req.catalyst, req.orgId, "PurchaseRequest", `workOrderId = ${zStr(woId)}`);
+  const prIds = inList(prs.map((p) => p.ROWID));
+  const prLines = prIds
+    ? await byOrg(req.catalyst, req.orgId, "PurchaseRequestLine", `purchaseRequestId IN (${prIds})`)
+    : [];
+  if (prLines.some((l) => l.zohoPoId)) {
+    const e = new Error(`${wo.woNumber} has purchase orders in Zoho Books — delete or cancel those first.`);
+    e.status = 409;
+    throw e;
+  }
+  const resLines = await byOrg(req.catalyst, req.orgId, "ReservationLine", `workOrderId = ${zStr(woId)}`);
+  if (resLines.some((l) => n(l.reservedQty) > 0 || n(l.issuedQty) - n(l.returnedQty) > 0)) {
+    const e = new Error(`${wo.woNumber} still has reserved or issued material — return / de-reserve it first.`);
+    e.status = 409;
+    throw e;
+  }
+
+  const ds = req.catalyst.datastore();
+  const wipe = async (table, rows) => { for (const r of rows) await ds.table(table).deleteRow(r.ROWID); };
+  const txns = await byOrg(req.catalyst, req.orgId, "MaterialTxn", `workOrderId = ${zStr(woId)}`);
+  const txnIds = inList(txns.map((t) => t.ROWID));
+  await wipe("MaterialTxnLine", txnIds ? await byOrg(req.catalyst, req.orgId, "MaterialTxnLine", `txnId IN (${txnIds})`) : []);
+  await wipe("MaterialTxn", txns);
+  await wipe("PurchaseRequestLine", prLines);
+  await wipe("PurchaseRequest", prs);
+  await wipe("ReservationLine", resLines);
+  await wipe("WorkOrderLine", await byOrg(req.catalyst, req.orgId, "WorkOrderLine", `workOrderId = ${zStr(woId)}`));
+  await wipe("BomRevision", await byOrg(req.catalyst, req.orgId, "BomRevision", `workOrderId = ${zStr(woId)}`));
+  await wipe("Approval", await byOrg(req.catalyst, req.orgId, "Approval", `entityType = 'WorkOrder' AND entityId = ${zStr(woId)}`));
+  await wipe("WorkOrderFG", await byOrg(req.catalyst, req.orgId, "WorkOrderFG", `workOrderId = ${zStr(woId)}`));
+  await ds.table("WorkOrder").deleteRow(woId);
+
+  await logActivity(req.catalyst, req.orgId, "WorkOrder", woId, "wo.delete", req.userId, { woNumber: wo.woNumber });
+  res.json({ deleted: true });
 }));
 
 /** Status transitions, including the QC gate (FR-BOM-003). */

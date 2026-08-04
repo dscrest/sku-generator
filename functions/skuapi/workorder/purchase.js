@@ -10,7 +10,7 @@ const { zStr } = require("../store");
 const { dsDate } = require("../zoho/auth");
 const {
   createPurchaseOrder, getPurchaseOrder, updatePurchaseOrder,
-  deletePurchaseOrder, setPurchaseOrderStatus,
+  deletePurchaseOrder, setPurchaseOrderStatus, listPurchaseOrders,
 } = require("../zoho/booksApi");
 const { warehouses, nextNumber, logActivity, byOrg, settings, inList } = require("./store");
 
@@ -97,6 +97,26 @@ function groupByVendor(lines) {
   return [...groups.values()];
 }
 
+/**
+ * Pure: collapse same-item lines into one (CR-019). The shortfall is computed
+ * per finished good, so one raw material needed by two FGs arrives as two
+ * lines; persisting both would put the same item twice on one PO and make the
+ * received/billed refresh (matched by rmItemId) double-count.
+ */
+function collapseLines(lines) {
+  const byItem = new Map();
+  for (const l of lines) {
+    const qty = n(l.purchaseQty) || n(l.requiredQty);
+    const cur = byItem.get(String(l.rmItemId));
+    if (!cur) byItem.set(String(l.rmItemId), { ...l, purchaseQty: qty });
+    else {
+      cur.requiredQty = n(cur.requiredQty) + n(l.requiredQty);
+      cur.purchaseQty += qty;
+    }
+  }
+  return [...byItem.values()];
+}
+
 // ---- persistence ----------------------------------------------------------
 
 async function createPR(catalyst, orgId, { workOrderId, lines }, userId) {
@@ -118,7 +138,7 @@ async function createPR(catalyst, orgId, { workOrderId, lines }, userId) {
   });
 
   const table = catalyst.datastore().table("PurchaseRequestLine");
-  for (const l of lines) {
+  for (const l of collapseLines(lines)) {
     await table.insertRow({
       orgId: String(orgId),
       purchaseRequestId: String(pr.ROWID),
@@ -258,16 +278,58 @@ function poPutBody(po, kept) {
   return { body: { line_items: lineItems }, removedItemIds };
 }
 
-// Org-isolation gate: a PO is only visible if one of this org's PR lines
-// created it. Cross-org probing gets the same 404 as a bogus id.
+// Line-edit gate: a PO's lines are only editable here if one of this org's PR
+// lines created it. Viewing/deleting works for any PO of the connected Books
+// org (CR-020) — Books calls are already scoped by organization_id.
 async function poLines(catalyst, orgId, poId) {
   const lines = await byOrg(catalyst, orgId, "PurchaseRequestLine", `zohoPoId = ${zStr(String(poId))}`);
   if (!lines.length) { const e = new Error("Purchase order not found"); e.status = 404; throw e; }
   return lines;
 }
 
+// Pure: one Orders-grid row from a Books PO header + the app's PR-line map.
+// Locked = has receives or bills — Books would refuse to delete it.
+function poListRow(po, prByPoId) {
+  const linked = prByPoId.get(String(po.purchaseorder_id));
+  return {
+    id: String(po.purchaseorder_id),
+    number: po.purchaseorder_number,
+    date: po.date,
+    vendorName: po.vendor_name,
+    status: po.status,
+    referenceNumber: po.reference_number || "",
+    receivedStatus: po.received_status || "",
+    billedStatus: po.billed_status || "",
+    total: n(po.total),
+    prNumber: linked ? linked.prNumber : null,
+    woNumber: linked ? linked.woNumber : null,
+    locked: (po.received_status && po.received_status !== "pending")
+      || (po.billed_status && po.billed_status !== "pending") || false,
+  };
+}
+
+// The Orders grid (CR-020): every PO in the Books org, stamped with the PR /
+// work order that created it when the app did.
+async function listAllPOs(catalyst, orgId) {
+  const pos = await listPurchaseOrders(catalyst);
+  const lines = await byOrg(catalyst, orgId, "PurchaseRequestLine", "zohoPoId != ''");
+  const prIds = inList([...new Set(lines.map((l) => String(l.purchaseRequestId)))]);
+  const prs = prIds ? await byOrg(catalyst, orgId, "PurchaseRequest", `ROWID IN (${prIds})`) : [];
+  const woIds = inList([...new Set(prs.map((p) => String(p.workOrderId)))]);
+  const wos = woIds ? await byOrg(catalyst, orgId, "WorkOrder", `ROWID IN (${woIds})`) : [];
+  const woById = new Map(wos.map((w) => [String(w.ROWID), w]));
+  const prById = new Map(prs.map((p) => [String(p.ROWID), p]));
+  const prByPoId = new Map();
+  for (const l of lines) {
+    if (prByPoId.has(String(l.zohoPoId))) continue;
+    const pr = prById.get(String(l.purchaseRequestId));
+    const wo = pr && woById.get(String(pr.workOrderId));
+    prByPoId.set(String(l.zohoPoId), { prNumber: pr ? pr.prNumber : null, woNumber: wo ? wo.woNumber : null });
+  }
+  return pos.map((po) => poListRow(po, prByPoId));
+}
+
 async function poDetail(catalyst, orgId, poId) {
-  await poLines(catalyst, orgId, poId);
   const po = await getPurchaseOrder(catalyst, poId);
   return {
     id: String(po.purchaseorder_id),
@@ -320,13 +382,18 @@ async function resetPoLines(catalyst, orgId, poId, itemFilter) {
 }
 
 async function deletePo(catalyst, orgId, poId, userId) {
-  const lines = await poLines(catalyst, orgId, poId);
+  // Empty = a PO created directly in Books (CR-020): nothing local to reset.
+  const lines = await byOrg(catalyst, orgId, "PurchaseRequestLine", `zohoPoId = ${zStr(String(poId))}`);
   // Books first: if it refuses (billed PO), local rows stay untouched.
   await deletePurchaseOrder(catalyst, poId);
-  await resetPoLines(catalyst, orgId, poId);
-  await logActivity(catalyst, orgId, "PurchaseRequest", lines[0].purchaseRequestId, "po.delete", userId, {
-    poNumber: lines[0].zohoPoNumber, lines: lines.length,
-  });
+  if (lines.length) {
+    await resetPoLines(catalyst, orgId, poId);
+    await logActivity(catalyst, orgId, "PurchaseRequest", lines[0].purchaseRequestId, "po.delete", userId, {
+      poNumber: lines[0].zohoPoNumber, lines: lines.length,
+    });
+  } else {
+    await logActivity(catalyst, orgId, "PurchaseOrder", poId, "po.delete", userId, { source: "books" });
+  }
   return { deleted: true };
 }
 
@@ -428,16 +495,8 @@ async function refreshPurchaseOrders(catalyst, orgId, { poIds } = {}) {
   return { purchaseOrders: byPo.size, lines: refreshed };
 }
 
-// The Purchase tab: requests of one work order with their lines.
-async function listPRs(catalyst, orgId, workOrderId) {
-  const prs = await byOrg(
-    catalyst, orgId, "PurchaseRequest", `workOrderId = ${zStr(String(workOrderId))}`, "CREATEDTIME DESC",
-  );
-  const ids = inList(prs.map((p) => p.ROWID));
-  const lines = ids
-    ? await byOrg(catalyst, orgId, "PurchaseRequestLine", `purchaseRequestId IN (${ids})`)
-    : [];
-  return prs.map((p) => ({
+function prJson(p, lines) {
+  return {
     id: String(p.ROWID),
     prNumber: p.prNumber,
     status: p.status,
@@ -457,13 +516,48 @@ async function listPRs(catalyst, orgId, workOrderId) {
       receivedQty: n(l.receivedQty),
       billedQty: n(l.billedQty),
     })),
-  }));
+  };
+}
+
+// The Purchase tab: requests of one work order with their lines.
+async function listPRs(catalyst, orgId, workOrderId) {
+  const prs = await byOrg(
+    catalyst, orgId, "PurchaseRequest", `workOrderId = ${zStr(String(workOrderId))}`, "CREATEDTIME DESC",
+  );
+  const ids = inList(prs.map((p) => p.ROWID));
+  const lines = ids
+    ? await byOrg(catalyst, orgId, "PurchaseRequestLine", `purchaseRequestId IN (${ids})`)
+    : [];
+  return prs.map((p) => prJson(p, lines));
+}
+
+// The global Purchase page (CR-018): every request in the org, stamped with
+// its work order so the list can group by WO without N+1 detail fetches.
+async function listAllPRs(catalyst, orgId) {
+  const prs = await byOrg(catalyst, orgId, "PurchaseRequest", null, "CREATEDTIME DESC");
+  const ids = inList(prs.map((p) => p.ROWID));
+  const lines = ids
+    ? await byOrg(catalyst, orgId, "PurchaseRequestLine", `purchaseRequestId IN (${ids})`)
+    : [];
+  const woIds = inList([...new Set(prs.map((p) => String(p.workOrderId)))]);
+  const wos = woIds ? await byOrg(catalyst, orgId, "WorkOrder", `ROWID IN (${woIds})`) : [];
+  const woById = new Map(wos.map((w) => [String(w.ROWID), w]));
+  return prs.map((p) => {
+    const wo = woById.get(String(p.workOrderId));
+    return {
+      ...prJson(p, lines),
+      woId: String(p.workOrderId),
+      woNumber: wo ? wo.woNumber : null,
+      salesOrderNumber: wo ? wo.salesOrderNumber : null,
+      customerName: wo ? wo.customerName : null,
+    };
+  });
 }
 
 module.exports = {
-  SETTLED_PO, shortfallLines, applyDraftCoverage, validatePR, groupByVendor,
-  createPR, updatePRLine, confirmPR, refreshPurchaseOrders, listPRs,
-  poPutBody, poDetail, deletePo, setPoStatus, updatePoLines,
+  SETTLED_PO, shortfallLines, applyDraftCoverage, validatePR, groupByVendor, collapseLines,
+  createPR, updatePRLine, confirmPR, refreshPurchaseOrders, listPRs, listAllPRs,
+  poPutBody, poDetail, deletePo, setPoStatus, updatePoLines, poListRow, listAllPOs,
 };
 
 // ponytail self-check: `node functions/skuapi/workorder/purchase.js --selftest`
@@ -527,6 +621,19 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(twoFgs.length, 1, "first row fully covered, second partly");
   assert.strictEqual(twoFgs[0].purchaseQty, 4, "10 across FGs − 6 on draft = 4");
 
+  // Same item from two FGs collapses to one PR line with summed quantities.
+  const collapsed = collapseLines([
+    { rmItemId: "11", rmName: "Shaft", requiredQty: 5, purchaseQty: 5, vendorId: "V1", vendorName: "Acme" },
+    { rmItemId: "22", rmName: "Seal", requiredQty: 4, purchaseQty: 4 },
+    { rmItemId: "11", rmName: "Shaft", requiredQty: 3 }, // no purchaseQty → falls back to requiredQty
+  ]);
+  assert.strictEqual(collapsed.length, 2, "same item merges, distinct items untouched");
+  const shaft = collapsed.find((l) => l.rmItemId === "11");
+  assert.strictEqual(shaft.requiredQty, 8, "required quantities summed");
+  assert.strictEqual(shaft.purchaseQty, 8, "purchase quantities summed with requiredQty fallback");
+  assert.strictEqual(shaft.vendorId, "V1", "first line's vendor kept");
+  assert.strictEqual(collapsed.find((l) => l.rmItemId === "22").purchaseQty, 4);
+
   // Validation.
   assert.deepStrictEqual(
     validatePR([{ rmName: "Shaft", purchaseQty: 5, vendorId: "V1" }]), [], "a complete line passes",
@@ -573,6 +680,23 @@ if (require.main === module && process.argv.includes("--selftest")) {
   const none = poPutBody(fetchedPo, []);
   assert.strictEqual(none.body.line_items.length, 0);
   assert.strictEqual(none.removedItemIds.size, 3 - 1, "both distinct items removed");
+
+  // Orders-grid rows: app-created POs carry their PR/WO, receives/bills lock.
+  const prMap = new Map([["P1", { prNumber: "PR-0001", woNumber: "WO-0006" }]]);
+  const appPo = poListRow({
+    purchaseorder_id: "P1", purchaseorder_number: "PO-00112", status: "draft",
+    received_status: "pending", billed_status: "pending", total: 100,
+  }, prMap);
+  assert.strictEqual(appPo.prNumber, "PR-0001");
+  assert.strictEqual(appPo.woNumber, "WO-0006");
+  assert.strictEqual(appPo.locked, false, "nothing received or billed → deletable");
+  const booksPo = poListRow({
+    purchaseorder_id: "P9", purchaseorder_number: "PO-00104", status: "issued",
+    received_status: "partially_received", billed_status: "pending",
+  }, prMap);
+  assert.strictEqual(booksPo.prNumber, null, "Books-only PO has no PR");
+  assert.strictEqual(booksPo.locked, true, "receives exist → locked");
+  assert.strictEqual(poListRow({ purchaseorder_id: "P8", billed_status: "billed" }, prMap).locked, true, "bills lock too");
 
   console.log("workorder/purchase.js self-check passed");
 }

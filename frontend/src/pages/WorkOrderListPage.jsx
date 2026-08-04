@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import Modal from '../components/Modal.jsx';
 import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
 import { Empty } from '../components/MaterialsGrid.jsx';
-import { StatusChip, AccessNotice } from './WorkOrderPage.jsx';
+import { StatusChip, AccessNotice } from '../components/woCommon.jsx';
 
 /** Work order list + the "new work order from a sales order" flow. */
 export default function WorkOrderListPage() {

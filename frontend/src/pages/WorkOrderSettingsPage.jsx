@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import { Empty, Banner } from '../components/MaterialsGrid.jsx';
-import { AccessNotice } from './WorkOrderPage.jsx';
+import { AccessNotice } from '../components/woCommon.jsx';
 
 /**
  * Work Order settings. The three warehouses are the one thing that must be set

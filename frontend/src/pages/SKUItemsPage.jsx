@@ -41,6 +41,7 @@ export default function SKUItemsPage() {
   const [selected, setSelected] = useState(null);
   const [editForm, setEditForm] = useState(null); // { id, name, sku, description, type } | null
   const [saving, setSaving] = useState(false);
+  const [pushingId, setPushingId] = useState(null); // item id currently syncing to Zoho
 
   // Text filters (free-text + SKU), debounced so we don't fire per keystroke.
   // ?q= seeds the box so a global-search hit lands on a filtered grid.
@@ -139,13 +140,18 @@ export default function SKUItemsPage() {
 
   async function handlePushZoho(item, e) {
     e.stopPropagation();
-    const tid = toast.loading(`Pushing "${item.sku}" to Zoho…`);
+    if (pushingId) return; // guard against double-clicks while a push is in flight
+    setPushingId(item.id);
+    const verb = item.zohoItemId ? 'Re-pushing' : 'Pushing';
+    const tid = toast.loading(`${verb} "${item.sku}" to Zoho Books…`);
     try {
       const { data } = await axios.post(`/api/sku-items/${item.id}/push-zoho`);
-      toast.success(`Synced! Zoho ID: ${data.zohoItemId}`, { id: tid });
+      toast.success(`Synced to Zoho Books · ID ${data.zohoItemId}`, { id: tid });
       load();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Push failed', { id: tid });
+    } finally {
+      setPushingId(null);
     }
   }
 
@@ -352,18 +358,21 @@ export default function SKUItemsPage() {
                           <td style={{ padding: '8px 16px' }} onClick={e => e.stopPropagation()}>
                             <button
                               onClick={e => handlePushZoho(item, e)}
-                              title={item.zohoItemId ? `Zoho ID: ${item.zohoItemId}` : 'Push to Zoho Books'}
+                              disabled={pushingId === item.id}
+                              title={item.zohoItemId ? `Synced to Zoho Books (ID ${item.zohoItemId}) — click to re-push updates` : 'Push to Zoho Books'}
                               style={{
                                 display: 'flex', alignItems: 'center', gap: 5,
                                 padding: '4px 10px', fontSize: 11, fontWeight: 600,
                                 background: item.zohoItemId ? '#f0fdf4' : '#fff7ed',
                                 color: item.zohoItemId ? '#16a34a' : '#ea580c',
                                 border: `1px solid ${item.zohoItemId ? '#bbf7d0' : '#fed7aa'}`,
-                                borderRadius: 'var(--radius-sm)', cursor: 'pointer', whiteSpace: 'nowrap',
+                                borderRadius: 'var(--radius-sm)',
+                                cursor: pushingId === item.id ? 'wait' : 'pointer',
+                                opacity: pushingId === item.id ? 0.6 : 1, whiteSpace: 'nowrap',
                               }}
                             >
                               <span style={{ fontWeight: 700 }}>Z</span>
-                              {item.zohoItemId ? 'Synced' : 'Push'}
+                              {pushingId === item.id ? 'Pushing…' : item.zohoItemId ? '✓ Synced · Re-push' : 'Push'}
                             </button>
                           </td>
                           <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
@@ -427,17 +436,20 @@ export default function SKUItemsPage() {
                     {selectedItem && (
                       <button
                         onClick={e => handlePushZoho(selectedItem, e)}
-                        title={selectedItem.zohoItemId ? `Zoho ID: ${selectedItem.zohoItemId}` : 'Push to Zoho Books'}
+                        disabled={pushingId === selectedItem.id}
+                        title={selectedItem.zohoItemId ? `Synced to Zoho Books (ID ${selectedItem.zohoItemId}) — click to re-push updates` : 'Push to Zoho Books'}
                         style={{
                           display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', fontSize: 11, fontWeight: 600,
                           background: selectedItem.zohoItemId ? '#f0fdf4' : '#fff7ed',
                           color: selectedItem.zohoItemId ? '#16a34a' : '#ea580c',
                           border: `1px solid ${selectedItem.zohoItemId ? '#bbf7d0' : '#fed7aa'}`,
-                          borderRadius: 'var(--radius-sm)', cursor: 'pointer', whiteSpace: 'nowrap',
+                          borderRadius: 'var(--radius-sm)',
+                          cursor: pushingId === selectedItem.id ? 'wait' : 'pointer',
+                          opacity: pushingId === selectedItem.id ? 0.6 : 1, whiteSpace: 'nowrap',
                         }}
                       >
                         <span style={{ fontWeight: 700 }}>Z</span>
-                        {selectedItem.zohoItemId ? 'Synced' : 'Push to Zoho'}
+                        {pushingId === selectedItem.id ? 'Pushing…' : selectedItem.zohoItemId ? '✓ Synced · Re-push to Zoho' : 'Push to Zoho'}
                       </button>
                     )}
                     <button

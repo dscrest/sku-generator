@@ -113,6 +113,50 @@ async function shortfall(catalyst, orgId) {
   return out.sort((a, b) => b.shortfallQty - a.shortfallQty);
 }
 
+/**
+ * Pure: group purchase-request lines by item into pipeline-stage columns
+ * (CR-019). Stages are parallel sums, not exclusive buckets — received and
+ * billed overlap with the on-PO quantities.
+ */
+function pipelineRollup(lines) {
+  const byItem = new Map();
+  for (const l of lines) {
+    const key = String(l.rmItemId);
+    const cur = byItem.get(key) || {
+      rmItemId: key, rmName: l.rmName || "", vendors: new Set(),
+      requested: 0, noPo: 0, onPoDraft: 0, onPoOpen: 0, received: 0, billed: 0,
+    };
+    if (l.vendorName) cur.vendors.add(l.vendorName);
+    const qty = n(l.purchaseQty);
+    const st = String(l.poStatus || "").toLowerCase();
+    cur.requested += qty;
+    if (!l.zohoPoId) cur.noPo += qty;
+    else if (st === "draft") cur.onPoDraft += qty;
+    else if (st === "open" || st === "issued") cur.onPoOpen += qty;
+    cur.received += n(l.receivedQty);
+    cur.billed += n(l.billedQty);
+    byItem.set(key, cur);
+  }
+  return [...byItem.values()]
+    .map((r) => ({ ...r, vendors: [...r.vendors].join(", ") }))
+    .sort((a, b) => b.requested - a.requested);
+}
+
+/**
+ * Item-pipeline report: one row per raw material across all purchase requests
+ * — how much is requested and where it stands (still on a draft PR / on a
+ * draft PO / on an open PO / received / billed). Filters optional.
+ */
+async function itemPipeline(catalyst, orgId, { workOrderId, vendorId } = {}) {
+  let where = `status != ${zStr("Cancelled")}`;
+  if (workOrderId) where += ` AND workOrderId = ${zStr(String(workOrderId))}`;
+  const prs = await byOrg(catalyst, orgId, "PurchaseRequest", where);
+  const ids = inList(prs.map((p) => p.ROWID));
+  let lines = ids ? await byOrg(catalyst, orgId, "PurchaseRequestLine", `purchaseRequestId IN (${ids})`) : [];
+  if (vendorId) lines = lines.filter((l) => String(l.vendorId) === String(vendorId));
+  return pipelineRollup(lines);
+}
+
 // The work order's own History tab feed: material movements + BOM revisions +
 // approvals, newest first, already merged.
 async function history(catalyst, orgId, workOrderId) {
@@ -131,7 +175,7 @@ async function history(catalyst, orgId, workOrderId) {
   }));
 }
 
-module.exports = { rollUp, soBom, shortfall, history };
+module.exports = { rollUp, soBom, shortfall, history, pipelineRollup, itemPipeline };
 
 // ponytail self-check: `node functions/skuapi/workorder/reports.js --selftest`
 if (require.main === module && process.argv.includes("--selftest")) {
@@ -162,6 +206,25 @@ if (require.main === module && process.argv.includes("--selftest")) {
   const done = rollUp([gridRow({ rmItemId: "1", requiredQty: 5 }, { stockOnHand: 9 }, { reservedQty: 5 }, {})]);
   assert.strictEqual(done.complete, true, "everything reserved and nothing short → complete");
   assert.strictEqual(rollUp([]).complete, false, "an empty BOM is not 'complete'");
+
+  // Item pipeline: one item across two PRs/POs sums into parallel stage columns.
+  const pipe = pipelineRollup([
+    { rmItemId: "11", rmName: "Shaft", vendorName: "Acme", purchaseQty: 5, zohoPoId: "P1", poStatus: "draft", receivedQty: 0, billedQty: 0 },
+    { rmItemId: "11", rmName: "Shaft", vendorName: "Bolt Co", purchaseQty: 3, zohoPoId: "P2", poStatus: "open", receivedQty: 2, billedQty: 1 },
+    { rmItemId: "11", rmName: "Shaft", purchaseQty: 4, zohoPoId: "", poStatus: "" },
+    { rmItemId: "22", rmName: "Seal", vendorName: "Acme", purchaseQty: 6, zohoPoId: "", poStatus: "" },
+  ]);
+  assert.strictEqual(pipe.length, 2, "one row per item");
+  const shaft = pipe[0];
+  assert.strictEqual(shaft.rmItemId, "11", "sorted by requested desc");
+  assert.strictEqual(shaft.requested, 12, "5 + 3 + 4");
+  assert.strictEqual(shaft.noPo, 4, "line without a PO stays in the draft-PR bucket");
+  assert.strictEqual(shaft.onPoDraft, 5);
+  assert.strictEqual(shaft.onPoOpen, 3);
+  assert.strictEqual(shaft.received, 2);
+  assert.strictEqual(shaft.billed, 1);
+  assert.strictEqual(shaft.vendors, "Acme, Bolt Co");
+  assert.strictEqual(pipe[1].noPo, 6);
 
   console.log("workorder/reports.js self-check passed");
 }

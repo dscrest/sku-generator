@@ -4,30 +4,44 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import GridFooter, { usePager } from '../components/GridFooter.jsx';
 import { Empty } from '../components/MaterialsGrid.jsx';
-import { StatusChip, AccessNotice } from './WorkOrderPage.jsx';
+import { StatusChip, AccessNotice, Table, select } from '../components/woCommon.jsx';
 
 /**
- * SO-BOM and shortfall reports (FR-ADO-009). Both read only our own tables, so
- * they cost nothing in Zoho API calls however many projects they span.
+ * SO-BOM, shortfall and item-pipeline reports (FR-ADO-009). All read only our
+ * own tables, so they cost nothing in Zoho API calls however many projects
+ * they span.
  */
-const VIEWS = ['SO–BOM status', 'Shortfall / pending'];
+const VIEWS = ['SO–BOM status', 'Shortfall / pending', 'Item pipeline'];
 
 export default function WorkOrderReportsPage() {
   const [view, setView] = useState(VIEWS[0]);
   const [rows, setRows] = useState(null);
   const [blocked, setBlocked] = useState(null);
+  const [woFilter, setWoFilter] = useState('');
+  const [vendorFilter, setVendorFilter] = useState('');
+  const [filterOpts, setFilterOpts] = useState(null); // { wos, vendors }
   const navigate = useNavigate();
 
   useEffect(() => {
     setRows(null);
-    const url = view === VIEWS[0] ? '/api/wo/reports/so-bom' : '/api/wo/reports/shortfall';
+    const url = view === VIEWS[0] ? '/api/wo/reports/so-bom'
+      : view === VIEWS[1] ? '/api/wo/reports/shortfall'
+      : `/api/wo/reports/item-pipeline?workOrderId=${woFilter}&vendorId=${vendorFilter}`;
     axios.get(url)
       .then(({ data }) => setRows(data))
       .catch(err => {
         if (err.response?.status === 403) setBlocked('disabled');
         else toast.error(err.response?.data?.error || 'Could not load the report');
       });
-  }, [view]);
+  }, [view, woFilter, vendorFilter]);
+
+  // WO / vendor filter options, fetched once when the pipeline view first opens.
+  useEffect(() => {
+    if (view !== VIEWS[2] || filterOpts) return;
+    Promise.all([axios.get('/api/wo'), axios.get('/api/wo/vendors')])
+      .then(([wos, vendors]) => setFilterOpts({ wos: wos.data, vendors: vendors.data }))
+      .catch(() => setFilterOpts({ wos: [], vendors: [] }));
+  }, [view, filterOpts]);
 
   const { pageRows, pager } = usePager(rows || []);
   if (blocked) return <AccessNotice kind={blocked} />;
@@ -44,13 +58,27 @@ export default function WorkOrderReportsPage() {
             }}>{v}</button>
           ))}
         </div>
+        {view === VIEWS[2] && (
+          <>
+            <select style={select} value={woFilter} onChange={e => setWoFilter(e.target.value)}>
+              <option value="">All work orders</option>
+              {(filterOpts?.wos || []).map(w => <option key={w.id} value={w.id}>{w.woNumber}</option>)}
+            </select>
+            <select style={select} value={vendorFilter} onChange={e => setVendorFilter(e.target.value)}>
+              <option value="">All vendors</option>
+              {(filterOpts?.vendors || []).map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+            </select>
+          </>
+        )}
         <div style={{ flex: 1 }} />
         <button onClick={() => rows && download(view, rows)} disabled={!rows?.length} style={btn}>⬇ Export CSV</button>
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', padding: '0 20px' }}>
         {!rows ? <Empty>Loading…</Empty> : !rows.length ? (
-          <Empty>{view === VIEWS[0] ? 'No work orders yet.' : 'Nothing is short — every open work order is covered.'}</Empty>
+          <Empty>{view === VIEWS[0] ? 'No work orders yet.'
+            : view === VIEWS[1] ? 'Nothing is short — every open work order is covered.'
+            : 'No purchase request lines match.'}</Empty>
         ) : view === VIEWS[0] ? (
           <Table
             head={['Work order', 'Sales order', 'Customer', 'Status', 'Items', 'Required', 'Reserved', 'Issued', 'On order', 'Short']}
@@ -61,6 +89,18 @@ export default function WorkOrderReportsPage() {
                 <b style={{ color: 'var(--blue)' }}>{r.woNumber}</b>, r.salesOrderNumber, r.customerName,
                 <StatusChip status={r.status} />, r.items, r.required, r.reserved, r.issued, r.ordered,
                 r.shortItems ? <span style={{ color: '#dc2626', fontWeight: 700 }}>{r.shortItems}</span> : '—',
+              ],
+            }))}
+          />
+        ) : view === VIEWS[2] ? (
+          <Table
+            head={['Item', 'Vendors', 'Requested', 'On draft PR', 'On draft PO', 'On open PO', 'Received', 'Billed']}
+            rightFrom={2}
+            rows={pageRows.map(r => ({
+              key: r.rmItemId,
+              cells: [
+                <b>{r.rmName || r.rmItemId}</b>, r.vendors || '—',
+                r.requested, r.noPo || '—', r.onPoDraft || '—', r.onPoOpen || '—', r.received, r.billed,
               ],
             }))}
           />
@@ -85,25 +125,6 @@ export default function WorkOrderReportsPage() {
   );
 }
 
-function Table({ head, rows, rightFrom }) {
-  return (
-    <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
-      <thead>
-        <tr>{head.map((h, i) => <th key={h} style={{ ...thStyle, textAlign: i >= rightFrom ? 'right' : 'left' }}>{h}</th>)}</tr>
-      </thead>
-      <tbody>
-        {rows.map(r => (
-          <tr key={r.key} onClick={r.onClick} className="list-row" style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
-            {r.cells.map((c, i) => (
-              <td key={i} style={{ padding: '8px 12px', fontSize: 13, textAlign: i >= rightFrom ? 'right' : 'left', fontFamily: i >= rightFrom ? 'var(--font-mono)' : 'inherit' }}>{c}</td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
 // Plain CSV from the rows already on screen — no server round trip.
 function download(view, rows) {
   const cols = Object.keys(rows[0]);
@@ -119,8 +140,4 @@ function download(view, rows) {
 const btn = {
   padding: '7px 12px', fontSize: 12, background: 'var(--bg-card)', border: '1px solid var(--border)',
   borderRadius: 'var(--radius-md)', cursor: 'pointer', color: 'var(--text-secondary)',
-};
-const thStyle = {
-  padding: '9px 12px', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)',
-  background: 'var(--bg-page)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap',
 };
