@@ -44,6 +44,8 @@ export default function WorkOrderPage() {
   const bothApproved = approvalOf(1) === 'Approved' && approvalOf(2) === 'Approved';
   const nextLevel = approvalOf(1) !== 'Approved' ? 1 : 2;
   const canDelete = wo && ['Draft', 'Cancelled'].includes(wo.status);
+  // Forward status moves (Cancel lives in the ⋯ menu, not the status dropdown).
+  const forward = (wo?.nextStatuses || []).filter(s => s !== 'Cancelled');
 
   async function approve(status) {
     setBusy(true);
@@ -53,6 +55,23 @@ export default function WorkOrderPage() {
       load();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Could not record the approval');
+    } finally { setBusy(false); }
+  }
+
+  async function changeStatus(status) {
+    // The QC gate is the one transition that needs an answer first.
+    let qcStatus;
+    if (status === 'Completed' && !wo.qcStatus) {
+      qcStatus = window.confirm('Did the quality check pass?\n\nOK = Passed · Cancel = Rejected (sends the job back to production)')
+        ? 'Passed' : 'Rejected';
+    }
+    setBusy(true);
+    try {
+      const { data } = await axios.post(`/api/wo/${id}/status`, { status, qcStatus });
+      toast.success(`Moved to ${spaced(data.status)}`);
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not change the status', { duration: 6000 });
     } finally { setBusy(false); }
   }
 
@@ -106,12 +125,22 @@ export default function WorkOrderPage() {
         {!wo || wo.id !== id ? <Empty>Loading work order…</Empty> : (
           <>
             <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                <b style={{ fontSize: 15 }}>{wo.woNumber}</b>
-                <StatusChip status={wo.status} />
-                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                  SO {wo.salesOrderNumber} · {wo.customerName}{wo.projectName ? ` · ${wo.projectName}` : ''}
-                </span>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <b style={{ fontSize: 15 }}>{wo.woNumber}</b>
+                    {forward.length ? (
+                      <Menu
+                        trigger={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><StatusChip status={wo.status} /> ▾</span>}
+                        triggerStyle={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+                        items={forward.map(s => ({ label: `→ ${spaced(s)}`, onClick: () => changeStatus(s) }))}
+                      />
+                    ) : <StatusChip status={wo.status} />}
+                  </div>
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 3 }}>
+                    SO {wo.salesOrderNumber} · {wo.customerName}{wo.projectName ? ` · ${wo.projectName}` : ''}
+                  </div>
+                </div>
                 <div style={{ flex: 1 }} />
                 <button onClick={() => navigate('/wo')} title="Back to the list" style={{ width: 28, height: 28, border: '1px solid var(--border)', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-secondary)' }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ verticalAlign: 'middle' }}>
@@ -120,28 +149,25 @@ export default function WorkOrderPage() {
                 </button>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1 }} />
                 <button onClick={() => setEditing(true)} style={btn}>✎ Edit</button>
                 {bothApproved ? (
-                  <button onClick={() => setTab('Approvals')} style={{ ...btn, color: '#15803d', borderColor: '#bbf7d0', background: '#f0fdf4', fontWeight: 600 }}>
-                    ✓ Approved
+                  <button onClick={() => setTab('Approvals')} style={btn}>
+                    Approved
                   </button>
                 ) : (
-                  <Menu
-                    trigger={<>Approve (L{nextLevel}) ▾</>}
-                    triggerStyle={{ ...btn, color: '#15803d' }}
-                    items={[
-                      { label: `✓ Approve — Level ${nextLevel}`, tone: '#15803d', onClick: () => approve('Approved') },
-                      { label: `✕ Reject — Level ${nextLevel}`, tone: '#b91c1c', onClick: () => approve('Rejected') },
-                    ]}
-                  />
+                  <button onClick={() => approve('Approved')} disabled={busy}
+                    style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
+                    Approve
+                  </button>
                 )}
-                <StatusActions wo={wo} onDone={load} />
-                <div style={{ flex: 1 }} />
                 <Menu
                   trigger="⋯"
                   triggerStyle={{ ...btn, fontWeight: 700 }}
                   align="right"
                   items={[
+                    ...(!bothApproved ? [{ label: `✕ Reject — Level ${nextLevel}`, tone: '#b91c1c', onClick: () => approve('Rejected') }] : []),
+                    ...(wo.nextStatuses?.includes('Cancelled') ? [{ label: 'Cancel work order', tone: '#b91c1c', onClick: () => changeStatus('Cancelled') }] : []),
                     { label: '🖨 Print / PDF', onClick: printPdf },
                     {
                       label: 'Delete work order', tone: '#b91c1c',
@@ -423,38 +449,3 @@ function HistoryTab({ workOrderId, wo }) {
   );
 }
 
-// ---- status lifecycle -------------------------------------------------------
-
-function StatusActions({ wo, onDone }) {
-  const [busy, setBusy] = useState(false);
-  if (!wo.nextStatuses?.length) return null;
-
-  async function move(status) {
-    // The QC gate is the one transition that needs an answer first.
-    let qcStatus;
-    if (status === 'Completed' && !wo.qcStatus) {
-      qcStatus = window.confirm('Did the quality check pass?\n\nOK = Passed · Cancel = Rejected (sends the job back to production)')
-        ? 'Passed' : 'Rejected';
-    }
-    setBusy(true);
-    try {
-      const { data } = await axios.post(`/api/wo/${wo.id}/status`, { status, qcStatus });
-      toast.success(`Moved to ${spaced(data.status)}`);
-      onDone();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Could not change the status', { duration: 6000 });
-    } finally { setBusy(false); }
-  }
-
-  return (
-    <div style={{ display: 'flex', gap: 6 }}>
-      {wo.nextStatuses.map(s => (
-        <button key={s} onClick={() => move(s)} disabled={busy} style={{
-          ...btn, ...(s === 'Cancelled' ? { color: '#b91c1c' } : { background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)' }),
-        }}>
-          {s === 'Cancelled' ? 'Cancel' : `→ ${spaced(s)}`}
-        </button>
-      ))}
-    </div>
-  );
-}

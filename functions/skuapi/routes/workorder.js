@@ -616,7 +616,22 @@ router.post("/:id/approve", ok(async (req, res) => {
   else await table.insertRow(fields);
 
   await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, `approval.l${level}.${status}`, req.userId, null);
-  res.json({ ok: true, level, status });
+
+  // Once both sign-offs are in, advance the lifecycle so the status chip reflects
+  // the approval instead of sitting at Draft (FLOW: Draft -> Approved).
+  let woStatus = String(wo.status);
+  if (status === "Approved" && woStatus === "Draft") {
+    const approvedLevels = new Set(
+      existing.filter((a) => a.status === "Approved" && n(a.approvalLevel) !== level).map((a) => n(a.approvalLevel)),
+    );
+    approvedLevels.add(level);
+    if (approvedLevels.has(1) && approvedLevels.has(2)) {
+      await req.catalyst.datastore().table("WorkOrder").updateRow({ ROWID: String(wo.ROWID), status: "Approved" });
+      await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.status", req.userId, { from: "Draft", to: "Approved" });
+      woStatus = "Approved";
+    }
+  }
+  res.json({ ok: true, level, status, woStatus });
 }));
 
 /**
