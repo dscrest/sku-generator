@@ -150,12 +150,16 @@ async function createPurchaseOrder(catalyst, { vendorId, date, referenceNumber, 
     // Draft: the org's own approval process takes over from here (§6.6.6).
     status: "draft",
     notes: notes || undefined,
+    // Books with Locations enabled takes the delivery location at the header as
+    // location_id; our warehouse settings are location ids (see listWarehouses /
+    // createTransferOrder). Sending warehouse_id here is rejected as Invalid
+    // Element (code 8) on Locations orgs.
+    location_id: warehouseId ? String(warehouseId) : undefined,
     line_items: lines.map((l) => ({
       item_id: String(l.rmItemId),
       quantity: Number(l.qty) || 0,
       rate: l.rate === undefined || l.rate === null ? undefined : Number(l.rate),
       description: l.description || undefined,
-      warehouse_id: warehouseId ? String(warehouseId) : undefined,
     })),
   });
   return data.purchaseorder;

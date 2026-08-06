@@ -249,8 +249,9 @@ async function confirmPR(catalyst, orgId, prId, userId) {
 
 /**
  * Pure: the PUT body that keeps a PO's untouched fields intact. Books' PUT
- * replaces line items wholesale, so every kept line echoes back item_id, rate,
- * description and warehouse_id from the freshly fetched PO. `kept` is
+ * replaces line items wholesale, so every kept line echoes back item_id, rate
+ * and description from the freshly fetched PO. The delivery location is a
+ * header field (location_id) — echoed so the PUT doesn't clear it. `kept` is
  * [{ lineItemId, quantity }]; a fetched line absent from it is removed.
  * Returns { body, removedItemIds } — an item counts as removed only when it is
  * on none of the kept lines (same item can sit on several lines, one per SO).
@@ -271,11 +272,12 @@ function poPutBody(po, kept) {
       quantity: n(k.quantity),
       rate: li.rate,
       description: li.description || undefined,
-      warehouse_id: li.warehouse_id ? String(li.warehouse_id) : undefined,
     });
   }
   const removedItemIds = new Set([...allItemIds].filter((id) => !keptItemIds.has(id)));
-  return { body: { line_items: lineItems }, removedItemIds };
+  const body = { line_items: lineItems };
+  if (po.location_id) body.location_id = String(po.location_id);
+  return { body, removedItemIds };
 }
 
 // Line-edit gate: a PO's lines are only editable here if one of this org's PR
@@ -656,19 +658,20 @@ if (require.main === module && process.argv.includes("--selftest")) {
 
   assert.ok(SETTLED_PO.has("billed") && !SETTLED_PO.has("open"), "settled POs stop being refreshed");
 
-  // PO edit body: kept lines echo rate/description/warehouse, omitted = removed.
+  // PO edit body: kept lines echo rate/description, header location preserved.
   const fetchedPo = {
+    location_id: "W1",
     line_items: [
-      { line_item_id: "L1", item_id: "11", quantity: 5, rate: 12.5, description: "SO SO-1", warehouse_id: "W1" },
-      { line_item_id: "L2", item_id: "22", quantity: 3, rate: 7, description: "SO SO-1", warehouse_id: "W1" },
-      { line_item_id: "L3", item_id: "11", quantity: 2, rate: 12.5, description: "SO SO-2", warehouse_id: "W1" },
+      { line_item_id: "L1", item_id: "11", quantity: 5, rate: 12.5, description: "SO SO-1" },
+      { line_item_id: "L2", item_id: "22", quantity: 3, rate: 7, description: "SO SO-1" },
+      { line_item_id: "L3", item_id: "11", quantity: 2, rate: 12.5, description: "SO SO-2" },
     ],
   };
   const edit = poPutBody(fetchedPo, [{ lineItemId: "L1", quantity: 4 }, { lineItemId: "L3", quantity: 2 }]);
   assert.strictEqual(edit.body.line_items.length, 2, "omitted line L2 is dropped");
   assert.strictEqual(edit.body.line_items[0].quantity, 4, "kept line takes the edited quantity");
   assert.strictEqual(edit.body.line_items[0].rate, 12.5, "rate echoed from the fetched PO");
-  assert.strictEqual(edit.body.line_items[0].warehouse_id, "W1", "warehouse routing preserved");
+  assert.strictEqual(edit.body.location_id, "W1", "delivery location preserved");
   assert.deepStrictEqual([...edit.removedItemIds], ["22"], "only item 22 counts as removed");
 
   // Same item on two lines: dropping one line does NOT mark the item removed.
