@@ -157,6 +157,8 @@ ROWID (List props) or a raw number string (Range props).
 | GET/POST | `/api/wo/:id/purchase-request(s)` | List / raise a purchase request |
 | PUT | `/api/wo/pr-line/:lineId` | Set vendor + quantity on a line |
 | POST | `/api/wo/pr/:prId/confirm` | One **draft PO per vendor**, delivery = Reserve warehouse, SO referenced |
+| GET | `/api/wo/purchase/shortfall-by-item` | Shortfall of **every open WO** aggregated per raw material, with per-WO breakdown (CR-023) |
+| POST | `/api/wo/purchase/raise` | Item-wise raise: selected items + one vendor → **consolidated cross-WO PR + one grouped draft PO** (CR-023) |
 | GET | `/api/wo/purchase-orders` | Orders grid: every Books PO, app-created ones stamped with PR/WO, `locked` when received/billed |
 | GET/PUT/DELETE | `/api/wo/po/:poId` (+ POST `/status`) | Live Books PO detail · edit lines · delete (Books-only POs too) · issue/cancel |
 | POST | `/api/wo/:id/approve` · GET `/invoice-gate` | Two-level approval; the gate blocks invoicing until both |
@@ -215,7 +217,7 @@ Old-scope tokens (pre-Inventory) make reserve endpoints return `409 {error:"reau
 | `workorder/bom.js` | Composite-item cache, requirement freeze, upload matching, three-way diff, committed-material guard. Self-checked |
 | `workorder/grid.js` | Assembles the A–I grid from our own tables (BOM ⋈ snapshot ⋈ balances ⋈ PR lines) |
 | `workorder/txn.js` | The material ledger: draft → confirm → one Transfer Order, write-through snapshots, `recompute`. Self-checked |
-| `workorder/purchase.js` | Shortfall → purchase request → one draft PO per vendor; refreshes only the POs we created. Self-checked |
+| `workorder/purchase.js` | Shortfall → purchase request → one draft PO per vendor; item-wise cross-WO raise (`raiseItemPO`, consolidated PR) and derived per-WO procurement status (CR-023); refreshes only the POs we created. Self-checked |
 | `workorder/sync.js` | Bounded nightly reconcile + the Books webhook dispatcher + `tokenForOrg` |
 | `workorder/alerts.js` | Shortfall + cost-threshold evaluation, email delivery, `AlertLog` dedupe. Self-checked |
 | `workorder/reports.js` | SO-BOM + shortfall roll-ups, ZCQL only. Self-checked |

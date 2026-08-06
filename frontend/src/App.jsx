@@ -205,7 +205,7 @@ const NAV_LINKS = [
     children: [
       { to: '/wo', label: 'Work Orders' },
       { to: '/wo/bom', label: 'BOM' },
-      { to: '/wo/purchase', label: 'Purchase' },
+      { to: '/wo/purchase', label: 'Purchase request' },
       { to: '/wo/reports', label: 'Reports' },
     ] },
   { to: '/reserve', addon: 'reserve', label: 'Reserve / De-reserve', icon: <><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></> },

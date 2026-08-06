@@ -4,7 +4,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import MaterialsGrid, { Empty, Banner } from '../components/MaterialsGrid.jsx';
 import Modal, { ModalFooter, ModalBtn } from '../components/Modal.jsx';
-import { StatusChip, AccessNotice, spaced, btn, thStyle, cell } from '../components/woCommon.jsx';
+import { StatusChip, ProcChip, AccessNotice, spaced, btn, thStyle, cell } from '../components/woCommon.jsx';
 
 /**
  * One work order, Zoho Books style (CR-018): compact list of work orders on
@@ -136,6 +136,7 @@ export default function WorkOrderPage() {
                         items={forward.map(s => ({ label: `→ ${spaced(s)}`, onClick: () => changeStatus(s) }))}
                       />
                     ) : <StatusChip status={wo.status} />}
+                    <ProcChip status={wo.procStatus} />
                   </div>
                   <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 3 }}>
                     SO {wo.salesOrderNumber} · {wo.customerName}{wo.projectName ? ` · ${wo.projectName}` : ''}

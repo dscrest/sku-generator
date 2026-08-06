@@ -124,6 +124,53 @@ router.get("/purchase-orders", ok(async (req, res) => {
   res.json(await purchase.listAllPOs(req.catalyst, req.orgId));
 }));
 
+// Item-wise Purchase Request (CR-023): shortfall of every open WO, aggregated
+// by raw material so the buyer orders across work orders in one place. Static
+// path — must stay above /:id.
+// ponytail: grid-per-WO fan-out; batch the stock/composite reads if the open-WO
+// count ever makes this slow.
+router.get("/purchase/shortfall-by-item", ok(async (req, res) => {
+  const wos = await byOrg(req.catalyst, req.orgId, "WorkOrder", null, "CREATEDTIME DESC");
+  const open = wos.filter((w) => !["Closed", "Cancelled"].includes(String(w.status)));
+  const openIds = inList(open.map((w) => w.ROWID));
+  const fgs = openIds ? await byOrg(req.catalyst, req.orgId, "WorkOrderFG", `workOrderId IN (${openIds})`) : [];
+  const fgsByWo = new Map();
+  for (const f of fgs) {
+    const k = String(f.workOrderId);
+    if (!fgsByWo.has(k)) fgsByWo.set(k, []);
+    fgsByWo.get(k).push(f);
+  }
+
+  const tagged = [];
+  for (const wo of open) {
+    for (const fg of fgsByWo.get(String(wo.ROWID)) || []) {
+      const grid = await buildGrid(req.catalyst, req.orgId, wo, fg);
+      for (const l of purchase.shortfallLines(grid)) {
+        tagged.push({ ...l, woId: String(wo.ROWID), woNumber: wo.woNumber, salesOrderNumber: wo.salesOrderNumber });
+      }
+    }
+  }
+
+  // Deduct draft-PR quantities (not yet on a PO) so raising never duplicates a
+  // pending request — org-wide, since consolidated PRs span work orders.
+  const draftPrs = await byOrg(req.catalyst, req.orgId, "PurchaseRequest", "status = 'Draft'");
+  const prIds = inList(draftPrs.map((p) => p.ROWID));
+  const prNo = new Map(draftPrs.map((p) => [String(p.ROWID), p.prNumber]));
+  const draftLines = prIds
+    ? (await byOrg(req.catalyst, req.orgId, "PurchaseRequestLine", `purchaseRequestId IN (${prIds})`))
+        .filter((l) => !l.zohoPoId)
+        .map((l) => ({ ...l, prNumber: prNo.get(String(l.purchaseRequestId)) }))
+    : [];
+  res.json(purchase.shortfallByItem(purchase.applyDraftCoverage(tagged, draftLines)));
+}));
+
+// One-step item-wise raise (CR-023): selected items + one vendor → consolidated
+// PR + a grouped draft PO. Static path — must stay above /:id.
+router.post("/purchase/raise", ok(async (req, res) => {
+  const { vendorId, vendorName, items } = req.body || {};
+  res.json(await purchase.raiseItemPO(req.catalyst, req.orgId, { vendorId, vendorName, items }, req.userId));
+}));
+
 // ---- reports --------------------------------------------------------------
 
 router.get("/reports/so-bom", ok(async (req, res) => {
@@ -183,6 +230,7 @@ router.get("/", ok(async (req, res) => {
   const wos = await byOrg(req.catalyst, req.orgId, "WorkOrder", where, "CREATEDTIME DESC");
   const ids = inList(wos.map((w) => w.ROWID));
   const fgs = ids ? await byOrg(req.catalyst, req.orgId, "WorkOrderFG", `workOrderId IN (${ids})`) : [];
+  const procMap = await purchase.procStatusByWo(req.catalyst, req.orgId);
   res.json(wos.map((w) => ({
     id: String(w.ROWID),
     woNumber: w.woNumber,
@@ -192,6 +240,7 @@ router.get("/", ok(async (req, res) => {
     customerName: w.customerName,
     projectName: w.projectName || null,
     status: w.status,
+    procStatus: procMap.get(String(w.ROWID)) || null,
     qcStatus: w.qcStatus || null,
     revision: n(w.revision),
     bomImportedAt: w.bomImportedAt || null,
@@ -277,6 +326,7 @@ router.get("/:id", ok(async (req, res) => {
     req.catalyst, req.orgId, "Approval",
     `entityType = 'WorkOrder' AND entityId = ${zStr(String(wo.ROWID))}`, "approvalLevel",
   );
+  const procMap = await purchase.procStatusByWo(req.catalyst, req.orgId);
   res.json({
     id: String(wo.ROWID),
     woNumber: wo.woNumber,
@@ -286,6 +336,7 @@ router.get("/:id", ok(async (req, res) => {
     customerName: wo.customerName,
     projectName: wo.projectName || null,
     status: wo.status,
+    procStatus: procMap.get(String(wo.ROWID)) || null,
     qcStatus: wo.qcStatus || null,
     revision: n(wo.revision),
     bomImportedAt: wo.bomImportedAt || null,

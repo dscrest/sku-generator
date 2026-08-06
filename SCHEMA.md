@@ -297,7 +297,7 @@ The shortfall → purchase bridge (BRD §6.6).
 |--------|------|---------|
 | `orgId` | string | Tenant key |
 | `prNumber` | string | Human id |
-| `workOrderId` / `salesOrderId` | string | Context |
+| `workOrderId` / `salesOrderId` | string? | Context — **empty for a consolidated (cross-WO) PR** (CR-023) |
 | `status` | string | `Draft` \| `Confirmed` \| `Cancelled` |
 | `createdBy` | string | AppUser ROWID |
 | `confirmedAt` | datetime? | |
@@ -310,6 +310,7 @@ cheaper: the reconcile only ever refreshes POs we created.
 | Column | Type | Purpose |
 |--------|------|---------|
 | `orgId`, `purchaseRequestId` | string | Keys |
+| `workOrderId` | string? | The WO this line was raised for (CR-023). Empty on pre-CR-023 lines → read falls back to the parent PR's `workOrderId`. Drives the per-WO procurement status. |
 | `rmItemId` / `rmName` | string | Item |
 | `requiredQty` | number | Shortfall that produced this line |
 | `purchaseQty` | number | User-editable, must be > 0 |
@@ -390,6 +391,7 @@ Newest first. One row per applied schema change; link the CR that requested it.
 
 | Date | CR | Change | Applied |
 |------|----|--------|---------|
+| 2026-08-06 | [CR-023](CHANGES.md) | `PurchaseRequestLine.workOrderId` (varchar 50, nullable) — WO a line was raised for; consolidated PRs leave `PurchaseRequest.workOrderId`/`salesOrderId` empty. No backfill (read falls back to parent PR) | ✅ live |
 | 2026-07-23 | [CR-013](CHANGES.md) | 13 Work Order tables: `OrgSetting`, `WorkOrder`, `WorkOrderFG`, `WorkOrderLine`, `BomRevision`, `MaterialTxn`, `MaterialTxnLine`, `PurchaseRequest`, `PurchaseRequestLine`, `CompositeItemCache`, `Approval`, `AlertLog`, `ActivityLog` | ✅ live |
 | 2026-07-23 | [CR-013](CHANGES.md) | `ReservationLine` + `workOrderId`, `workOrderFgId` (string), `requestedPoQty` (number) | ✅ live |
 | 2026-07-23 | [CR-013](CHANGES.md) | `ItemStockSnapshot` + `availableStock` (number), `source` (string); `warehouseId` now populated | ✅ live |

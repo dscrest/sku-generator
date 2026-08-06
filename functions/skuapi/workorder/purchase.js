@@ -117,6 +117,49 @@ function collapseLines(lines) {
   return [...byItem.values()];
 }
 
+/**
+ * Pure: aggregate per-work-order shortfall lines into one row per raw material,
+ * keeping the WO breakdown (CR-023 item-wise Purchase Request). Input lines are
+ * the shortfall of every open WO, each tagged with `woId` / `woNumber` /
+ * `salesOrderNumber`; draft-PR coverage is expected to be applied by the caller
+ * (via applyDraftCoverage) before grouping. Zero-qty lines are dropped.
+ */
+function shortfallByItem(lines) {
+  const byItem = new Map();
+  for (const l of lines || []) {
+    const qty = n(l.purchaseQty);
+    if (qty <= 0) continue;
+    const key = String(l.rmItemId);
+    let cur = byItem.get(key);
+    if (!cur) { cur = { rmItemId: key, rmName: l.rmName || "", totalQty: 0, breakdown: [] }; byItem.set(key, cur); }
+    cur.totalQty += qty;
+    cur.breakdown.push({
+      workOrderId: l.woId ? String(l.woId) : "",
+      woNumber: l.woNumber || "",
+      salesOrderNumber: l.salesOrderNumber || "",
+      qty,
+    });
+  }
+  return [...byItem.values()];
+}
+
+/**
+ * Pure: the coarse procurement status of a work order (CR-023), derived from its
+ * PurchaseRequestLine rows — a dimension separate from the manufacturing status.
+ * null (no chip) when nothing has been requested. Received/purchase quantities
+ * are only compared for lines that actually reached a PO.
+ */
+function procurementStatus(lines) {
+  if (!lines || !lines.length) return null;
+  const onPo = lines.filter((l) => l.zohoPoId);
+  if (!onPo.length) return "Requested";
+  const totalQty = onPo.reduce((s, l) => s + n(l.purchaseQty), 0);
+  const received = onPo.reduce((s, l) => s + n(l.receivedQty), 0);
+  if (received <= 0) return "PORaised";
+  if (received < totalQty) return "PartiallyReceived";
+  return "Fulfilled";
+}
+
 // ---- persistence ----------------------------------------------------------
 
 async function createPR(catalyst, orgId, { workOrderId, lines }, userId) {
@@ -177,6 +220,39 @@ async function updatePRLine(catalyst, orgId, lineId, { purchaseQty, vendorId, ve
 }
 
 /**
+ * Create one draft Books PO for a vendor's lines and stamp those local
+ * PurchaseRequestLine rows with the PO id/number/status. Same-item lines are
+ * collapsed into a single PO line (CR-019 / CR-023) — Books shows the grouped
+ * total while the app keeps a row per source (WO/SO) for received tracking.
+ * Throws on the Books call; the caller decides how to record the failure.
+ */
+async function createPoForLines(catalyst, orgId, group, { referenceNumber, notes, warehouseId, description } = {}) {
+  const po = await createPurchaseOrder(catalyst, {
+    vendorId: String(group.vendorId),
+    date: today(),
+    referenceNumber: referenceNumber || "",
+    warehouseId,
+    notes: notes || "",
+    lines: collapseLines(group.lines).map((l) => ({
+      rmItemId: l.rmItemId,
+      qty: n(l.purchaseQty),
+      description: description || undefined,
+    })),
+  });
+  const table = catalyst.datastore().table("PurchaseRequestLine");
+  for (const l of group.lines) {
+    await table.updateRow({
+      ROWID: l.ROWID,
+      zohoPoId: String(po.purchaseorder_id || ""),
+      zohoPoNumber: String(po.purchaseorder_number || ""),
+      poStatus: String(po.status || "draft"),
+      lastPoSyncAt: dsDate(Date.now()),
+    });
+  }
+  return { poId: String(po.purchaseorder_id || ""), poNumber: po.purchaseorder_number };
+}
+
+/**
  * Confirm → one draft PO per vendor. If a later vendor's PO fails, the earlier
  * ones stay created and recorded: the request is left Draft so the buyer can
  * fix the failing vendor and confirm again, and the lines already ordered are
@@ -196,34 +272,18 @@ async function confirmPR(catalyst, orgId, prId, userId) {
   const wos = await byOrg(catalyst, orgId, "WorkOrder", `ROWID = ${zStr(String(pr.workOrderId))}`);
   const wo = wos[0] || {};
   const wh = await warehouses(catalyst, orgId);
-  const table = catalyst.datastore().table("PurchaseRequestLine");
   const created = [];
   const failed = [];
 
   for (const group of groupByVendor(pending)) {
     try {
-      const po = await createPurchaseOrder(catalyst, {
-        vendorId: group.vendorId,
-        date: today(),
+      const { poNumber } = await createPoForLines(catalyst, orgId, group, {
         referenceNumber: wo.salesOrderNumber || "",
         warehouseId: wh.reserve,
         notes: `${pr.prNumber} · ${wo.woNumber || ""} · SO ${wo.salesOrderNumber || ""}`,
-        lines: group.lines.map((l) => ({
-          rmItemId: l.rmItemId,
-          qty: n(l.purchaseQty),
-          description: wo.salesOrderNumber ? `SO ${wo.salesOrderNumber}` : undefined,
-        })),
+        description: wo.salesOrderNumber ? `SO ${wo.salesOrderNumber}` : undefined,
       });
-      for (const l of group.lines) {
-        await table.updateRow({
-          ROWID: l.ROWID,
-          zohoPoId: String(po.purchaseorder_id || ""),
-          zohoPoNumber: String(po.purchaseorder_number || ""),
-          poStatus: String(po.status || "draft"),
-          lastPoSyncAt: dsDate(Date.now()),
-        });
-      }
-      created.push({ vendorName: group.vendorName, poNumber: po.purchaseorder_number, lines: group.lines.length });
+      created.push({ vendorName: group.vendorName, poNumber, lines: group.lines.length });
     } catch (err) {
       failed.push(`${group.vendorName || group.vendorId}: ${err.message}`);
     }
@@ -243,6 +303,89 @@ async function confirmPR(catalyst, orgId, prId, userId) {
     purchaseOrders: created,
     failed,
   };
+}
+
+/**
+ * Item-wise raise (CR-023): from the cross-WO item view, order a set of items
+ * from one vendor in a single action. Creates a consolidated PurchaseRequest
+ * (no single workOrderId) with one line per (item, contributing WO) so each WO
+ * keeps its own received tracking, then one grouped draft PO for the vendor.
+ * `items = [{ rmItemId, rmName, qty, breakdown: [{ workOrderId, woNumber, qty }] }]`.
+ * When the buyer edits an item's total, the WO breakdown is scaled to match.
+ */
+async function raiseItemPO(catalyst, orgId, { vendorId, vendorName, items }, userId) {
+  if (!vendorId) { const e = new Error("Pick a vendor before raising the purchase order"); e.status = 400; throw e; }
+  if (!items || !items.length) { const e = new Error("Select at least one item to order"); e.status = 400; throw e; }
+
+  const s = await settings(catalyst, orgId);
+  const prNumber = await nextNumber(catalyst, orgId, "PurchaseRequest", "prNumber", s.prNumberPrefix);
+  const pr = await catalyst.datastore().table("PurchaseRequest").insertRow({
+    orgId: String(orgId),
+    prNumber,
+    workOrderId: "",
+    salesOrderId: "",
+    status: "Draft",
+    createdBy: userId ? String(userId) : "",
+    confirmedAt: null,
+  });
+
+  const table = catalyst.datastore().table("PurchaseRequestLine");
+  const localLines = [];
+  for (const item of items) {
+    const bd = (item.breakdown || []).filter((b) => n(b.qty) > 0);
+    const bdSum = bd.reduce((sum, b) => sum + n(b.qty), 0);
+    const target = item.qty != null ? n(item.qty) : bdSum;
+    if (target <= 0 || !bd.length) continue;
+    // Scale the WO breakdown when the buyer edited the total; last WO absorbs rounding.
+    let acc = 0;
+    const shares = bd.map((b, i) => {
+      const q = i === bd.length - 1
+        ? target - acc
+        : (bdSum > 0 ? Math.round((n(b.qty) * target) / bdSum) : 0);
+      acc += q;
+      return { ...b, qty: q };
+    });
+    for (const b of shares) {
+      if (n(b.qty) <= 0) continue;
+      const row = await table.insertRow({
+        orgId: String(orgId),
+        purchaseRequestId: String(pr.ROWID),
+        workOrderId: b.workOrderId ? String(b.workOrderId) : "",
+        rmItemId: String(item.rmItemId),
+        rmName: item.rmName || "",
+        requiredQty: n(b.qty),
+        purchaseQty: n(b.qty),
+        vendorId: String(vendorId),
+        vendorName: vendorName || "",
+        zohoPoId: "", zohoPoNumber: "", poStatus: "",
+        receivedQty: 0, billedQty: 0, lastPoSyncAt: null,
+      });
+      localLines.push({ ROWID: row.ROWID, rmItemId: String(item.rmItemId), rmName: item.rmName || "", purchaseQty: n(b.qty) });
+    }
+  }
+  if (!localLines.length) { const e = new Error("Nothing to order — every selected quantity was zero"); e.status = 400; throw e; }
+
+  const wh = await warehouses(catalyst, orgId);
+  let poNumber;
+  try {
+    ({ poNumber } = await createPoForLines(catalyst, orgId, { vendorId, vendorName, lines: localLines }, {
+      referenceNumber: prNumber,
+      warehouseId: wh.reserve,
+      notes: `${prNumber} · consolidated purchase request`,
+      description: `PR ${prNumber}`,
+    }));
+  } catch (err) {
+    await logActivity(catalyst, orgId, "PurchaseRequest", pr.ROWID, "pr.raise.fail", userId, { prNumber, error: err.message });
+    const e = new Error(`Could not raise the purchase order: ${err.message}`); e.status = 502; throw e;
+  }
+
+  await catalyst.datastore().table("PurchaseRequest").updateRow({
+    ROWID: String(pr.ROWID), status: "Confirmed", confirmedAt: dsDate(Date.now()),
+  });
+  await logActivity(catalyst, orgId, "PurchaseRequest", pr.ROWID, "pr.raise", userId, {
+    prNumber, poNumber, vendorName: vendorName || "", items: items.length, lines: localLines.length,
+  });
+  return { id: String(pr.ROWID), prNumber, poNumber, status: "Confirmed", lines: localLines.length };
 }
 
 // ---- PO detail & actions --------------------------------------------------
@@ -480,18 +623,36 @@ async function refreshPurchaseOrders(catalyst, orgId, { poIds } = {}) {
       console.error(`PO ${poId} refresh failed:`, err && err.message);
       continue;
     }
+    // A grouped PO line (CR-023) can back several local lines — one per WO that
+    // shares the item. Split the PO line's received/billed across them by
+    // purchaseQty share so no WO double-counts. One local line → it gets the lot.
+    const byItem = new Map();
     for (const l of poLines) {
-      const match = (po.line_items || []).filter((li) => String(li.item_id) === String(l.rmItemId));
+      const k = String(l.rmItemId);
+      if (!byItem.has(k)) byItem.set(k, []);
+      byItem.get(k).push(l);
+    }
+    for (const [itemId, group] of byItem) {
+      const match = (po.line_items || []).filter((li) => String(li.item_id) === itemId);
       const received = match.reduce((s, li) => s + n(li.quantity_received), 0);
       const billed = match.reduce((s, li) => s + n(li.quantity_billed), 0);
-      await table.updateRow({
-        ROWID: l.ROWID,
-        poStatus: String(po.status || ""),
-        receivedQty: received,
-        billedQty: billed,
-        lastPoSyncAt: dsDate(Date.now()),
-      });
-      refreshed++;
+      const totalQty = group.reduce((s, l) => s + n(l.purchaseQty), 0);
+      let accR = 0, accB = 0;
+      for (let i = 0; i < group.length; i++) {
+        const l = group[i];
+        const last = i === group.length - 1;
+        const r = last ? received - accR : (totalQty > 0 ? Math.round((received * n(l.purchaseQty)) / totalQty) : 0);
+        const b = last ? billed - accB : (totalQty > 0 ? Math.round((billed * n(l.purchaseQty)) / totalQty) : 0);
+        accR += r; accB += b;
+        await table.updateRow({
+          ROWID: l.ROWID,
+          poStatus: String(po.status || ""),
+          receivedQty: r,
+          billedQty: b,
+          lastPoSyncAt: dsDate(Date.now()),
+        });
+        refreshed++;
+      }
     }
   }
   return { purchaseOrders: byPo.size, lines: refreshed };
@@ -556,8 +717,33 @@ async function listAllPRs(catalyst, orgId) {
   });
 }
 
+// Coarse procurement status per work order (CR-023), for the WO list/detail and
+// filters. One scan of this org's PR lines; older lines without workOrderId fall
+// back to their parent request's WO so nothing has to be backfilled.
+async function procStatusByWo(catalyst, orgId) {
+  const lines = await byOrg(catalyst, orgId, "PurchaseRequestLine", null);
+  if (!lines.length) return new Map();
+  let prById = new Map();
+  if (lines.some((l) => !l.workOrderId)) {
+    const prs = await byOrg(catalyst, orgId, "PurchaseRequest", null);
+    prById = new Map(prs.map((p) => [String(p.ROWID), p]));
+  }
+  const byWo = new Map();
+  for (const l of lines) {
+    const parent = prById.get(String(l.purchaseRequestId));
+    const woId = String(l.workOrderId || (parent && parent.workOrderId) || "");
+    if (!woId) continue;
+    if (!byWo.has(woId)) byWo.set(woId, []);
+    byWo.get(woId).push(l);
+  }
+  const out = new Map();
+  for (const [woId, ls] of byWo) out.set(woId, procurementStatus(ls));
+  return out;
+}
+
 module.exports = {
   SETTLED_PO, shortfallLines, applyDraftCoverage, validatePR, groupByVendor, collapseLines,
+  shortfallByItem, procurementStatus, createPoForLines, raiseItemPO, procStatusByWo,
   createPR, updatePRLine, confirmPR, refreshPurchaseOrders, listPRs, listAllPRs,
   poPutBody, poDetail, deletePo, setPoStatus, updatePoLines, poListRow, listAllPOs,
 };
@@ -700,6 +886,35 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(booksPo.prNumber, null, "Books-only PO has no PR");
   assert.strictEqual(booksPo.locked, true, "receives exist → locked");
   assert.strictEqual(poListRow({ purchaseorder_id: "P8", billed_status: "billed" }, prMap).locked, true, "bills lock too");
+
+  // Item-wise aggregation (CR-023): same item short on two WOs → one row, summed.
+  const items = shortfallByItem([
+    { rmItemId: "11", rmName: "Bolt", purchaseQty: 15, woId: "W6", woNumber: "WO-0006", salesOrderNumber: "SO-1" },
+    { rmItemId: "22", rmName: "Seal", purchaseQty: 4, woId: "W6", woNumber: "WO-0006" },
+    { rmItemId: "11", rmName: "Bolt", purchaseQty: 25, woId: "W7", woNumber: "WO-0007", salesOrderNumber: "SO-2" },
+    { rmItemId: "33", rmName: "Nut", purchaseQty: 0, woId: "W7", woNumber: "WO-0007" }, // zero → dropped
+  ]);
+  assert.strictEqual(items.length, 2, "two distinct items, zero-qty item dropped");
+  const bolt = items.find((i) => i.rmItemId === "11");
+  assert.strictEqual(bolt.totalQty, 40, "15 + 25 summed across WOs");
+  assert.strictEqual(bolt.breakdown.length, 2, "both WOs kept in the breakdown");
+  assert.strictEqual(bolt.breakdown[1].woNumber, "WO-0007");
+
+  // Procurement status (CR-023): each state from a WO's PR lines.
+  assert.strictEqual(procurementStatus([]), null, "nothing requested → no chip");
+  assert.strictEqual(procurementStatus([{ purchaseQty: 8 }]), "Requested", "PR but no PO yet");
+  assert.strictEqual(
+    procurementStatus([{ purchaseQty: 8, zohoPoId: "P1", receivedQty: 0 }]), "PORaised", "on a PO, nothing in",
+  );
+  assert.strictEqual(
+    procurementStatus([
+      { purchaseQty: 8, zohoPoId: "P1", receivedQty: 3 },
+      { purchaseQty: 4, zohoPoId: "P1", receivedQty: 0 },
+    ]), "PartiallyReceived", "some received, not all",
+  );
+  assert.strictEqual(
+    procurementStatus([{ purchaseQty: 8, zohoPoId: "P1", receivedQty: 8 }]), "Fulfilled", "all received",
+  );
 
   console.log("workorder/purchase.js self-check passed");
 }

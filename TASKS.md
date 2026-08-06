@@ -16,6 +16,19 @@ Last updated: 2026-08-02.
 
 ## In progress
 
+### CR-023 — Item-wise Purchase Request across work orders (branch `feat/zoho-field-mapping`)
+- [x] Rename nav `Purchase` → `Purchase request` (`App.jsx`)
+- [x] Backend pure helpers + selftest: `shortfallByItem`, `procurementStatus` (`workorder/purchase.js`)
+- [x] `createPoForLines` factored out of `confirmPR`; `raiseItemPO` (consolidated PR + one grouped draft PO)
+- [x] `refreshPurchaseOrders` splits grouped-line received/billed across per-WO lines by qty share
+- [x] Routes: `GET /purchase/shortfall-by-item`, `POST /purchase/raise`; `procStatus` on `GET /` + `GET /:id`
+- [x] `ProcChip`/`PROC_TONE` (`woCommon.jsx`); WO list column + filter; WO detail header chip
+- [x] By-item view on the Purchase Request page: checkbox + editable qty + WO breakdown + pinned vendor/Raise-PO bar
+- [x] **Add `PurchaseRequestLine.workOrderId` column** (varchar 50, nullable) — created via Catalyst MCP in SKU-GEN-OCTFIS/Development
+- [ ] Verify on deploy (Books connected): two open WOs short the same RM → one by-item row (summed) → check + vendor + Raise PO → one grouped draft PO in Books → both WOs show `PO Raised`; mark received → refresh → `Partially received` / `Received`
+- [ ] Regression: per-WO `PurchaseTab` raise/confirm still works; Orders view + PO edit/delete unchanged
+- Deferred: BOM "save as new composite" (item 5) — needs a `POST /compositeitems` path (new)
+
 ### CR-021 — Manual Zoho Books item sync only (branch `feat/zoho-field-mapping`)
 - [x] Removed automatic `pushToZoho` on SKU/item create + item update (`routes/sku.js`, `routes/skuItems.js`); dropped unused import
 - [x] Clarified the existing Push button: `✓ Synced · Re-push`, in-flight "Pushing…" + double-click guard (`SKUItemsPage.jsx`)

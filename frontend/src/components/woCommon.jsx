@@ -8,16 +8,36 @@ export const STATUS_TONE = {
 };
 export const spaced = s => String(s || '').replace(/([a-z])([A-Z])/g, '$1 $2');
 
-export function StatusChip({ status }) {
-  const tone = STATUS_TONE[status] || '#64748b';
+// Procurement status (CR-023) — a dimension separate from the manufacturing
+// status above, derived from a work order's purchase-request lines. Friendly
+// labels since these show next to the manufacturing chip.
+export const PROC_TONE = {
+  Requested: '#64748b', PORaised: '#2563eb', PartiallyReceived: '#b45309', Fulfilled: '#15803d',
+};
+const PROC_LABEL = {
+  Requested: 'Requested', PORaised: 'PO Raised',
+  PartiallyReceived: 'Partially received', Fulfilled: 'Received',
+};
+
+function Chip({ tone, label }) {
   return (
     <span style={{
       fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 99,
       color: tone, background: `${tone}18`, whiteSpace: 'nowrap',
     }}>
-      {spaced(status)}
+      {label}
     </span>
   );
+}
+
+export function StatusChip({ status }) {
+  return <Chip tone={STATUS_TONE[status] || '#64748b'} label={spaced(status)} />;
+}
+
+// Nothing requested yet → no chip (keeps the WO list quiet until a PR exists).
+export function ProcChip({ status }) {
+  if (!status) return null;
+  return <Chip tone={PROC_TONE[status] || '#64748b'} label={PROC_LABEL[status] || spaced(status)} />;
 }
 
 export function AccessNotice({ kind }) {

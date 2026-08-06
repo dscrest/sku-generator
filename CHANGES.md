@@ -7,6 +7,7 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 | CR | Date | Title | Status |
 |----|------|-------|--------|
+| CR-023 | 2026-08-06 | Purchase Request: item-wise cross-WO view + one-step grouped PO; derived procurement status chip + filter; "Purchase" → "Purchase request" | 🚧 in progress |
 | CR-022 | 2026-08-04 | Work Order material-reservation screen redesigned — plain-language table, coverage bars, shortage bar, live confirm bar | ✅ shipped |
 | CR-021 | 2026-08-02 | Zoho Books item sync is manual only — drop automatic push on create/edit, keep the "Push" button | ✅ shipped |
 | CR-020 | 2026-07-30 | Orders tab lists all Zoho Books POs; delete wrongly-created POs with lock mark | ✅ shipped |
@@ -28,6 +29,51 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 | CR-003 | 2026-07-02 | Item search, grid filters, pagination, sidebar, branding | ✅ shipped |
 | CR-002 | 2026-06-30 | Migrate backend to Catalyst Data Store | ✅ shipped |
 | CR-001 | 2026-05-28 | SKU editing + Zoho Books value sync & import | ✅ shipped |
+
+---
+
+## CR-023 — Item-wise Purchase Request across work orders (2026-08-06) — 🚧 in progress
+
+**Requested:** the purchase flow was per–work order — to buy raw materials the
+buyer opened each WO's Purchase tab and raised a PR one WO at a time. Wanted
+instead: (1) rename the "Purchase" menu to "Purchase request"; (2) an item-wise
+view across all open WOs — tick items, pick a vendor, raise one grouped PO with
+the total; same item to the same vendor becomes a single grouped PO line; (3) a
+back-indicator on the WO once its materials are ordered/received; (4) WO
+procurement stages with status chips + filters. BOM "save as new composite"
+(item 5) deferred to a follow-up.
+
+**Shipped:**
+- **Rename** — nav label `Purchase` → `Purchase request` (`App.jsx`); route
+  unchanged (`/wo/purchase`).
+- **By-item view** (new default on the Purchase Request page) — `GET
+  /api/wo/purchase/shortfall-by-item` aggregates every open WO's shortfall by raw
+  material (reusing `shortfallLines` + `applyDraftCoverage`), returning one row
+  per item with the per-WO breakdown. UI: checkbox per item, editable order qty,
+  expandable "needed by" WOs, and a pinned bar — pick one vendor, **Raise PO**.
+- **One-step raise** — `POST /api/wo/purchase/raise` → `raiseItemPO`: a
+  consolidated `PurchaseRequest` (no single `workOrderId`) with one
+  `PurchaseRequestLine` per (item, contributing WO), then one grouped draft PO
+  via the factored-out `createPoForLines` (same-item lines collapse to a single
+  Books line — 2.2). `confirmPR` now shares `createPoForLines`.
+- **Procurement status** (2.1 + 4) — derived, separate from the manufacturing
+  lifecycle: `procurementStatus` per WO (`Requested` / `PO Raised` / `Partially
+  received` / `Received`) from its PR lines, surfaced by `procStatusByWo` on `GET
+  /api/wo` + `GET /api/wo/:id`. New `ProcChip`/`PROC_TONE` shown on the WO list
+  (with a filter) and the WO detail header.
+- **Received back-fill** — `refreshPurchaseOrders` now splits a grouped PO line's
+  received/billed across the per-WO lines by purchase-qty share (was: full amount
+  to each — would double-count).
+
+**Schema:** `PurchaseRequestLine.workOrderId` (string, nullable);
+`PurchaseRequest.workOrderId`/`salesOrderId` now optional (empty for a
+consolidated PR). No backfill — reads fall back to the parent PR's WO.
+
+**Not done (deliberately):** BOM clone (item 5) — needs a `POST /compositeitems`
+path that does not exist yet; tracked as a follow-up. No item→preferred-vendor
+mapping (none exists; vendor is chosen manually at raise, as before). The per-WO
+Purchase tab still lists only its own PRs — a WO's consolidated PRs surface via
+the procurement chip, not that tab.
 
 ---
 

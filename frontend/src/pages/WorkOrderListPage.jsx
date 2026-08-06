@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import Modal from '../components/Modal.jsx';
 import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
 import { Empty } from '../components/MaterialsGrid.jsx';
-import { StatusChip, AccessNotice } from '../components/woCommon.jsx';
+import { StatusChip, ProcChip, AccessNotice } from '../components/woCommon.jsx';
 
 /** Work order list + the "new work order from a sales order" flow. */
 export default function WorkOrderListPage() {
@@ -13,6 +13,7 @@ export default function WorkOrderListPage() {
   const [rows, setRows] = useState(null);
   const [status, setStatus] = useState('');
   const [customer, setCustomer] = useState('');
+  const [proc, setProc] = useState('');
   const [q, setQ] = useState('');
   const [creating, setCreating] = useState(false);
   const [blocked, setBlocked] = useState(null);
@@ -33,6 +34,7 @@ export default function WorkOrderListPage() {
   const filtered = (rows || []).filter(r =>
     (!status || r.status === status) &&
     (!customer || r.customerName === customer) &&
+    (!proc || r.procStatus === proc) &&
     (!q || [r.woNumber, r.salesOrderNumber, r.customerName, r.projectName]
       .some(v => String(v || '').toLowerCase().includes(q.toLowerCase()))),
   );
@@ -46,9 +48,10 @@ export default function WorkOrderListPage() {
           style={{ padding: '7px 11px', fontSize: 13, minWidth: 240, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)' }}
         />
         <FilterSelect label="statuses" value={status} onChange={setStatus} options={distinct(rows || [], 'status')} />
+        <FilterSelect label="procurement" value={proc} onChange={setProc} options={distinct(rows || [], 'procStatus')} />
         <FilterSelect label="customers" value={customer} onChange={setCustomer} options={distinct(rows || [], 'customerName')} />
-        {(status || customer || q) && (
-          <button onClick={() => { setStatus(''); setCustomer(''); setQ(''); }} style={btn}>✕ Clear</button>
+        {(status || customer || proc || q) && (
+          <button onClick={() => { setStatus(''); setCustomer(''); setProc(''); setQ(''); }} style={btn}>✕ Clear</button>
         )}
         <div style={{ flex: 1 }} />
         <button onClick={() => setCreating(true)} style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
@@ -62,7 +65,7 @@ export default function WorkOrderListPage() {
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
             <thead>
-              <tr>{['Work order', 'Date', 'Sales order', 'Customer', 'Finished goods', 'Rev', 'Status'].map((h, i) => (
+              <tr>{['Work order', 'Date', 'Sales order', 'Customer', 'Finished goods', 'Rev', 'Status', 'Procurement'].map((h, i) => (
                 <th key={h} style={{ ...thStyle, textAlign: i === 5 ? 'right' : 'left' }}>{h}</th>
               ))}</tr>
             </thead>
@@ -81,6 +84,7 @@ export default function WorkOrderListPage() {
                   <td style={cell}>{r.fgs.map(f => `${f.name} × ${f.qty}`).join(', ') || '—'}</td>
                   <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{r.revision}</td>
                   <td style={cell}><StatusChip status={r.status} /></td>
+                  <td style={cell}><ProcChip status={r.procStatus} /></td>
                 </tr>
               ))}
             </tbody>
