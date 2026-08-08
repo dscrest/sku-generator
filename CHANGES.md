@@ -7,6 +7,7 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 | CR | Date | Title | Status |
 |----|------|-------|--------|
+| CR-024 | 2026-08-08 | CRM Deal context on the SKU generator page — open from a Zoho CRM custom link button, read-only "CRM Info" card | ✅ shipped |
 | CR-023 | 2026-08-06 | Purchase Request: item-wise cross-WO view + one-step grouped PO; derived procurement status chip + filter; "Purchase" → "Purchase request" | 🚧 in progress |
 | CR-022 | 2026-08-04 | Work Order material-reservation screen redesigned — plain-language table, coverage bars, shortage bar, live confirm bar | ✅ shipped |
 | CR-021 | 2026-08-02 | Zoho Books item sync is manual only — drop automatic push on create/edit, keep the "Push" button | ✅ shipped |
@@ -29,6 +30,42 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 | CR-003 | 2026-07-02 | Item search, grid filters, pagination, sidebar, branding | ✅ shipped |
 | CR-002 | 2026-06-30 | Migrate backend to Catalyst Data Store | ✅ shipped |
 | CR-001 | 2026-05-28 | SKU editing + Zoho Books value sync & import | ✅ shipped |
+
+---
+
+## CR-024 — CRM Deal context on the SKU generator page (2026-08-08) — ✅ shipped
+
+**Requested:** open the SKU generator from a Zoho CRM Deal via a custom link
+button, and show that Deal's details (deal name, account name, …) in a clearly
+named section so the user knows which deal they're generating a SKU for. Extend
+the existing Zoho auth: fold CRM into the same connection and ask for permission,
+rather than a separate integration. (This is the read/display slice of the old
+CR-012 widget spec, shipped server-side instead of as a CRM embedded widget.)
+
+**Shipped:**
+- **Auth** — added `ZohoCRM.modules.READ` to the single `SCOPES` grant
+  (`zoho/auth.js`). New Zoho connects request CRM automatically; an existing
+  Books-connected user is re-prompted for consent the first time they open a Deal
+  link (Zoho shows the not-yet-granted scope on a plain `/auth/zoho`) — same lazy
+  reauth path as the Inventory scope. No new env vars, no schema change.
+- **Backend** — `zoho/crmApi.js`: `getDeal` calls CRM v6 `GET /Deals/{id}` (no
+  `organization_id`; CRM is scoped by the token's own CRM org). Pure
+  `crmReauthNeeded(status, body)` classifies a missing-scope/expired grant (401 /
+  `OAUTH_SCOPE_MISMATCH` / `INVALID_TOKEN` / `AUTHENTICATION_FAILURE`). Route
+  `GET /api/crm/deal/:id` (`routes/crm.js`, mounted under the `/api`
+  auth+requireOrg chain, not add-on gated) → `409 reauth_required` on that,
+  `404 not_found` on empty.
+- **Frontend** — `components/CrmInfoCard.jsx`: given a `dealId`, fetches the deal
+  and renders a labeled **"CRM Info"** card (Deal Name, Account Name, Contact,
+  Stage, Amount, Owner). Rendered at the top of `SKUGeneratorPage` only when
+  `?dealId=` is present. **Non-blocking**: if CRM isn't authorized it shows a
+  small "Connect CRM" link and the generator works normally regardless.
+- **CRM setup (console, not code):** a Deal custom link button →
+  `/#/sku/generator?dealId=${Deal.Id}`.
+
+**Not done (deliberately):** no write-back to the Deal (the CR-012 `Plan_Pricing`
+subform append) — this is read-only display; add a broader scope + POST if that
+sync is built. No proactive login-time CRM prompt — consent is lazy on first use.
 
 ---
 

@@ -60,6 +60,11 @@ async function requireOrg(req, res, next) {
 }
 app.use("/api", requireAuth, requireOrg);
 
+// CRM Deal read (for the "CRM Info" card on the generator page). Not an add-on:
+// available to any Books-connected org; the token needs the ZohoCRM.modules.READ
+// scope, otherwise the route returns 409 reauth_required.
+app.use("/api/crm", require("./routes/crm"));
+
 // Super-admin (OCTFIS staff): entitlement management. Spans orgs, so it sits
 // outside the /api requireOrg chain.
 app.use("/admin", requireAuth, requireAdmin, require("./routes/admin"));

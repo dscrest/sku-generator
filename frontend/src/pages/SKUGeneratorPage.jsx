@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
+import CrmInfoCard from '../components/CrmInfoCard';
 
 const T = {
   accent: '#4f46e5',
@@ -231,6 +232,9 @@ export default function SKUGeneratorPage() {
         <Link to="/sku/items" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 600, color: T.ink3, textDecoration: 'none', marginBottom: 12 }}>
           ← Back to SKUs
         </Link>
+
+        {/* Deal context when opened from a Zoho CRM custom link button */}
+        {searchParams.get('dealId') && <CrmInfoCard dealId={searchParams.get('dealId')} />}
 
         {/* Two-column layout */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 268px', gap: 20, alignItems: 'flex-start' }}>

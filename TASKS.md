@@ -16,6 +16,16 @@ Last updated: 2026-08-02.
 
 ## In progress
 
+### CR-024 — CRM Deal context on the SKU generator page (branch `feat/zoho-field-mapping`)
+- [x] Add `ZohoCRM.modules.READ` to `SCOPES` (`zoho/auth.js`)
+- [x] `zoho/crmApi.js`: `getDeal` (CRM v6 `GET /Deals/{id}`) + pure `crmReauthNeeded` + selftest
+- [x] Route `GET /api/crm/deal/:id` (`routes/crm.js`) mounted under `/api`; 409 reauth / 404 not_found
+- [x] `components/CrmInfoCard.jsx` — read-only "CRM Info" card, non-blocking reauth link
+- [x] Render on `SKUGeneratorPage` when `?dealId=` present
+- [ ] CRM console: add a Deal custom link button → `/#/sku/generator?dealId=${Deal.Id}`
+- [ ] Verify on deploy: existing Books user opens the link → "Connect CRM" → grant scope → reopen → card shows Deal Name / Account Name / etc; generator usable throughout
+- Deferred: write-back to the Deal (CR-012 `Plan_Pricing` subform) — read-only for now; no proactive login-time CRM prompt (lazy consent)
+
 ### CR-023 — Item-wise Purchase Request across work orders (branch `feat/zoho-field-mapping`)
 - [x] Rename nav `Purchase` → `Purchase request` (`App.jsx`)
 - [x] Backend pure helpers + selftest: `shortfallByItem`, `procurementStatus` (`workorder/purchase.js`)

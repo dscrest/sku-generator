@@ -33,15 +33,17 @@ function dcHosts(dc) {
 }
 
 // Books (all sync) + Inventory (reserve add-on: composite items, warehouses,
-// stock) + profile.READ (identity for Sign-in-with-Zoho). CRM omitted; re-add
-// "ZohoCRM.modules.ALL" if/when that sync is actually built.
-// NB: tokens granted before Inventory was added lack that scope — Inventory
-// calls fail until the user re-authorizes (reserve endpoints surface this as
-// 409 reauth_required; Books-only flows keep working).
+// stock) + profile.READ (identity for Sign-in-with-Zoho) + CRM read (show the
+// originating Deal on the SKU generator page, read-only).
+// NB: tokens granted before a scope was added lack it — those calls fail until
+// the user re-authorizes (surfaced as 409 reauth_required; unaffected flows keep
+// working). A returning user requesting a not-yet-granted scope is re-prompted
+// for consent by Zoho even without prompt=consent, so a plain /auth/zoho grants it.
 const SCOPES = [
   "AaaServer.profile.READ",
   "ZohoBooks.fullaccess.all",
   "ZohoInventory.fullaccess.all",
+  "ZohoCRM.modules.READ",
 ].join(",");
 
 function isConfigured() {

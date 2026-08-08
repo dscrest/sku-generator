@@ -22,7 +22,7 @@ properties/values, storing the generated items, and syncing them to Zoho Books.
 | Frontend | React 18 + Vite + React Router, plain CSS vars | `frontend/`, served at `/app/` on Catalyst |
 | Backend | Express on Catalyst **Advanced I/O Function** (`node18`, 256MB) | `functions/skuapi/` |
 | Data | Catalyst **Data Store** (NoSQL-ish tables, queried with ZCQL) | Catalyst project `SKU-GEN-OCTFIS` |
-| External | Zoho Books v3 API (OAuth) | `functions/skuapi/zoho/` |
+| External | Zoho Books v3 + Inventory v1 + CRM v6 read (one OAuth grant) | `functions/skuapi/zoho/` |
 
 The function is mounted by Catalyst at `/server/skuapi`. `index.js` strips that
 prefix so routes match local dev. In dev, Vite proxies `/server/skuapi` →
@@ -129,6 +129,11 @@ ROWID (List props) or a raw number string (Range props).
 | POST | `/api/sku-items/:id/push-zoho` | Manual (re)push a single item to Zoho Books |
 | POST | `/api/sku-items/backfill-values` | One-shot, idempotent backfill of SKUItemValue for legacy items by reverse-matching SKU tokens |
 | POST | `/api/sku-items/import-zoho` | Import new items from Zoho Books into an industry. Body `{ industryId }`. Create-only — items already linked (by `zohoItemId`, then `sku`) are skipped. Reverse-maps Books custom fields → SKUItemValue via `zohoCfApiName`. Returns `{ total, imported, skipped, valuesMapped, errors }` |
+
+### CRM — `routes/crm.js` (mounted `/api/crm`, not add-on gated)
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/crm/deal/:id` | Read-only Zoho CRM Deal (v6 `GET /Deals/{id}` via `zoho/crmApi.js`) for the "CRM Info" card on the generator page. Needs the `ZohoCRM.modules.READ` scope → `409 reauth_required` if the grant predates it; `404 not_found` if the deal is gone. Opened from a CRM custom link button: `/#/sku/generator?dealId=<id>` (CR-024) |
 
 ### Admin — `routes/admin.js` (mounted `/admin`, requireAuth + requireAdmin via `ADMIN_EMAILS`)
 | Method | Path | Purpose |
