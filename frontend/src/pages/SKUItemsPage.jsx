@@ -219,7 +219,10 @@ export default function SKUItemsPage() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button
-            onClick={() => navigate('/sku/generator')}
+            onClick={() => {
+              const dealId = searchParams.get('dealId');
+              navigate(dealId ? `/sku/generator?dealId=${encodeURIComponent(dealId)}` : '/sku/generator');
+            }}
             title="Generate a new SKU"
             style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 'var(--radius-md)', border: 'none', background: 'var(--blue)', color: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}
           >

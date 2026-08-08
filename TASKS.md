@@ -22,6 +22,7 @@ Last updated: 2026-08-02.
 - [x] Route `GET /api/crm/deal/:id` (`routes/crm.js`) mounted under `/api`; 409 reauth / 404 not_found
 - [x] `components/CrmInfoCard.jsx` — read-only "CRM Info" card, non-blocking reauth link
 - [x] Render on `SKUGeneratorPage` when `?dealId=` present
+- [x] Preserve `?dealId=` from the items search page "+ New" button into the generator (create screen)
 - [ ] CRM console: add a Deal custom link button → `/#/sku/generator?dealId=${Deal.Id}`
 - [ ] Verify on deploy: existing Books user opens the link → "Connect CRM" → grant scope → reopen → card shows Deal Name / Account Name / etc; generator usable throughout
 - Deferred: write-back to the Deal (CR-012 `Plan_Pricing` subform) — read-only for now; no proactive login-time CRM prompt (lazy consent)

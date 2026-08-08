@@ -60,8 +60,12 @@ CR-012 widget spec, shipped server-side instead of as a CRM embedded widget.)
   Stage, Amount, Owner). Rendered at the top of `SKUGeneratorPage` only when
   `?dealId=` is present. **Non-blocking**: if CRM isn't authorized it shows a
   small "Connect CRM" link and the generator works normally regardless.
+- **Deal context survives search → create** — the SKU items page "+ New" button
+  carries `?dealId=` into the generator, so a Deal button can open the item
+  search list (`/#/sku/items?dealId=…`) and the CRM Info card still shows on the
+  create screen after "+ New".
 - **CRM setup (console, not code):** a Deal custom link button →
-  `/#/sku/generator?dealId=${Deal.Id}`.
+  `/#/sku/items?dealId=${Deal.Id}` (search-first) or `/#/sku/generator?dealId=${Deal.Id}`.
 
 **Not done (deliberately):** no write-back to the Deal (the CR-012 `Plan_Pricing`
 subform append) — this is read-only display; add a broader scope + POST if that
