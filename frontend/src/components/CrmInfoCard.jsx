@@ -3,8 +3,9 @@ import axios from 'axios';
 
 // Shows the originating Zoho CRM Deal when the generator is opened from a CRM
 // custom link button (/#/sku/generator?dealId=<id>). Read-only context, never
-// blocks the generator: if CRM isn't authorized yet it just offers a one-time
-// reconnect (Zoho re-prompts consent for the not-yet-granted ZohoCRM scope).
+// blocks the generator: if CRM isn't authorized yet it offers a one-time
+// reconnect through the Zoho consent screen (?consent=1) so the not-yet-granted
+// ZohoCRM scope is actually added.
 const C = {
   bgElev: '#ffffff', border: '#e2e8f0', ink: '#0f172a', ink3: '#64748b',
   ink4: '#94a3b8', accent: '#4f46e5', warnSoft: '#fffbeb', warn: '#b45309',
@@ -12,6 +13,17 @@ const C = {
 const shadowSm = '0 1px 2px rgba(15,23,42,0.04), 0 1px 4px rgba(15,23,42,0.04)';
 
 const lookup = (v) => (v && typeof v === 'object' ? v.name : v) || null;
+
+// HashRouter's useSearchParams only sees the query INSIDE the hash
+// (/app/#/sku/...?dealId=). Zoho link buttons often put it BEFORE the hash
+// (/app/?dealId=...#/sku/...) — read both so either form works.
+export function readDealId(searchParams) {
+  return (
+    (searchParams && searchParams.get('dealId')) ||
+    new URLSearchParams(window.location.search).get('dealId') ||
+    ''
+  );
+}
 
 export default function CrmInfoCard({ dealId }) {
   const [state, setState] = useState({ status: 'loading' });
@@ -50,7 +62,7 @@ export default function CrmInfoCard({ dealId }) {
     return <div style={card}><div style={eyebrow}>CRM Info</div>
       <div style={{ fontSize: 13, color: C.ink3 }}>
         Connect Zoho CRM to show deal details.{' '}
-        <a href="/server/skuapi/auth/zoho" style={{ color: C.accent, fontWeight: 600 }}>Connect CRM</a>
+        <a href="/server/skuapi/auth/zoho?consent=1" style={{ color: C.accent, fontWeight: 600 }}>Connect CRM</a>
       </div></div>;
   }
 

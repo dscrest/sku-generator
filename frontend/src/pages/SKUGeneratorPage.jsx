@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
-import CrmInfoCard from '../components/CrmInfoCard';
+import CrmInfoCard, { readDealId } from '../components/CrmInfoCard';
 
 const T = {
   accent: '#4f46e5',
@@ -234,7 +234,7 @@ export default function SKUGeneratorPage() {
         </Link>
 
         {/* Deal context when opened from a Zoho CRM custom link button */}
-        {searchParams.get('dealId') && <CrmInfoCard dealId={searchParams.get('dealId')} />}
+        {readDealId(searchParams) && <CrmInfoCard dealId={readDealId(searchParams)} />}
 
         {/* Two-column layout */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 268px', gap: 20, alignItems: 'flex-start' }}>

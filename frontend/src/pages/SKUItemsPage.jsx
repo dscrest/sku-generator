@@ -4,6 +4,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
 import { ModalBtn } from '../components/Modal.jsx';
+import { readDealId } from '../components/CrmInfoCard';
 import RowDeleteButton from '../components/RowDeleteButton.jsx';
 import GridFooter, { usePager } from '../components/GridFooter.jsx';
 
@@ -220,7 +221,7 @@ export default function SKUItemsPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <button
             onClick={() => {
-              const dealId = searchParams.get('dealId');
+              const dealId = readDealId(searchParams);
               navigate(dealId ? `/sku/generator?dealId=${encodeURIComponent(dealId)}` : '/sku/generator');
             }}
             title="Generate a new SKU"
