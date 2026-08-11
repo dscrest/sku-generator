@@ -7,6 +7,8 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 | CR | Date | Title | Status |
 |----|------|-------|--------|
+| CR-026 | 2026-08-11 | Property value can also be created as a standalone Zoho Books item (checkbox + dedupe + "Books items" tracking grid) | 🚧 in progress |
+| CR-025 | 2026-08-11 | Club properties into one un-separated SKU segment (Body+Gland, 3-part Seat) | 🚧 in progress |
 | CR-024 | 2026-08-08 | CRM Deal context on the SKU generator page — open from a Zoho CRM custom link button, read-only "CRM Info" card | ✅ shipped |
 | CR-023 | 2026-08-06 | Purchase Request: item-wise cross-WO view + one-step grouped PO; derived procurement status chip + filter; "Purchase" → "Purchase request" | 🚧 in progress |
 | CR-022 | 2026-08-04 | Work Order material-reservation screen redesigned — plain-language table, coverage bars, shortage bar, live confirm bar | ✅ shipped |
@@ -32,6 +34,69 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 | CR-001 | 2026-05-28 | SKU editing + Zoho Books value sync & import | ✅ shipped |
 
 ---
+
+## CR-026 — Property value as a standalone Zoho Books item (2026-08-11) — 🚧 in progress
+
+**Requested:** some property values *are* real inventory items in Zoho Books. When
+adding a value, offer a checkbox to also create it as an individual Books item;
+create it immediately on save, check for duplicates first, and keep a separate,
+easy-to-scan track of the linked values. (This is the enabling slice of the
+"parameter selection = Books item lookup" idea — items 1 / 1.1.)
+
+**Shipped:**
+- **Schema** — `PropertyValue.createAsItem` (boolean, nullable) + `zohoItemId`
+  (varchar, nullable). `createAsItem` added to `BOOL_COLS` in `store.js`.
+- **Books item = name only** — the value's Display Value is the item name; **no
+  SKU is sent** (value codes are short and collide across properties, so Books
+  auto-handles). Description = the value's description.
+- **Backend** — `pushValueToZoho()` in `zoho/push.js` mirrors `pushToZoho`,
+  best-effort (no-op until Zoho configured). Dedupe order: (a) already linked →
+  `updateItem`; (b) a sibling value of the org with the same name already made the
+  item → reuse its id; (c) an item with that exact name exists in Books
+  (`findItemByName` via `search_text`) → link; (d) else `createItem`. Resolved
+  `item_id` is written back onto the value. Wired into `POST`/`PUT
+  /property-values`; a Books failure never fails the value save (returns a
+  `zohoWarning`). New `GET /property-values/linked` returns linked values with
+  property + industry names.
+- **Frontend** — `ValForm` gets an "Also create as an item in Zoho Books"
+  checkbox + a "✓ In Books" badge when already linked. New read-only
+  **Books items** tab (`BooksLinkedValuesPage`, `/sku/books-items`) lists every
+  linked value, reusing the standard record-grid (GridFooter, industry filter).
+
+**Not done (deliberately):** un-ticking the box does **not** delete the Books
+item. The reverse item-lookup *picker* during generation (item 1 proper) is still
+future — this CR only builds the value→item linkage it needs.
+
+## CR-025 — Club properties into one un-separated SKU segment (2026-08-11) — 🚧 in progress
+
+**Requested:** some SKU segments are several attributes picked separately that
+must appear glued together with **no** separator — Body + Gland material (group 6)
+and the 3-part Seat / Surface Treatment / Soft Seat (group 9). Let an admin *club*
+properties so their codes concatenate directly, while the industry separator still
+sits between segments. Must support autocomplete of existing clubs (avoid typos)
+and un-clubbing.
+
+**Shipped:**
+- **Schema** — `Property.clubKey` (varchar, nullable). Properties of one industry
+  sharing a non-empty `clubKey` form one segment; null = standalone (unchanged).
+- **Backend** — `POST /sku/generate` (`routes/sku.js`) now groups codes into
+  segments by `clubKey` (first-encounter / `skuPosition` order), joins **within** a
+  segment with `""` and **between** segments with `industry.skuSeparator`.
+  Name/description stay one entry per property. `properties.js` POST/PUT persist
+  `clubKey` (empty string clears it → un-club).
+- **Frontend** — `PropForm` gets a **Club** field. The generator's live chip row
+  groups clubbed properties into one chip so the display matches the assembled SKU.
+- **UI follow-up (2026-08-11)** — the Club field is now a `ClubPicker` combobox:
+  the current club shows as a removable chip, existing clubs filter as you type, and
+  a `+ Create "…"` row adds a new one (replaces the inconsistent native `<datalist>`).
+  Property list rows show an indigo `⛓ <club>` chip (beside REQUIRED/IN NAME) so
+  clubbed properties read as clubbed, not as duplicates. UI-only, no schema change.
+
+**Not done (deliberately):** no configurable within-club joiner (user wants none).
+Clubbed members should sit at adjacent `skuPosition`s; a club renders at its first
+member's position. The legacy `SKUItemValue` backfill can't reverse-split a clubbed
+segment (no separator inside) — forward saves are unaffected; clubbed industries
+are new.
 
 ## CR-024 — CRM Deal context on the SKU generator page (2026-08-08) — ✅ shipped
 

@@ -22,10 +22,61 @@ const selectStyle = {
   backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center', paddingRight: 30,
 };
 
-const emptyProp = { name: '', caption: '', unit: '', valueType: 'Manual', rangeMin: '', rangeMax: '', required: false, includeInName: false, zohoCfApiName: '' };
-const emptyVal = { displayValue: '', name: '', sku: '', description: '' };
+const emptyProp = { name: '', caption: '', unit: '', valueType: 'Manual', rangeMin: '', rangeMax: '', required: false, includeInName: false, zohoCfApiName: '', clubKey: '' };
+const emptyVal = { displayValue: '', name: '', sku: '', description: '', createAsItem: false };
 
-function PropForm({ form, setForm, onSubmit, onCancel, label }) {
+// Single-club combobox: shows the current club as a removable chip, filters
+// existing clubs as you type, and offers "Create" for a new name. One club per
+// property — sets clubKey to the chosen/typed string, '' clears it.
+function ClubPicker({ value, onChange, clubKeys }) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const query = q.trim();
+  const matches = clubKeys.filter(k => k.toLowerCase().includes(query.toLowerCase()));
+  const exact = clubKeys.some(k => k.toLowerCase() === query.toLowerCase());
+  const pick = v => { onChange(v); setQ(''); setOpen(false); };
+
+  if (value) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: '#6d28d9', background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 20, padding: '4px 10px' }}>
+          ⛓ {value}
+          <button type="button" onClick={() => onChange('')} title="Remove club" style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#6d28d9', fontSize: 13, lineHeight: 1, padding: 0 }}>✕</button>
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div style={{ position: 'relative' }}>
+      <input
+        style={inputStyle} value={q}
+        onChange={e => { setQ(e.target.value); setOpen(true); }}
+        onFocus={e => { setOpen(true); e.target.style.borderColor = 'var(--blue)'; }}
+        onBlur={e => { setTimeout(() => setOpen(false), 150); e.target.style.borderColor = 'var(--border)'; }}
+        onKeyDown={e => { if (e.key === 'Enter' && query) { e.preventDefault(); pick(query); } }}
+        placeholder="Search clubs or type a new name — blank to keep separate"
+      />
+      {open && (matches.length > 0 || (query && !exact)) && (
+        <div style={{ position: 'absolute', zIndex: 20, top: '100%', left: 0, right: 0, marginTop: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', maxHeight: 200, overflowY: 'auto' }}>
+          {matches.map(k => (
+            <div key={k} onMouseDown={() => pick(k)} style={{ padding: '8px 12px', fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-secondary)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+              ⛓ {k}
+            </div>
+          ))}
+          {query && !exact && (
+            <div onMouseDown={() => pick(query)} style={{ padding: '8px 12px', fontSize: 13, cursor: 'pointer', color: 'var(--blue)', fontWeight: 600, borderTop: matches.length ? '1px solid var(--border)' : 'none' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-secondary)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+              + Create "{query}"
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PropForm({ form, setForm, onSubmit, onCancel, label, clubKeys = [] }) {
   const fi = e => e.target.style.borderColor = 'var(--blue)';
   const fo = e => e.target.style.borderColor = 'var(--border)';
   return (
@@ -48,6 +99,11 @@ function PropForm({ form, setForm, onSubmit, onCancel, label }) {
           <div><label style={labelStyle}>Range Max</label><input type="number" style={inputStyle} value={form.rangeMax} onChange={e => setForm(f => ({ ...f, rangeMax: e.target.value }))} onFocus={fi} onBlur={fo} /></div>
         </div>
       )}
+      <div>
+        <label style={labelStyle}>Club</label>
+        <ClubPicker value={form.clubKey} onChange={v => setForm(f => ({ ...f, clubKey: v }))} clubKeys={clubKeys} />
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Pick an existing club or create a new one — properties sharing a club combine into one SKU segment with no separator between their codes.</div>
+      </div>
       <div>
         <label style={labelStyle}>Zoho Books custom field (api_name)</label>
         <input style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} value={form.zohoCfApiName} onChange={e => setForm(f => ({ ...f, zohoCfApiName: e.target.value }))} placeholder="cf_brand — leave blank to skip sync" onFocus={fi} onBlur={fo} />
@@ -83,6 +139,11 @@ function ValForm({ form, setForm, onSubmit, onCancel, label }) {
           <span key={tag} style={{ background: 'var(--blue-light)', color: 'var(--blue)', border: '1px solid var(--blue-border)', borderRadius: 20, fontSize: 10, fontWeight: 500, padding: '2px 8px', fontFamily: 'var(--font-mono)' }}>{tag}</span>
         ))}
       </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
+        <input type="checkbox" checked={!!form.createAsItem} onChange={e => setForm(f => ({ ...f, createAsItem: e.target.checked }))} />
+        Also create as an item in Zoho Books
+        {form.zohoItemId && <span style={{ background: 'var(--blue-light)', color: 'var(--blue)', border: '1px solid var(--blue-border)', borderRadius: 20, fontSize: 10, fontWeight: 600, padding: '2px 8px' }}>✓ In Books</span>}
+      </label>
       <ModalFooter><ModalBtn onClick={onCancel}>Cancel</ModalBtn><ModalBtn onClick={onSubmit} variant="primary">{label}</ModalBtn></ModalFooter>
     </>
   );
@@ -142,7 +203,7 @@ export default function PropertyManagerPage() {
 
   function openEditProp(prop) {
     setSelectedProp(prop);
-    setPropForm({ name: prop.name, caption: prop.caption, unit: prop.unit || '', valueType: prop.valueType, rangeMin: prop.rangeMin ?? '', rangeMax: prop.rangeMax ?? '', required: !!prop.required, includeInName: !!prop.includeInName, zohoCfApiName: prop.zohoCfApiName || '' });
+    setPropForm({ name: prop.name, caption: prop.caption, unit: prop.unit || '', valueType: prop.valueType, rangeMin: prop.rangeMin ?? '', rangeMax: prop.rangeMax ?? '', required: !!prop.required, includeInName: !!prop.includeInName, zohoCfApiName: prop.zohoCfApiName || '', clubKey: prop.clubKey || '' });
     setShowEditProp(true);
   }
 
@@ -173,7 +234,7 @@ export default function PropertyManagerPage() {
 
   function openEditVal(val) {
     setSelectedVal(val);
-    setValForm({ displayValue: val.displayValue, name: val.name, sku: val.sku, description: val.description || '' });
+    setValForm({ displayValue: val.displayValue, name: val.name, sku: val.sku, description: val.description || '', createAsItem: !!val.createAsItem, zohoItemId: val.zohoItemId || '' });
     setShowEditVal(true);
   }
 
@@ -211,6 +272,9 @@ export default function PropertyManagerPage() {
 
   const thStyle = { padding: '10px 16px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textAlign: 'left', background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)' };
 
+  // Existing clubs in this industry — feed the Club field's typeahead datalist.
+  const clubKeys = [...new Set(properties.map(p => p.clubKey).filter(Boolean))];
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', padding: '0 24px', height: 56, display: 'flex', alignItems: 'center', flexShrink: 0, gap: 8 }}>
@@ -246,6 +310,7 @@ export default function PropertyManagerPage() {
                         {prop.required && <span style={{ fontSize: 9, fontWeight: 700, color: '#e11d48', background: '#fef2f2', border: '1px solid #fecdd3', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>REQUIRED</span>}
                         {prop.includeInName && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--blue)', background: 'var(--blue-light)', border: '1px solid var(--blue-border)', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>IN NAME</span>}
                         {prop.activeInSku === false && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>NOT IN SKU</span>}
+                        {prop.clubKey && <span title={`Clubbed: ${prop.clubKey}`} style={{ fontSize: 9, fontWeight: 700, color: '#6d28d9', background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>⛓ {prop.clubKey}</span>}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{prop.caption}{prop.unit ? ` · ${prop.unit}` : ''}</div>
                     </div>
@@ -308,8 +373,8 @@ export default function PropertyManagerPage() {
         </div>
       </div>
 
-      {showAddProp && <Modal title="Add Property" onClose={() => setShowAddProp(false)}><PropForm form={propForm} setForm={setPropForm} onSubmit={handleAddProp} onCancel={() => setShowAddProp(false)} label="Create" /></Modal>}
-      {showEditProp && <Modal title="Edit Property" onClose={() => setShowEditProp(false)}><PropForm form={propForm} setForm={setPropForm} onSubmit={handleEditProp} onCancel={() => setShowEditProp(false)} label="Save" /></Modal>}
+      {showAddProp && <Modal title="Add Property" onClose={() => setShowAddProp(false)}><PropForm form={propForm} setForm={setPropForm} clubKeys={clubKeys} onSubmit={handleAddProp} onCancel={() => setShowAddProp(false)} label="Create" /></Modal>}
+      {showEditProp && <Modal title="Edit Property" onClose={() => setShowEditProp(false)}><PropForm form={propForm} setForm={setPropForm} clubKeys={clubKeys} onSubmit={handleEditProp} onCancel={() => setShowEditProp(false)} label="Save" /></Modal>}
       {showAddVal && <Modal title="Add Value" onClose={() => setShowAddVal(false)}><ValForm form={valForm} setForm={setValForm} onSubmit={handleAddVal} onCancel={() => setShowAddVal(false)} label="Create" /></Modal>}
       {showEditVal && <Modal title="Edit Value" onClose={() => setShowEditVal(false)}><ValForm form={valForm} setForm={setValForm} onSubmit={handleEditVal} onCancel={() => setShowEditVal(false)} label="Save" /></Modal>}
     </div>

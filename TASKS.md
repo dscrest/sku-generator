@@ -16,6 +16,23 @@ Last updated: 2026-08-02.
 
 ## In progress
 
+### CR-025 — Club properties into one un-separated SKU segment (branch `feat/zoho-field-mapping`)
+- [x] Add `Property.clubKey` (varchar 255, nullable) — done via OCTFIS Catalyst MCP
+- [x] `routes/sku.js` — segment-grouped assembly (club codes join `""`, segments join by industry separator)
+- [x] `routes/properties.js` — POST/PUT persist `clubKey` (empty clears)
+- [x] `PropForm` Club field — `ClubPicker` combobox (chip + filter existing + create new)
+- [x] `SKUGeneratorPage` live chips grouped per club
+- [x] Club chip (`⛓ <club>`) on property list rows so clubbed props don't look duplicated
+- [ ] Verify on deploy: Body+Gland → one segment `KA`; 3-part Seat club; un-club by clearing; no-club industry unchanged
+
+### CR-026 — Property value as a standalone Zoho Books item (branch `feat/zoho-field-mapping`)
+- [x] Add `PropertyValue.createAsItem` (boolean, nullable) + `zohoItemId` (varchar 64, nullable) — done via OCTFIS Catalyst MCP
+- [x] `store.js` — `createAsItem` in `BOOL_COLS`
+- [x] `zoho/booksApi.js` — `findItemByName`; `zoho/push.js` — `pushValueToZoho` (dedupe a→d, write-back id)
+- [x] `routes/propertyValues.js` — POST/PUT best-effort create; `GET /property-values/linked`
+- [x] `ValForm` checkbox + "✓ In Books" badge; `BooksLinkedValuesPage` + `/sku/books-items` tab
+- [ ] Verify on deploy: ticked value creates name-only Books item; same-name dedupe; Zoho-not-connected still saves; grid lists linked values
+
 ### CR-024 — CRM Deal context on the SKU generator page (branch `feat/zoho-field-mapping`)
 - [x] Add `ZohoCRM.modules.READ` to `SCOPES` (`zoho/auth.js`)
 - [x] `zoho/crmApi.js`: `getDeal` (CRM v6 `GET /Deals/{id}`) + pure `crmReauthNeeded` + selftest
