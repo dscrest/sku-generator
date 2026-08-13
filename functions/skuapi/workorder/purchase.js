@@ -375,6 +375,12 @@ async function raiseItemPO(catalyst, orgId, { vendorId, vendorName, items }, use
       description: `PR ${prNumber}`,
     }));
   } catch (err) {
+    // The PO never got created, so drop the Draft PR + its lines — otherwise
+    // they linger as phantom draft-PR coverage and mask the item's shortfall in
+    // the By-item grid (workorder route applyDraftCoverage).
+    const lt = catalyst.datastore().table("PurchaseRequestLine");
+    for (const l of localLines) await lt.deleteRow(l.ROWID);
+    await catalyst.datastore().table("PurchaseRequest").deleteRow(pr.ROWID);
     await logActivity(catalyst, orgId, "PurchaseRequest", pr.ROWID, "pr.raise.fail", userId, { prNumber, error: err.message });
     const e = new Error(`Could not raise the purchase order: ${err.message}`); e.status = 502; throw e;
   }
@@ -392,9 +398,9 @@ async function raiseItemPO(catalyst, orgId, { vendorId, vendorName, items }, use
 
 /**
  * Pure: the PUT body that keeps a PO's untouched fields intact. Books' PUT
- * replaces line items wholesale, so every kept line echoes back item_id, rate
- * and description from the freshly fetched PO. The delivery location is a
- * header field (location_id) — echoed so the PUT doesn't clear it. `kept` is
+ * replaces line items wholesale, so every kept line echoes back item_id, rate,
+ * description and its Item-Level delivery location (line location_id) from the
+ * freshly fetched PO, or the PUT clears them. `kept` is
  * [{ lineItemId, quantity }]; a fetched line absent from it is removed.
  * Returns { body, removedItemIds } — an item counts as removed only when it is
  * on none of the kept lines (same item can sit on several lines, one per SO).
@@ -415,10 +421,13 @@ function poPutBody(po, kept) {
       quantity: n(k.quantity),
       rate: li.rate,
       description: li.description || undefined,
+      location_id: li.location_id ? String(li.location_id) : undefined,
     });
   }
   const removedItemIds = new Set([...allItemIds].filter((id) => !keptItemIds.has(id)));
   const body = { line_items: lineItems };
+  // Header location only for transaction-level orgs; item-level POs carry it per
+  // line (above) and leave po.location_id empty.
   if (po.location_id) body.location_id = String(po.location_id);
   return { body, removedItemIds };
 }
