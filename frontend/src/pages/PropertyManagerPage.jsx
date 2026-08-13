@@ -22,7 +22,7 @@ const selectStyle = {
   backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center', paddingRight: 30,
 };
 
-const emptyProp = { name: '', caption: '', unit: '', valueType: 'Manual', rangeMin: '', rangeMax: '', required: false, includeInName: false, zohoCfApiName: '', clubKey: '' };
+const emptyProp = { name: '', caption: '', unit: '', valueType: 'Manual', rangeMin: '', rangeMax: '', required: false, includeInName: false, zohoCfApiName: '', clubKey: '', createValuesAsItems: false };
 const emptyVal = { displayValue: '', name: '', sku: '', description: '', createAsItem: false };
 
 // Single-club combobox: shows the current club as a removable chip, filters
@@ -118,6 +118,12 @@ function PropForm({ form, setForm, onSubmit, onCancel, label, clubKeys = [] }) {
         Include in item name
         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>— tick none and every property is used</span>
       </label>
+      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
+        <input type="checkbox" style={{ marginTop: 3 }} checked={!!form.createValuesAsItems} onChange={e => setForm(f => ({ ...f, createValuesAsItems: e.target.checked }))} />
+        <span>Values are Zoho Books items
+          <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>Every value of this property is created/synced as an item in Zoho Books. Leave off for properties that are not items (e.g. size, colour).</span>
+        </span>
+      </label>
       <ModalFooter><ModalBtn onClick={onCancel}>Cancel</ModalBtn><ModalBtn onClick={onSubmit} variant="primary">{label}</ModalBtn></ModalFooter>
     </>
   );
@@ -139,11 +145,12 @@ function ValForm({ form, setForm, onSubmit, onCancel, label }) {
           <span key={tag} style={{ background: 'var(--blue-light)', color: 'var(--blue)', border: '1px solid var(--blue-border)', borderRadius: 20, fontSize: 10, fontWeight: 500, padding: '2px 8px', fontFamily: 'var(--font-mono)' }}>{tag}</span>
         ))}
       </div>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
-        <input type="checkbox" checked={!!form.createAsItem} onChange={e => setForm(f => ({ ...f, createAsItem: e.target.checked }))} />
-        Also create as an item in Zoho Books
-        {form.zohoItemId && <span style={{ background: 'var(--blue-light)', color: 'var(--blue)', border: '1px solid var(--blue-border)', borderRadius: 20, fontSize: 10, fontWeight: 600, padding: '2px 8px' }}>✓ In Books</span>}
-      </label>
+      {form.zohoItemId && (
+        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          <span style={{ background: 'var(--blue-light)', color: 'var(--blue)', border: '1px solid var(--blue-border)', borderRadius: 20, fontSize: 10, fontWeight: 600, padding: '2px 8px' }}>✓ In Books</span>
+          {' '}synced from this property's "Values are Zoho Books items" setting.
+        </div>
+      )}
       <ModalFooter><ModalBtn onClick={onCancel}>Cancel</ModalBtn><ModalBtn onClick={onSubmit} variant="primary">{label}</ModalBtn></ModalFooter>
     </>
   );
@@ -203,7 +210,7 @@ export default function PropertyManagerPage() {
 
   function openEditProp(prop) {
     setSelectedProp(prop);
-    setPropForm({ name: prop.name, caption: prop.caption, unit: prop.unit || '', valueType: prop.valueType, rangeMin: prop.rangeMin ?? '', rangeMax: prop.rangeMax ?? '', required: !!prop.required, includeInName: !!prop.includeInName, zohoCfApiName: prop.zohoCfApiName || '', clubKey: prop.clubKey || '' });
+    setPropForm({ name: prop.name, caption: prop.caption, unit: prop.unit || '', valueType: prop.valueType, rangeMin: prop.rangeMin ?? '', rangeMax: prop.rangeMax ?? '', required: !!prop.required, includeInName: !!prop.includeInName, zohoCfApiName: prop.zohoCfApiName || '', clubKey: prop.clubKey || '', createValuesAsItems: !!prop.createValuesAsItems });
     setShowEditProp(true);
   }
 
@@ -311,6 +318,7 @@ export default function PropertyManagerPage() {
                         {prop.includeInName && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--blue)', background: 'var(--blue-light)', border: '1px solid var(--blue-border)', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>IN NAME</span>}
                         {prop.activeInSku === false && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>NOT IN SKU</span>}
                         {prop.clubKey && <span title={`Clubbed: ${prop.clubKey}`} style={{ fontSize: 9, fontWeight: 700, color: '#6d28d9', background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>⛓ {prop.clubKey}</span>}
+                        {prop.createValuesAsItems && <span title="Values of this property sync to Zoho Books as items" style={{ fontSize: 9, fontWeight: 700, color: '#047857', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>→ BOOKS</span>}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{prop.caption}{prop.unit ? ` · ${prop.unit}` : ''}</div>
                     </div>

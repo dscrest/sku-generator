@@ -48,7 +48,7 @@ router.get("/properties", async (req, res) => {
 });
 
 router.post("/properties", async (req, res) => {
-  const { name, caption, unit, valueType, skuPosition, industryId, rangeMin, rangeMax, required, zohoCfApiName, activeInSku, includeInName } = req.body;
+  const { name, caption, unit, valueType, skuPosition, industryId, rangeMin, rangeMax, required, zohoCfApiName, activeInSku, includeInName, clubKey, createValuesAsItems } = req.body;
   if (!name || !caption || !valueType || skuPosition === undefined || !industryId) {
     return res.status(400).json({ error: "name, caption, valueType, skuPosition, industryId are required" });
   }
@@ -69,6 +69,8 @@ router.post("/properties", async (req, res) => {
       activeInSku: activeInSku === false ? "false" : "true", // new properties join the SKU by default
       includeInName: includeInName ? "true" : "false",
       zohoCfApiName: zohoCfApiName || null,
+      clubKey: clubKey || null, // props sharing this club concatenate codes with no separator
+      createValuesAsItems: createValuesAsItems ? "true" : "false", // gate: this property's values sync to Books as items
       orgId: req.orgId,
     });
     res.status(201).json(out(row));
@@ -81,7 +83,7 @@ router.put("/properties/:id", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
   if (!(await ownsRow(req.catalyst, TABLE, id))) return res.status(404).json({ error: "Not found" });
-  const { name, caption, unit, valueType, skuPosition, rangeMin, rangeMax, required, zohoCfApiName, activeInSku, includeInName } = req.body;
+  const { name, caption, unit, valueType, skuPosition, rangeMin, rangeMax, required, zohoCfApiName, activeInSku, includeInName, clubKey, createValuesAsItems } = req.body;
   const data = { ROWID: id };
   if (name) data.name = name;
   if (caption) data.caption = caption;
@@ -94,13 +96,36 @@ router.put("/properties/:id", async (req, res) => {
   if (activeInSku !== undefined) data.activeInSku = activeInSku ? "true" : "false";
   if (includeInName !== undefined) data.includeInName = includeInName ? "true" : "false";
   if (zohoCfApiName !== undefined) data.zohoCfApiName = zohoCfApiName || null;
+  if (clubKey !== undefined) data.clubKey = clubKey || null; // empty string clears the club (un-club)
+  if (createValuesAsItems !== undefined) data.createValuesAsItems = createValuesAsItems ? "true" : "false";
   try {
     const row = await req.catalyst.datastore().table(TABLE).updateRow(data);
+    // Turning the gate ON backfills existing values into Books (best-effort,
+    // idempotent — pushValueToZoho links/updates existing items, never dupes).
+    if (createValuesAsItems === true) await backfillPropertyItems(req.catalyst, id);
     res.json(out(row));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Push every value of a property to Books as an item. Best-effort: a Zoho
+// failure is logged, never fails the property save.
+async function backfillPropertyItems(catalyst, propertyId) {
+  try {
+    const { pushValueToZoho } = require("../zoho/push");
+    const vals = rowList(
+      await catalyst.zcql().executeZCQLQuery(
+        `SELECT * FROM PropertyValue WHERE propertyId = ${propertyId} AND ${orgClause(catalyst)}`,
+      ),
+    ).map(out);
+    for (const v of vals) {
+      try { await pushValueToZoho(catalyst, v); } catch (e) { console.error("[Zoho] backfill value failed:", e.message); }
+    }
+  } catch (e) {
+    console.error("[Zoho] backfill property items failed:", e.message);
+  }
+}
 
 router.delete("/properties/:id", async (req, res) => {
   const id = req.params.id;

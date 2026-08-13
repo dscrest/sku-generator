@@ -16,6 +16,17 @@ Last updated: 2026-08-02.
 
 ## In progress
 
+### CR-027 — Books item field-mapping defaults on push (branch `feat/zoho-field-mapping`)
+- [x] `zoho/booksApi.js` `createItem` — `unit:"pcs"`, `product_type:"goods"`, `track_serial_number:true`, `inventory_valuation_method:"fifo"`; `updateItem` re-sends `unit`
+- [x] Per-org Finished Goods resolver `getFinishedGoodsAccountId` (chartofaccounts, `stock`/"Finished Goods", cached) → `inventory_account_id` (no env constant — multi-tenant)
+- [x] §3 constants pushed via `ITEM_DEFAULT_CFS` (Books defaults don't apply on API create)
+- [x] §4 mapping (MSUN org, via MCP) — `zohoCfApiName` on Connection Type, Surface Treatment (G), Drilling, Design Type, Size
+- [x] Dropdown value normalizer (`normalizeCustomFields`) — loose match (case+whitespace) to Books option labels; per-org cached fields fetch
+- [x] `cf_surface_treatment_g` "Overlay Wleding "→"Overlay Welding" in Books + app value trimmed; design/size left to normalizer (options in use, locked)
+- [x] Deployed (2× — payload+resolver, then normalizer)
+- [ ] **Books:** convert `cf_valve_type` lookup→dropdown, then map Valve Type (`...82007`)
+- [ ] Verify on push: Unit=Pcs, Serial + Finished Goods + FIFO, §3 constants, §4 values (incl. DN10/O-Port via normalizer), description
+
 ### CR-025 — Club properties into one un-separated SKU segment (branch `feat/zoho-field-mapping`)
 - [x] Add `Property.clubKey` (varchar 255, nullable) — done via OCTFIS Catalyst MCP
 - [x] `routes/sku.js` — segment-grouped assembly (club codes join `""`, segments join by industry separator)
@@ -30,8 +41,10 @@ Last updated: 2026-08-02.
 - [x] `store.js` — `createAsItem` in `BOOL_COLS`
 - [x] `zoho/booksApi.js` — `findItemByName`; `zoho/push.js` — `pushValueToZoho` (dedupe a→d, write-back id)
 - [x] `routes/propertyValues.js` — POST/PUT best-effort create; `GET /property-values/linked`
-- [x] `ValForm` checkbox + "✓ In Books" badge; `BooksLinkedValuesPage` + `/sku/books-items` tab
-- [ ] Verify on deploy: ticked value creates name-only Books item; same-name dedupe; Zoho-not-connected still saves; grid lists linked values
+- [x] `BooksLinkedValuesPage` + `/sku/books-items` tab
+- [x] **Gate moved to property level** — `Property.createValuesAsItems` (boolean, via OCTFIS Catalyst MCP); `store.js` BOOL_COLS; PropForm "Values are Zoho Books items" checkbox; per-value `ValForm` checkbox removed
+- [x] `routes/propertyValues.js` gate on parent `propertyMakesItems`; `routes/properties.js` persist flag + `backfillPropertyItems` on turn-on; `→ BOOKS` chip on property rows
+- [ ] Verify on deploy: flag a property → its values become name-only Books items; turning on backfills existing values; same-name dedupe; un-flagged properties create nothing; Zoho-not-connected still saves
 
 ### CR-024 — CRM Deal context on the SKU generator page (branch `feat/zoho-field-mapping`)
 - [x] Add `ZohoCRM.modules.READ` to `SCOPES` (`zoho/auth.js`)

@@ -7,6 +7,7 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 | CR | Date | Title | Status |
 |----|------|-------|--------|
+| CR-027 | 2026-08-11 | Books item field-mapping defaults on push (Pcs unit, serial inventory tracking, Finished Goods / FIFO, §3 constants, §4 param custom fields) | 🚧 in progress |
 | CR-026 | 2026-08-11 | Property value can also be created as a standalone Zoho Books item (checkbox + dedupe + "Books items" tracking grid) | 🚧 in progress |
 | CR-025 | 2026-08-11 | Club properties into one un-separated SKU segment (Body+Gland, 3-part Seat) | 🚧 in progress |
 | CR-024 | 2026-08-08 | CRM Deal context on the SKU generator page — open from a Zoho CRM custom link button, read-only "CRM Info" card | ✅ shipped |
@@ -35,6 +36,55 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 ---
 
+## CR-027 — Books item field-mapping defaults on push (2026-08-11) — 🚧 in progress
+
+**Requested:** every SKU item pushed/synced to Zoho Books must carry the field-mapping
+spec's defaults and mapped values — §1 Units=Pcs + Item Description, §2 inventory
+tracking (serial method, Finished Goods account, FIFO), §3 constants (Item Type=Finished
+Goods, Criticality=Critical, Source=In-house Manufacturing), §4 SKU parameters (Valve
+Type, Connection Type, Surface Treatment, Drilling, Designing Type, Size).
+
+**Shipped (code):**
+- **Payload** — `createItem` (`zoho/booksApi.js`) now sends `unit:"pcs"` (§1),
+  `product_type:"goods"`, `track_serial_number:true`, `inventory_valuation_method:"fifo"`
+  (§2), and `inventory_account_id` (§2). `updateItem` re-sends `unit`; tracking method +
+  account are create-only (immutable once the item has transactions).
+- **Per-org Finished Goods resolver** — `getFinishedGoodsAccountId` looks up the org's
+  account named "Finished Goods" (type `stock`) via `GET /chartofaccounts`, cached per
+  org. The id differs per Books org and the app is multi-tenant, so **no env constant**
+  (the earlier `ZOHO_INVENTORY_ACCOUNT_ID` idea was dropped).
+- **§3 constants pushed explicitly** — `ITEM_DEFAULT_CFS` = `cf_item_type`=Finished
+  Goods, `cf_item_criticality`=Critical, `cf_item_source`=In-House Manufacturing, merged
+  into every create's `custom_fields`. Books custom-field *default values* fire only on
+  UI creation, **not** API create, so defaults-in-Books would not have worked.
+- **Dropdown value normalizer** — Books rejects the whole push if a dropdown value
+  isn't byte-identical to an option (`code 120124`), and in-use options can't be
+  renamed to match (`code 120111`). `normalizeCustomFields` maps each pushed value to
+  the exact Books option label, matched loosely (case + all whitespace ignored),
+  from a per-org-cached `GET /settings/fields?entity=item`. Keeps app data clean while
+  absorbing Books' label quirks; unmatched/ambiguous values pass through so Books
+  surfaces a real error instead of a silent wrong option.
+
+**Data (MSUN VALVE org `60077990319`, done via Catalyst MCP):**
+- **§4 mapping** — set `Property.zohoCfApiName` on 5 dropdown props: Connection Type→
+  `cf_connection_type`, Surface Treatment (G)→`cf_surface_treatment_g`, Drilling→
+  `cf_drilling`, Design Type→`cf_design_type`, Size→`cf_size`.
+- **Valve Type left UNMAPPED** — Books `cf_valve_type` is a **lookup** (takes a record
+  id, not text); pushing a string would fail the whole item create. Needs converting to
+  a dropdown in Books, then re-mapping.
+
+**Value-label mismatches — resolved:**
+- `cf_surface_treatment_g` "Overlay Wleding " → renamed to "Overlay Welding" in Books
+  (option not in use); app value trimmed to match. `cf_design_type` + `cf_size` options
+  are in use (locked), so their 4 mismatches (design case + "O -port"; size `DN10 `) are
+  handled by the push-time normalizer instead. Connection Type + Drilling matched already.
+
+**Open (Books master-data change — MSUN admin):**
+- Convert `cf_valve_type` lookup → dropdown in Books; then map Valve Type (`...82007`).
+- Verify `track_serial_number` + serial tracking enabled on a first live push.
+
+---
+
 ## CR-026 — Property value as a standalone Zoho Books item (2026-08-11) — 🚧 in progress
 
 **Requested:** some property values *are* real inventory items in Zoho Books. When
@@ -58,10 +108,26 @@ easy-to-scan track of the linked values. (This is the enabling slice of the
   /property-values`; a Books failure never fails the value save (returns a
   `zohoWarning`). New `GET /property-values/linked` returns linked values with
   property + industry names.
-- **Frontend** — `ValForm` gets an "Also create as an item in Zoho Books"
-  checkbox + a "✓ In Books" badge when already linked. New read-only
-  **Books items** tab (`BooksLinkedValuesPage`, `/sku/books-items`) lists every
-  linked value, reusing the standard record-grid (GridFooter, industry filter).
+- **Frontend** — a read-only **Books items** tab (`BooksLinkedValuesPage`,
+  `/sku/books-items`) lists every linked value, reusing the standard record-grid
+  (GridFooter, industry filter).
+- **Gate moved to the property (follow-up, 2026-08-11)** — not all properties are
+  Books items, so the per-value checkbox was replaced by a **property-level gate**
+  `Property.createValuesAsItems` (added to `BOOL_COLS`). PropForm shows "Values are
+  Zoho Books items"; when on, **all** of that property's values sync as items and
+  turning it on **backfills** existing values (`backfillPropertyItems`, best-effort).
+  Un-flagged properties never create items. Value `POST`/`PUT` now gate on the parent
+  property flag (`propertyMakesItems`) instead of `createAsItem`. Property list rows
+  show a green `→ BOOKS` chip. `PropertyValue.createAsItem` is retained but unused.
+
+- **Stale-link self-heal (bug fix, 2026-08-12)** — values (and SKU items) whose
+  `zohoItemId` pointed at an item since **deleted in Books** made every push
+  "succeed" while nothing appeared in Books: dedupe step (a) tried `updateItem`
+  on the dead id, Books answered code 2006 (`GET` → 1002), and the best-effort
+  wrapper swallowed it. Now `push.js` treats 1002/2006 as "gone": the dead link
+  is cleared and the push falls through to re-create + re-link; a twin's borrowed
+  id (step b) is verified with `getItem` first for the same reason. Re-saving a
+  flagged property re-runs the backfill and heals its values.
 
 **Not done (deliberately):** un-ticking the box does **not** delete the Books
 item. The reverse item-lookup *picker* during generation (item 1 proper) is still

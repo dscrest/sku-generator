@@ -105,9 +105,15 @@ pins `req.orgId` from the user's ZohoToken.
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/api/properties/:id/values` | Values of a property (ordered by `displayValue`) |
-| POST | `/api/property-values` | Create. Requires `displayValue, name, sku, propertyId` |
-| PUT | `/api/property-values/:id` | Partial update |
+| GET | `/api/property-values/linked` | Values with a `zohoItemId`, plus property/industry names — the "Books items" tracking grid (CR-026) |
+| POST | `/api/property-values` | Create. Requires `displayValue, name, sku, propertyId`. `createAsItem:true` best-effort creates a name-only Books item + stores `zohoItemId` (CR-026) |
+| PUT | `/api/property-values/:id` | Partial update; toggling `createAsItem` true best-effort creates the Books item |
 | DELETE | `/api/property-values/:id` | Delete |
+
+> **Clubbing (CR-025):** properties sharing a non-empty `Property.clubKey`
+> concatenate their SKU codes with no separator into one segment; `POST
+> /api/sku/generate` groups by `clubKey`, joining within a club with `""` and
+> between segments with the industry separator.
 
 ### SKU generation — `routes/sku.js` (mounted `/api/sku`)
 | Method | Path | Purpose |
@@ -260,6 +266,7 @@ list+generator page — CR-014); default landing is `/sku/industries`.
 | `/sku/industries` | `IndustriesPage` | Manage industries |
 | `/sku/industries/:id/properties` | `PropertyManagerPage` | Manage one industry's properties + values (incl. Books custom-field mapping) |
 | `/sku/properties` | `PropertiesPage` | All org properties in one grid, filterable by industry/type/required |
+| `/sku/books-items` | `BooksLinkedValuesPage` | The "Books items" tab: read-only grid of property values also created as standalone Zoho Books items (CR-026), filterable by industry |
 | `/wo` | `WorkOrderListPage` | Work order grid + "new from sales order" flow (tick the FG lines, BOMs seed from Zoho) |
 | `/wo/:id` | `WorkOrderPage` | Zoho-Books-style split view (CR-018): left rail of all work orders, right detail with toolbar (Edit modal · Approve ▾ two-level dropdown · status actions · ⋯ Print PDF / Delete) and sub-tabs **Details** (the A–I Materials grid), Approvals, History |
 | `/wo/bom` | `WorkOrderBomPage` | Global BOM page: grid of WOs (FGs, Rev, BOM date; BOMs first) → row drills into `BomTab` (upload + coloured diff + revisions) |

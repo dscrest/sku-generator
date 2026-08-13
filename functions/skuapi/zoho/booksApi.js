@@ -1,6 +1,58 @@
 "use strict";
 const { getAccessToken, getOrgId, dcHosts } = require("./auth");
 
+// Finished Goods inventory account id, resolved per Books org (account named
+// "Finished Goods", type "stock") and cached — the id differs per org and the app
+// is multi-tenant, so a single env value can't serve every connected org.
+// ponytail: in-memory cache, warm-instance only; a cold start re-fetches once.
+const _fgAccountCache = new Map(); // orgId -> account_id | null
+async function getFinishedGoodsAccountId(catalyst) {
+  const orgId = await getOrgId(catalyst);
+  if (_fgAccountCache.has(orgId)) return _fgAccountCache.get(orgId);
+  const data = await apiRequest(catalyst, "GET", "/chartofaccounts");
+  const fg = (data.chartofaccounts || []).find(
+    (a) => a.account_type === "stock" && String(a.account_name || "").trim().toLowerCase() === "finished goods",
+  );
+  const id = fg ? String(fg.account_id) : null;
+  _fgAccountCache.set(orgId, id);
+  return id;
+}
+
+// api_name -> [option label] for item dropdown custom fields, cached per org.
+const _itemCfOptionsCache = new Map(); // orgId -> Map(api_name -> string[])
+async function getItemCfOptions(catalyst) {
+  const orgId = await getOrgId(catalyst);
+  if (_itemCfOptionsCache.has(orgId)) return _itemCfOptionsCache.get(orgId);
+  const data = await apiRequest(catalyst, "GET", "/settings/fields?entity=item");
+  const fields = data.fields || data.customfields || [];
+  const map = new Map();
+  for (const f of fields) {
+    if (f.api_name && Array.isArray(f.values) && f.values.length) {
+      map.set(f.api_name, f.values.map((v) => v.name).filter(Boolean));
+    }
+  }
+  _itemCfOptionsCache.set(orgId, map);
+  return map;
+}
+
+// Books rejects a dropdown value that isn't byte-identical to an option, and options
+// already used by transactions can't be renamed to match — so map each pushed value
+// to the exact option label, matched loosely (case + all whitespace ignored). This
+// keeps app data clean while absorbing Books' label quirks (typos, stray spaces).
+// Unmatched or ambiguous values pass through unchanged so Books surfaces a real error
+// rather than us silently sending the wrong option.
+const _loose = (s) => String(s).toLowerCase().replace(/\s+/g, "");
+async function normalizeCustomFields(catalyst, customFields) {
+  if (!customFields || !customFields.length) return customFields;
+  const options = await getItemCfOptions(catalyst);
+  return customFields.map((cf) => {
+    const opts = options.get(cf.api_name);
+    if (!opts || opts.includes(cf.value)) return cf; // non-dropdown, or already exact
+    const hit = opts.filter((o) => _loose(o) === _loose(cf.value));
+    return hit.length === 1 ? { ...cf, value: hit[0] } : cf;
+  });
+}
+
 // service: "books" (v3) | "inventory" (v1) — both APIs share auth, org param
 // and the { code, message } response envelope.
 async function apiRequest(catalyst, method, path, body, service = "books") {
@@ -26,29 +78,51 @@ async function apiRequest(catalyst, method, path, body, service = "books") {
   return data;
 }
 
+// §3 constants (field-mapping spec). Books custom-field *default values* only fire on
+// UI creation, not API create, so we push these explicitly. Values must equal the
+// dropdown option labels exactly ("In-House", not "In-house").
+const ITEM_DEFAULT_CFS = [
+  { api_name: "cf_item_type", value: "Finished Goods" },
+  { api_name: "cf_item_criticality", value: "Critical" },
+  { api_name: "cf_item_source", value: "In-House Manufacturing" },
+];
+
 // customFields: [{ api_name, value }] — property values destined for Books item custom fields.
 // The generated property breakdown goes into both description boxes Books shows on
 // an item: `description` (Sales Information) and `purchase_description` (Purchase).
+// Field-mapping spec defaults: §1 Units=Pcs, §2 Inventory Tracking (serial + Finished
+// Goods + FIFO), §3 constants (ITEM_DEFAULT_CFS), §4 params ride in `customFields`.
+// Tracking method + inventory account are immutable once the item has transactions,
+// so they're only set here (create), never in updateItem.
+// ponytail: serial key is `track_serial_number` per Books v3; verify against the org
+// on first live push and adjust if the response omits it.
 async function createItem(catalyst, name, sku, description, customFields) {
+  const inventoryAccountId = await getFinishedGoodsAccountId(catalyst);
+  const cfs = await normalizeCustomFields(catalyst, [...ITEM_DEFAULT_CFS, ...(customFields || [])]);
   const data = await apiRequest(catalyst, "POST", "/items", {
     name,
     sku,
     description: description || undefined,
     purchase_description: description || undefined,
     item_type: "inventory",
+    product_type: "goods",
+    unit: "pcs",
+    track_serial_number: true,
+    inventory_valuation_method: "fifo",
+    inventory_account_id: inventoryAccountId || undefined,
     rate: 0,
-    custom_fields: customFields && customFields.length ? customFields : undefined,
+    custom_fields: cfs,
   });
   return data.item;
 }
 
 async function updateItem(catalyst, zohoItemId, name, sku, description, customFields) {
-  const body = { name, sku };
+  const body = { name, sku, unit: "pcs" };
   if (description !== undefined) {
     body.description = description;
     body.purchase_description = description;
   }
-  if (customFields && customFields.length) body.custom_fields = customFields;
+  if (customFields && customFields.length) body.custom_fields = await normalizeCustomFields(catalyst, customFields);
   const data = await apiRequest(catalyst, "PUT", `/items/${zohoItemId}`, body);
   return data.item;
 }
@@ -65,6 +139,16 @@ async function listItems(catalyst) {
     page++;
   }
   return items;
+}
+
+// Find an existing Books item by exact (case-insensitive) name — used to dedupe
+// before creating a property value as a standalone item. Books `search_text`
+// matches broadly, so we filter down to an exact name match.
+async function findItemByName(catalyst, name) {
+  if (!name) return null;
+  const data = await apiRequest(catalyst, "GET", `/items?search_text=${encodeURIComponent(name)}&per_page=200`);
+  const wanted = String(name).trim().toLowerCase();
+  return (data.items || []).find((i) => String(i.name || "").trim().toLowerCase() === wanted) || null;
 }
 
 // Item detail — the list endpoint omits custom_fields, so import fetches per-item.
@@ -131,7 +215,11 @@ async function listVendors(catalyst) {
     if (!data.page_context || !data.page_context.has_more_page) break;
     page++;
   }
-  return vendors.map((v) => ({ id: String(v.contact_id), name: v.contact_name, status: v.status }));
+  // Only active vendors: an inactive contact is rejected at PO time with the
+  // misleading "The Customer is inactive" (code 3021), so never offer one.
+  return vendors
+    .filter((v) => v.status === "active")
+    .map((v) => ({ id: String(v.contact_id), name: v.contact_name, status: v.status }));
 }
 
 /**
@@ -150,16 +238,18 @@ async function createPurchaseOrder(catalyst, { vendorId, date, referenceNumber, 
     // Draft: the org's own approval process takes over from here (§6.6.6).
     status: "draft",
     notes: notes || undefined,
-    // Books with Locations enabled takes the delivery location at the header as
-    // location_id; our warehouse settings are location ids (see listWarehouses /
-    // createTransferOrder). Sending warehouse_id here is rejected as Invalid
-    // Element (code 8) on Locations orgs.
-    location_id: warehouseId ? String(warehouseId) : undefined,
+    // This Books org tracks locations at Item level, so the delivery location
+    // rides on each line item as location_id — a header location_id is rejected
+    // ("cannot associate an Item-Level location at a transaction level", code
+    // 27520). Our warehouse settings are location ids (see listWarehouses /
+    // createTransferOrder). ponytail: item-level only; if a transaction-level
+    // org ever connects, move location_id back to the header for it.
     line_items: lines.map((l) => ({
       item_id: String(l.rmItemId),
       quantity: Number(l.qty) || 0,
       rate: l.rate === undefined || l.rate === null ? undefined : Number(l.rate),
       description: l.description || undefined,
+      location_id: warehouseId ? String(warehouseId) : undefined,
     })),
   });
   return data.purchaseorder;
@@ -196,6 +286,7 @@ module.exports = {
   updateItem,
   getOrganizations,
   listItems,
+  findItemByName,
   getItem,
   listItemCustomFields,
   getSalesOrder,

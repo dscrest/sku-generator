@@ -5,6 +5,7 @@ import GlobalSearch from './components/GlobalSearch.jsx';
 import IndustriesPage from './pages/IndustriesPage.jsx';
 import PropertyManagerPage from './pages/PropertyManagerPage.jsx';
 import PropertiesPage from './pages/PropertiesPage.jsx';
+import BooksLinkedValuesPage from './pages/BooksLinkedValuesPage.jsx';
 import SKUGeneratorPage from './pages/SKUGeneratorPage.jsx';
 import SKUItemsPage from './pages/SKUItemsPage.jsx';
 import ZohoConnectPage from './pages/ZohoConnectPage.jsx';
@@ -220,6 +221,7 @@ const NAV_LINKS = [
 const SKU_TABS = [
   { to: '/sku/industries', label: 'Industries', end: true },
   { to: '/sku/properties', label: 'Properties' },
+  { to: '/sku/books-items', label: 'Books items' },
   { to: '/sku/items', label: 'SKU Generator' },
 ];
 
@@ -275,6 +277,7 @@ function SkuLayout() {
           <Route path="industries" element={<IndustriesPage />} />
           <Route path="industries/:id/properties" element={<PropertyManagerPage />} />
           <Route path="properties" element={<PropertiesPage />} />
+          <Route path="books-items" element={<BooksLinkedValuesPage />} />
           <Route path="*" element={<Navigate to="industries" replace />} />
         </Routes>
       </div>

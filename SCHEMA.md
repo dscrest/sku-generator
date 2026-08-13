@@ -92,6 +92,8 @@ A configurable attribute of an industry contributing one segment to the SKU.
 | `includeInName` | bool? | Value contributes to the item name. If **no** property of the industry is true, every filled property is used (pre-CR-009 behaviour) — see `nameFilter()` in `store.js` |
 | `industryId` | string FK | Owning Industry |
 | `zohoCfApiName` | string? | Zoho Books custom-field `api_name`. If set, this property's value syncs into that Books custom field on push and is read back on import |
+| `clubKey` | string? | **Clubbing (CR-025).** Properties of the same industry sharing a non-empty `clubKey` concatenate their SKU codes with **no** separator into one segment (e.g. Body + Gland). Null = standalone segment. The industry separator still applies between segments; a club renders at its first member's `skuPosition` |
+| `createValuesAsItems` | bool? | **CR-026 gate.** When true, every value of this property is created/synced to Zoho Books as an item (best-effort). Turning it on backfills existing values. Un-flagged properties never create items — replaces the per-value `PropertyValue.createAsItem` toggle |
 | `orgId` | string | Tenant key |
 
 ### PropertyValue
@@ -104,6 +106,8 @@ Allowed options for a `List`-type property.
 | `sku` | string | Code fragment contributed to the SKU string |
 | `description` | string? | Description fragment |
 | `propertyId` | string FK | Owning Property |
+| `createAsItem` | bool? | **CR-026 (superseded).** Old per-value "create as Books item" toggle; the gate moved to `Property.createValuesAsItems`. Column kept, no longer read |
+| `zohoItemId` | string? | **CR-026.** Linked Books `item_id` once created; presence = already linked (update instead of re-create) and drives the "Books items" tracking grid |
 | `orgId` | string | Tenant key |
 
 > Import can **create** PropertyValue rows: a Books custom-field value that matches
@@ -391,6 +395,9 @@ Newest first. One row per applied schema change; link the CR that requested it.
 
 | Date | CR | Change | Applied |
 |------|----|--------|---------|
+| 2026-08-11 | [CR-026](CHANGES.md) | `Property.createValuesAsItems` (boolean, nullable, default false) — property-level gate: all of the property's values sync to Books as items (replaces per-value `createAsItem`) | ✅ live |
+| 2026-08-11 | [CR-026](CHANGES.md) | `PropertyValue.createAsItem` (boolean, nullable, default false) + `PropertyValue.zohoItemId` (varchar 64, nullable) — create a value as a standalone Books item + the link | ✅ live |
+| 2026-08-11 | [CR-025](CHANGES.md) | `Property.clubKey` (varchar 255, nullable) — properties sharing a club concatenate SKU codes with no separator | ✅ live |
 | 2026-08-06 | [CR-023](CHANGES.md) | `PurchaseRequestLine.workOrderId` (varchar 50, nullable) — WO a line was raised for; consolidated PRs leave `PurchaseRequest.workOrderId`/`salesOrderId` empty. No backfill (read falls back to parent PR) | ✅ live |
 | 2026-07-23 | [CR-013](CHANGES.md) | 13 Work Order tables: `OrgSetting`, `WorkOrder`, `WorkOrderFG`, `WorkOrderLine`, `BomRevision`, `MaterialTxn`, `MaterialTxnLine`, `PurchaseRequest`, `PurchaseRequestLine`, `CompositeItemCache`, `Approval`, `AlertLog`, `ActivityLog` | ✅ live |
 | 2026-07-23 | [CR-013](CHANGES.md) | `ReservationLine` + `workOrderId`, `workOrderFgId` (string), `requestedPoQty` (number) | ✅ live |
