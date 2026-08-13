@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MSUN Valve — Estimate Prototype</title>
+<style>
+  :root {
+    --ink: #1a1a1a; --line: #000; --muted: #555;
+    --brand: #e8501e; --accent-bg: #fff7d6;
+    --font: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #eceef1; color: var(--ink); font-family: var(--font); }
+
+  /* --- toolbar (screen only) --- */
+  .toolbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 16px; background: #fff; border-bottom: 1px solid #d5d9de;
+  }
+  .toolbar .spacer { flex: 1; }
+  .toolbar button {
+    font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 6px;
+    border: 1px solid #c7ccd2; background: #f6f7f9; color: #333; cursor: pointer;
+  }
+  .toolbar button:hover { background: #eef0f3; }
+  .toolbar button.active { background: var(--brand); border-color: var(--brand); color: #fff; }
+  .toolbar .lbl { font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+
+  /* --- the printable sheet (A4-ish) --- */
+  .sheet {
+    background: #fff; width: 210mm; max-width: 100%; margin: 18px auto;
+    padding: 12mm 10mm; box-shadow: 0 2px 14px rgba(0,0,0,.12);
+    font-size: 11px; line-height: 1.35;
+  }
+  .banner { font-size: 34px; font-weight: 800; font-style: italic; color: var(--brand); letter-spacing: -1px; text-align: center; }
+  .proposal-title { text-align: center; font-weight: 700; text-decoration: underline; margin: 4px 0 8px; font-size: 14px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  .hdr td { border: 1px solid var(--line); padding: 4px 7px; vertical-align: top; }
+  .hdr .to-name { font-size: 15px; font-weight: 700; }
+  .hdr .offer-no { color: var(--brand); font-weight: 700; }
+  .hdr .lbl-cell { font-weight: 700; text-align: center; }
+
+  .grid { margin-top: 6px; }
+  .grid th, .grid td { border: 1px solid var(--line); padding: 3px 6px; vertical-align: top; }
+  .grid th { background: #f1f1f1; font-size: 10px; text-transform: uppercase; }
+  .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .ctr { text-align: center; white-space: nowrap; }
+  .design-row td { background: var(--accent-bg); color: var(--brand); font-weight: 700; text-transform: uppercase; text-align: center; }
+
+  .item-title { font-weight: 700; text-decoration: underline; }
+  .specs { list-style: none; margin: 4px 0 0; padding: 0; }
+  .specs li { line-height: 1.5; }
+  .specs .k { font-weight: 700; }
+
+  .totals { margin-top: 6px; margin-left: auto; width: 55%; }
+  .totals td { border: 1px solid var(--line); padding: 4px 8px; }
+  .totals .t-lbl { font-weight: 700; text-align: right; }
+  .totals .t-final { font-weight: 800; }
+
+  .footer-note { margin-top: 6px; text-align: center; font-weight: 700; letter-spacing: .05em; }
+
+  @media print {
+    body { background: #fff; }
+    .toolbar { display: none; }
+    .sheet { box-shadow: none; margin: 0; width: auto; padding: 0; }
+    @page { size: A4; margin: 12mm; }
+  }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <span class="lbl">Template</span>
+    <button id="t1" class="active" onclick="setTemplate(1)">1 · A–F (priced)</button>
+    <button id="t2" onclick="setTemplate(2)">2 · A–D (technical)</button>
+    <span class="spacer"></span>
+    <button onclick="window.print()">🖨 Print / Save PDF</button>
+  </div>
+
+  <div class="sheet" id="sheet"></div>
+
+<script>
+// ── Estimate #1 data (MSUN Valve → Phoenix Valsteer). Shaped like a future
+// EstimateHeader + EstimateLine model so the structure is obvious. ────────────
+const ESTIMATE = {
+  header: {
+    company: "MSUN VALVE PVT. LTD.",
+    title: "Techno Commercial Proposal",
+    to: {
+      name: "PHOENIX VALSTEER PVT. LTD.",
+      contact: "Thulaseedharan T K | CEO",
+      phone: "+91-9825060757",
+      web: "www.phoenixvalsteer.com",
+    },
+    offerNo: "MVPL-01344/NR/BK/25-26",
+    date: "05-01-2026",
+    discountPct: 30,
+  },
+  items: [{
+    sr: 1,
+    title: "SS 304 - KNIFE EDGE GATE VALVE - MANUAL",
+    specs: [
+      ["MAKE", "MARUTI"], ["BRAND", "MSUN"], ["MODEL", "MI - MD"],
+      ["CASTING", "SINGLE PIECE"], ["", "UNI - DIRECTIONAL"],
+      ["DESIGN", "WAFER SEMI LUG / FULL FLANGE TYPE"],
+      ["BODY", "ASTM A351 Gr.CF8"], ["FACE TO FACE", "MSS - SP - 81"],
+      ["GATE", "SS 304"], ["SEAT", "INTEGRAL METAL (SS 304)"],
+      ["GLAND FOLLOWER", "WCB"], ["GLAND PACKING", "PTFE IMPREG"],
+      ["STEM", "SS 304"], ["STEM NUT", "FORGED BRASS"], ["STEM TYPE", "RISING"],
+      ["YOKE", "MILD STEEL"], ["FASTNERS", "HIGH - TENSILE"], ["HANDWHEEL", "S.G IRON"],
+      ["DRILLING", "ANSI B16.5 150#"], ["OPERATION", "MANUAL OPERATED"],
+      ["MFG.STD", "MSS - SP - 81"], ["TESTING STD", "MSS - SP - 151"],
+      ["BODY TEST", "10 BAR (BEFORE ASSEMBLY) 4\" TO 16\""],
+      ["BODY TEST", "5 BAR (BEFORE ASSEMBLY) 20\" TO 24\""],
+      ["SEAT TEST", "N/A"],
+    ],
+    groups: [
+      { design: "WAFER SEMI LUG TYPE", rows: [
+        { size: '4"', mm: "100MM", qty: 4, rate: 10650 },
+        { size: '6"', mm: "150MM", qty: 4, rate: 15750 },
+        { size: '8"', mm: "200MM", qty: 4, rate: 23600 },
+        { size: '10"', mm: "250MM", qty: 4, rate: 35200 },
+        { size: '12"', mm: "300MM", qty: 4, rate: 44250 },
+        { size: '16"', mm: "400MM", qty: 2, rate: 89500 },
+      ]},
+      { design: "FULL FLANGE TYPE", rows: [
+        { size: '20"', mm: "450MM", qty: 2, rate: 185500 },
+        { size: '24"', mm: "500MM", qty: 1, rate: 245000 },
+      ]},
+    ],
+  }],
+};
+
+// ── Money / totals (Indian lakh grouping) ────────────────────────────────────
+const inr = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const allRows = ESTIMATE.items.flatMap(it => it.groups.flatMap(g => g.rows));
+const totalA = allRows.reduce((s, r) => s + r.qty * r.rate, 0);
+const totalQty = allRows.reduce((s, r) => s + r.qty, 0);
+const disc = totalA * ESTIMATE.header.discountPct / 100;
+const net = totalA - disc;
+
+// ── Render ────────────────────────────────────────────────────────────────────
+let priced = true;               // Template 1 = priced (A–F), Template 2 = A–D
+const cols = () => priced ? 6 : 4;
+
+function render() {
+  const h = ESTIMATE.header;
+  const el = document.getElementById('sheet');
+  const it = ESTIMATE.items[0]; // prototype: single line item
+
+  const headTh = `
+    <th style="width:6%">A<br>SR. NO</th>
+    <th style="width:${priced ? 40 : 60}%">B<br>DESCRIPTION OF GOODS</th>
+    <th style="width:12%">C<br>SIZE (INCH)</th>
+    <th style="width:9%">D<br>QTY (NOS)</th>
+    ${priced ? '<th style="width:16%">E<br>LIST PRICE (PER PCS)</th><th style="width:17%">F<br>TOTAL AMOUNT</th>' : ''}`;
+
+  const specsHtml = `<div class="item-title">${it.title}</div>
+    <ul class="specs">${it.specs.map(([k, v]) =>
+      `<li>${k ? `<span class="k">${k}:-</span> ` : ''}${v}</li>`).join('')}</ul>`;
+
+  // Body: first data row carries Sr.No + the full description (rowspan over every size row).
+  const bodyRowCount = it.groups.reduce((n, g) => n + g.rows.length + 1, 0); // +1 design header per group
+  let bodyRows = '';
+  let first = true;
+  for (const g of it.groups) {
+    bodyRows += `<tr class="design-row"><td colspan="${priced ? 4 : 2}">DESIGN:- ${g.design}</td></tr>`;
+    for (const r of g.rows) {
+      const total = r.qty * r.rate;
+      bodyRows += '<tr>';
+      if (first) {
+        bodyRows += `<td class="ctr" rowspan="${bodyRowCount}">${it.sr}</td>`;
+        bodyRows += `<td rowspan="${bodyRowCount}">${specsHtml}</td>`;
+        first = false;
+      }
+      bodyRows += `<td class="ctr">${r.size}<br>${r.mm}</td><td class="ctr">${r.qty}</td>`;
+      if (priced) bodyRows += `<td class="num">${inr.format(r.rate)}</td><td class="num">${inr.format(total)}</td>`;
+      bodyRows += '</tr>';
+    }
+  }
+
+  const totalsHtml = priced ? `
+    <table class="totals">
+      <tr><td class="t-lbl">TOTAL - A</td><td class="num">${inr.format(totalA)}</td></tr>
+      <tr><td class="t-lbl">DISC @ ${h.discountPct}%</td><td class="num">${inr.format(disc)}</td></tr>
+      <tr><td class="t-lbl t-final">TOTAL</td><td class="num t-final">${inr.format(net)}</td></tr>
+    </table>` : `
+    <table class="totals">
+      <tr><td class="t-lbl t-final">TOTAL QTY</td><td class="num t-final">${totalQty}</td></tr>
+    </table>`;
+
+  el.innerHTML = `
+    <div class="banner">MSUN VALVE PVT. LTD.</div>
+    <div class="proposal-title">${h.title}</div>
+    <table class="hdr">
+      <tr>
+        <td style="width:58%">
+          <div>To,</div>
+          <div class="to-name">${h.to.name}</div>
+          <div>${h.to.contact}</div>
+          <div>${h.to.phone} | ${h.to.web}</div>
+        </td>
+        <td style="width:42%">
+          <div class="lbl-cell">Our Offer No</div>
+          <div class="offer-no ctr">${h.offerNo}</div>
+          <div class="lbl-cell" style="margin-top:4px">Offer Preparation Date</div>
+          <div class="ctr">${h.date}</div>
+        </td>
+      </tr>
+    </table>
+
+    <table class="grid">
+      <thead><tr>${headTh}</tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+
+    ${totalsHtml}
+    <div class="footer-note">PAGE 01</div>`;
+}
+
+function setTemplate(n) {
+  priced = (n === 1);
+  document.getElementById('t1').classList.toggle('active', priced);
+  document.getElementById('t2').classList.toggle('active', !priced);
+  render();
+}
+
+render();
+
+// ── Self-check: computed totals must match the printed PDF (ponytail check) ────
+console.assert(Math.round(totalA) === 1312800, 'Total-A drift:', totalA);
+console.assert(Math.round(disc)   === 393840,  'Discount drift:', disc);
+console.assert(Math.round(net)    === 918960,  'Net total drift:', net);
+console.assert(totalQty === 25, 'Qty drift:', totalQty);
+</script>
+</body>
+</html>
