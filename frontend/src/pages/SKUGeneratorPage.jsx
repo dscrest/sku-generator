@@ -201,6 +201,19 @@ export default function SKUGeneratorPage() {
 
   const activeProps = properties.filter(isActive);
 
+  // Group props into SKU segments: same non-empty clubKey = one chip whose codes
+  // concatenate with no separator (mirrors the server assembly in sku.js).
+  function buildSegments(props) {
+    const byKey = new Map(); const segs = [];
+    for (const p of props) {
+      const key = p.clubKey || '__' + p.id;
+      let s = byKey.get(key);
+      if (!s) { s = []; byKey.set(key, s); segs.push(s); }
+      s.push(p);
+    }
+    return segs;
+  }
+
   const filledCount = activeProps.filter(p => selections[p.id] !== undefined && selections[p.id] !== '').length;
   const totalCount = activeProps.length;
   const progress = totalCount > 0 ? Math.round((filledCount / totalCount) * 100) : 0;
@@ -304,21 +317,24 @@ export default function SKUGeneratorPage() {
                     <span style={{ color: T.ink4, fontSize: 22, fontWeight: 400, fontFamily: T.sans }}>Add properties to generate a SKU</span>
                   ) : activeProps.length === 0 ? (
                     <span style={{ color: T.ink4, fontSize: 22, fontWeight: 400, fontFamily: T.sans }}>No properties in SKU generation</span>
-                  ) : activeProps.map(prop => {
-                    const code = getSegCode(prop);
+                  ) : buildSegments(activeProps).map((seg, i) => {
+                    // A clubbed segment concatenates its members' codes; '?' marks
+                    // an unfilled member so the chip still shows its shape.
+                    const filled = seg.some(p => getSegCode(p));
+                    const code = seg.map(p => getSegCode(p) || '?').join('');
                     return (
                       <span
-                        key={prop.id}
-                        title={prop.caption}
+                        key={seg[0].id + '-' + i}
+                        title={seg.map(p => p.caption).join(' + ')}
                         style={{
                           padding: '2px 8px', borderRadius: 8,
-                          border: `1.5px ${code ? 'solid' : 'dashed'} ${code ? 'transparent' : T.borderStrong}`,
-                          background: code ? 'transparent' : T.bgSubtle,
-                          color: code ? T.ink : T.ink4,
+                          border: `1.5px ${filled ? 'solid' : 'dashed'} ${filled ? 'transparent' : T.borderStrong}`,
+                          background: filled ? 'transparent' : T.bgSubtle,
+                          color: filled ? T.ink : T.ink4,
                           userSelect: 'none',
                         }}
                       >
-                        {code || '?'}
+                        {code}
                       </span>
                     );
                   })}

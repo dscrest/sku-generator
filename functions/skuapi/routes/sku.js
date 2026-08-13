@@ -28,7 +28,18 @@ router.post("/generate", async (req, res) => {
 
     const inName = nameFilter(properties);
 
-    const skuParts = [];
+    // Clubbed properties (same non-empty clubKey) concatenate their codes with
+    // NO separator into one segment; unclubbed props are each their own segment.
+    // Segments are built in first-encounter (skuPosition) order, then joined by
+    // the industry separator. Name/description stay one entry per property.
+    const segByKey = new Map();
+    const segments = [];
+    const pushCode = (prop, code) => {
+      const key = prop.clubKey || "__" + prop.id;
+      let seg = segByKey.get(key);
+      if (!seg) { seg = []; segByKey.set(key, seg); segments.push(seg); }
+      seg.push(code);
+    };
     const nameParts = [];
     const descParts = [];
     const missingRequired = [];
@@ -47,7 +58,7 @@ router.post("/generate", async (req, res) => {
           return res.status(400).json({ error: `${prop.caption} must be >= ${prop.rangeMin}` });
         if (prop.rangeMax !== null && num > prop.rangeMax)
           return res.status(400).json({ error: `${prop.caption} must be <= ${prop.rangeMax}` });
-        skuParts.push(String(rawValue));
+        pushCode(prop, String(rawValue));
         if (inName(prop)) nameParts.push(String(rawValue));
         descParts.push(`${prop.caption}: ${rawValue}${prop.unit ? " " + prop.unit : ""}`);
       } else {
@@ -57,14 +68,14 @@ router.post("/generate", async (req, res) => {
         );
         if (!pvs.length) return res.status(404).json({ error: `Value ${rawValue} not found` });
         const pv = out(pvs[0]);
-        skuParts.push(pv.sku);
+        pushCode(prop, pv.sku);
         if (inName(prop)) nameParts.push(pv.name);
         descParts.push(`${prop.caption}: ${pv.displayValue || pv.name}${prop.unit ? " " + prop.unit : ""}`);
       }
     }
 
     const sep = industry.skuSeparator || "";
-    const sku = skuParts.join(sep);
+    const sku = segments.map((s) => s.join("")).join(sep);
     res.json({
       sku,
       name: nameParts.join(" "),
