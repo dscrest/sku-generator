@@ -10,9 +10,11 @@
 const express = require("express");
 const { zStr, idOk } = require("../store");
 const { dsDate } = require("../zoho/auth");
-const { getSalesOrder, listSalesOrders, listVendors } = require("../zoho/booksApi");
+const {
+  getSalesOrder, listSalesOrders, listVendors, findItemByName, findItemBySku, createComponentItem,
+} = require("../zoho/booksApi");
 const { getUserById } = require("../session");
-const { updateCompositeItem } = require("../zoho/inventoryApi");
+const { updateCompositeItem, listCompositeItems, createCompositeItem } = require("../zoho/inventoryApi");
 const {
   SETTING_KEYS, settings, setSetting, nextNumber, logActivity, byOrg, inList,
 } = require("../workorder/store");
@@ -112,6 +114,148 @@ router.get("/so/:soId", ok(async (req, res) => {
 }));
 
 router.get("/vendors", ok(async (req, res) => res.json(await listVendors(req.catalyst))));
+
+// ---- composite-item BOM (CR-028) ------------------------------------------
+// The global BOM page works on Zoho composite items directly — no work-order
+// framing, no frozen lines, no revision/guard. Static paths — must stay above
+// the /:id handlers.
+
+// Resolve uploaded rows against the composite's own components first, then the
+// wider Books catalog. Rows found nowhere land in `missing`.
+async function resolveRows(catalyst, rows, known) {
+  const matched = bom.matchUpload(rows, known, 1);
+  const incoming = [...matched.lines];
+  const missing = [];
+  for (const row of matched.unmatched) {
+    const item = (await findItemBySku(catalyst, row.sku)) || (await findItemByName(catalyst, row.name));
+    if (item) {
+      incoming.push({
+        rmItemId: String(item.item_id), rmName: item.name || row.name, rmSku: item.sku || row.sku,
+        uom: item.unit || "", perUnitQty: row.qty, requiredQty: row.qty, source: "excel",
+      });
+    } else {
+      missing.push(row);
+    }
+  }
+  return { incoming, missing };
+}
+
+router.get("/composites", ok(async (req, res) => {
+  const items = await listCompositeItems(req.catalyst);
+  res.json(items.map((c) => ({
+    id: String(c.composite_item_id), name: c.name, sku: c.sku || null, status: c.status,
+  })));
+}));
+
+/**
+ * Bulk import of a Zoho Books composite-items export, grouped client-side:
+ * groups = [{ name, sku, rows: [{ sku, name, qty }] }]. A group matching an
+ * existing composite (SKU first, then name) gets its mapped_items replaced by
+ * the sheet; unknown groups become new composites. Per-group errors don't
+ * abort the rest.
+ */
+router.post("/composites/import", ok(async (req, res) => {
+  const { groups, createMissing } = req.body || {};
+  if (!Array.isArray(groups) || !groups.length) { const e = new Error("Nothing to import"); e.status = 400; throw e; }
+  const existing = await listCompositeItems(req.catalyst);
+  const bySku = new Map(existing.filter((c) => c.sku).map((c) => [String(c.sku).trim().toLowerCase(), c]));
+  const byName = new Map(existing.map((c) => [String(c.name || "").trim().toLowerCase(), c]));
+  const results = [];
+  for (const g of groups) {
+    try {
+      const hit = (g.sku && bySku.get(String(g.sku).trim().toLowerCase()))
+        || byName.get(String(g.name || "").trim().toLowerCase());
+      const known = hit
+        ? bom.linesFromComposite((await bom.getComposite(req.catalyst, req.orgId, hit.composite_item_id, true)).mappedItems, 1)
+        : [];
+      const { incoming, missing } = await resolveRows(req.catalyst, g.rows, known);
+      const created = [];
+      if (missing.length) {
+        if (!createMissing) {
+          results.push({ name: g.name, status: "skipped", error: `no Books item for: ${missing.map((m) => m.name || m.sku).join(", ")}` });
+          continue;
+        }
+        for (const row of missing) {
+          const item = await createComponentItem(req.catalyst, row.name || row.sku, row.sku);
+          incoming.push({ rmItemId: String(item.item_id), perUnitQty: n(row.qty) });
+          created.push(item.name);
+        }
+      }
+      if (hit) {
+        await updateCompositeItem(req.catalyst, hit.composite_item_id, incoming);
+        await bom.refreshComposite(req.catalyst, req.orgId, hit.composite_item_id);
+        results.push({ name: g.name, status: "updated", created });
+      } else {
+        const comp = await createCompositeItem(req.catalyst, { name: g.name, sku: g.sku, mappedItems: incoming });
+        await bom.refreshComposite(req.catalyst, req.orgId, comp.composite_item_id);
+        results.push({ name: g.name, status: "created", created });
+      }
+    } catch (err) {
+      results.push({ name: g.name, status: "error", error: err.message });
+    }
+  }
+  await logActivity(req.catalyst, req.orgId, "CompositeItem", "bulk", "composite.import", req.userId, {
+    results: results.map((r) => `${r.name}: ${r.status}`),
+  });
+  res.json({ results });
+}));
+
+router.get("/composites/:itemId/bom", ok(async (req, res) => {
+  const comp = await bom.getComposite(req.catalyst, req.orgId, req.params.itemId, req.query.refresh === "1");
+  res.json({
+    id: String(req.params.itemId), name: comp.name, sku: comp.sku || null,
+    lines: bom.linesFromComposite(comp.mappedItems, 1),
+  });
+}));
+
+router.post("/composites/:itemId/bom/preview", ok(async (req, res) => {
+  const comp = await bom.getComposite(req.catalyst, req.orgId, req.params.itemId, false);
+  const current = bom.linesFromComposite(comp.mappedItems, 1);
+  const { incoming, missing } = await resolveRows(req.catalyst, req.body?.rows, current);
+  res.json({ ...bom.diffBom(current, incoming), missing });
+}));
+
+router.post("/composites/:itemId/bom/apply", ok(async (req, res) => {
+  const { lines, missing, createMissing } = req.body || {};
+  if (!Array.isArray(lines)) { const e = new Error("Nothing to apply"); e.status = 400; throw e; }
+  const keep = lines.filter((l) => l.diffStatus !== "removed");
+  const created = [];
+  if (createMissing) {
+    for (const row of missing || []) {
+      const item = await createComponentItem(req.catalyst, row.name || row.sku, row.sku);
+      keep.push({ rmItemId: String(item.item_id), perUnitQty: n(row.qty) });
+      created.push(item.name);
+    }
+  }
+  await updateCompositeItem(req.catalyst, req.params.itemId, keep);
+  await bom.refreshComposite(req.catalyst, req.orgId, req.params.itemId);
+  await logActivity(req.catalyst, req.orgId, "CompositeItem", req.params.itemId, "composite.bom.apply", req.userId, { created });
+  res.json({ updated: true, created });
+}));
+
+router.post("/composites", ok(async (req, res) => {
+  const { name, sku, rows, createMissing } = req.body || {};
+  if (!name) { const e = new Error("Name is required"); e.status = 400; throw e; }
+  const { incoming, missing } = await resolveRows(req.catalyst, rows, []);
+  const created = [];
+  if (missing.length) {
+    if (!createMissing) {
+      const e = new Error("Some rows match no Books item");
+      e.status = 400;
+      e.details = missing.map((m) => `${m.sku || m.name}: not found in Books`);
+      throw e;
+    }
+    for (const row of missing) {
+      const item = await createComponentItem(req.catalyst, row.name || row.sku, row.sku);
+      incoming.push({ rmItemId: String(item.item_id), perUnitQty: n(row.qty) });
+      created.push(item.name);
+    }
+  }
+  const comp = await createCompositeItem(req.catalyst, { name, sku, mappedItems: incoming });
+  await bom.refreshComposite(req.catalyst, req.orgId, comp.composite_item_id);
+  await logActivity(req.catalyst, req.orgId, "CompositeItem", comp.composite_item_id, "composite.create", req.userId, { name, created });
+  res.json({ id: String(comp.composite_item_id), name: comp.name, created });
+}));
 
 // Global Purchase page (CR-018). Static path — must stay above /:id.
 router.get("/purchase-requests", ok(async (req, res) => {

@@ -17,7 +17,7 @@ import WorkOrderListPage from './pages/WorkOrderListPage.jsx';
 import WorkOrderPage from './pages/WorkOrderPage.jsx';
 import WorkOrderSettingsPage from './pages/WorkOrderSettingsPage.jsx';
 import WorkOrderReportsPage from './pages/WorkOrderReportsPage.jsx';
-import WorkOrderBomPage from './pages/WorkOrderBomPage.jsx';
+import CompositeBomPage from './pages/CompositeBomPage.jsx';
 import WorkOrderPurchasePage from './pages/WorkOrderPurchasePage.jsx';
 
 const API = '/server/skuapi';
@@ -254,7 +254,7 @@ function WorkOrderLayout() {
       <div style={{ flex: 1, minHeight: 0 }}>
         <Routes>
           <Route index element={<WorkOrderListPage />} />
-          <Route path="bom" element={<WorkOrderBomPage />} />
+          <Route path="bom" element={<CompositeBomPage />} />
           <Route path="purchase" element={<WorkOrderPurchasePage />} />
           <Route path="reports" element={<WorkOrderReportsPage />} />
           <Route path="settings" element={<WorkOrderSettingsPage />} />

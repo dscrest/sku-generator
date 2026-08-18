@@ -48,12 +48,68 @@ function rowsFromMatrix(matrix) {
     .filter(r => (r.sku || r.name) && r.qty > 0);
 }
 
-// CSV / tab-separated, for a pasted selection or a "Save as CSV" export.
-function parseDelimited(text) {
+// CSV / tab-separated text → cell matrix, for a pasted selection or a CSV file.
+function matrixFromText(text) {
   const delim = text.includes('\t') ? '\t' : ',';
-  return rowsFromMatrix(
-    text.split(/\r?\n/).filter(Boolean).map(line => line.split(delim).map(c => c.replace(/^"|"$/g, '').trim())),
-  );
+  return text.split(/\r?\n/).filter(Boolean).map(line => line.split(delim).map(c => c.replace(/^"|"$/g, '').trim()));
+}
+
+function parseDelimited(text) {
+  return rowsFromMatrix(matrixFromText(text));
+}
+
+/**
+ * Zoho Books "composite items" export: one row per component, grouped by the
+ * composite (Composite Item Name / SKU) with Mapped Item Name + Mapped
+ * Quantity. Returns [{ name, sku, rows: [{ sku:'', name, qty }] }], or null if
+ * the sheet isn't that format (the export has no per-component SKU column).
+ */
+function parseBooksComposites(matrix) {
+  if (!matrix.length) return null;
+  const header = matrix[0].map(c => String(c ?? '').trim().toLowerCase());
+  const iName = header.indexOf('composite item name');
+  const iSku = header.indexOf('sku');
+  const iComp = header.indexOf('mapped item name');
+  const iQty = header.indexOf('mapped quantity');
+  if (iComp === -1 || iQty === -1) return null;
+  const groups = new Map();
+  for (const r of matrix.slice(1)) {
+    const name = iName >= 0 ? String(r[iName] ?? '').trim() : '';
+    const comp = String(r[iComp] ?? '').trim();
+    const qty = Number(String(r[iQty] ?? '').replace(/,/g, '')) || 0;
+    if (!name || !comp || qty <= 0) continue;
+    const sku = iSku >= 0 ? String(r[iSku] ?? '').trim() : '';
+    const key = `${name.toLowerCase()}|${sku.toLowerCase()}`;
+    if (!groups.has(key)) groups.set(key, { name, sku, rows: [] });
+    groups.get(key).rows.push({ sku: '', name: comp, qty });
+  }
+  return [...groups.values()];
+}
+
+function downloadCsv(filename, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Sample sheet for the per-WO import — same columns that parser expects.
+function downloadTemplate() {
+  downloadCsv('bom-template.csv', 'SKU,Name,Qty\nSH-1,Shaft,12\n');
+}
+
+// Customer-provided Zoho Books composite-items export sample — the format the
+// BOM page's import understands (grouped per composite, one row per component).
+const BOOKS_SAMPLE = `Composite Item ID,Composite Item Name,Sales Description,Selling Price,Sales Account,Product Type,Source,Reference ID,Last Sync Time,Status,Unit,SKU,UPC,EAN,ISBN,Part Number,Purchase Price,Purchase Account,Purchase Description,Inventory Account,Reorder Point,Preferred Vendor,Opening Stock,Opening Stock Value,Mapped Item Name,Mapped Quantity,Intra State Tax Name,Intra State Tax Rate,Intra State Tax Type,Inter State Tax Name,Inter State Tax Rate,Inter State Tax Type
+4000000002362,Laptop,,INR 162.00,Sales,none,1,,,Active,Pcs,L001,,,,,INR 125.00,Cost of Goods Sold,,Inventory Asset,,,0.00,INR 0.00,Notepad,1.000000,GST18,18,Group,IGST18,18,Simple
+4000000002362,Laptop,,INR 162.00,Sales,none,1,,,Active,Pcs,L001,,,,,INR 125.00,Cost of Goods Sold,,Inventory Asset,,,0.00,INR 0.00,KeyBoard,1.000000,GST18,18,Group,IGST18,18,Simple
+4000000002362,Laptop,,INR 162.00,Sales,none,1,,,Active,Pcs,L001,,,,,INR 125.00,Cost of Goods Sold,,Inventory Asset,,,0.00,INR 0.00,Mouse,1.000000,GST18,18,Group,IGST18,18,Simple
+4000000002362,Laptop,,INR 162.00,Sales,none,1,,,Active,Pcs,L001,,,,,INR 125.00,Cost of Goods Sold,,Inventory Asset,,,0.00,INR 0.00,Charger,2.000000,GST18,18,Group,IGST18,18,Simple
+4000000002380,Laptop Accessories ,,INR 60.00,Sales,none,1,,,Active,Pcs,L0002,,,,,INR 40.00,Cost of Goods Sold,,Inventory Asset,,,0.00,INR 0.00,Charger,2.000000,GST18,18,Group,IGST18,18,Simple
+4000000002380,Laptop Accessories ,,INR 60.00,Sales,none,1,,,Active,Pcs,L0002,,,,,INR 40.00,Cost of Goods Sold,,Inventory Asset,,,0.00,INR 0.00,KeyBoard,2.000000,GST18,18,Group,IGST18,18,Simple
+`;
+function downloadBooksSample() {
+  downloadCsv('sample_composite_items.csv', BOOKS_SAMPLE);
 }
 
 const DIFF = {
@@ -143,6 +199,7 @@ export default function BomTab({ workOrderId, fgs, revision, onChanged }) {
         </button>
         <button onClick={() => fileRef.current?.click()} disabled={busy} style={btn}>⬆ Upload BOM (Excel / CSV)</button>
         <button onClick={() => setPasting(p => !p)} disabled={busy} style={btn}>Paste from spreadsheet</button>
+        <button onClick={downloadTemplate} style={btn}>⬇ Download template</button>
         <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" onChange={onFile} style={{ display: 'none' }} />
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Revision {bom?.revision ?? '—'}</span>
@@ -316,4 +373,7 @@ const thStyle = {
 };
 const cell = { padding: '7px 12px', fontSize: 13 };
 
-export { rowsFromMatrix, parseDelimited, mapHeaders };
+export {
+  rowsFromMatrix, parseDelimited, matrixFromText, parseBooksComposites, mapHeaders,
+  readXlsxFile, downloadTemplate, downloadBooksSample, DIFF, Legend, PasteBox,
+};
