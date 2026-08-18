@@ -479,7 +479,11 @@ export default function SKUItemsPage() {
                     <textarea rows={8} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} /></div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
                     <div><label style={labelStyle}>Type</label>
-                      <select style={{ ...inputStyle, cursor: 'pointer' }} value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}>
+                      <select
+                        style={{ ...inputStyle, cursor: selectedItem?.zohoItemId ? 'not-allowed' : 'pointer', opacity: selectedItem?.zohoItemId ? 0.6 : 1 }}
+                        disabled={Boolean(selectedItem?.zohoItemId)}
+                        title={selectedItem?.zohoItemId ? 'Type is locked after pushing to Zoho Books — Trading and Manufacturing map to different Books item kinds' : undefined}
+                        value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}>
                         <option value="Trading">Trading</option>
                         <option value="Manufacturing">Manufacturing</option>
                       </select></div>

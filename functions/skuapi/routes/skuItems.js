@@ -126,7 +126,6 @@ router.post("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
-  if (!(await ownsRow(req.catalyst, TABLE, id))) return res.status(404).json({ error: "Not found" });
   const { name, sku, description, type } = req.body;
   const data = { ROWID: id };
   if (name !== undefined) data.name = name;
@@ -134,6 +133,17 @@ router.put("/:id", async (req, res) => {
   if (description !== undefined) data.description = description;
   if (type !== undefined) data.type = type;
   try {
+    const rows = rowList(
+      await req.catalyst.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE ROWID = ${id} AND ${orgClause(req.catalyst)}`),
+    );
+    if (!rows.length) return res.status(404).json({ error: "Not found" });
+    const existing = out(rows[0]);
+    // Trading ↔ Manufacturing decides which Books API (item vs composite) the
+    // stored zohoItemId belongs to — Books can't convert in place, so the type
+    // locks once the item has been pushed (CR-029).
+    if (type !== undefined && type !== existing.type && existing.zohoItemId) {
+      return res.status(400).json({ error: "Item type is locked after pushing to Zoho Books" });
+    }
     if (sku !== undefined && (await findSkuRowId(req.catalyst, sku, id))) {
       return res.status(409).json({ error: "SKU already exists" });
     }

@@ -1,22 +1,24 @@
 "use strict";
 const { getAccessToken, getOrgId, dcHosts } = require("./auth");
 
-// Finished Goods inventory account id, resolved per Books org (account named
-// "Finished Goods", type "stock") and cached — the id differs per org and the app
-// is multi-tenant, so a single env value can't serve every connected org.
+// Stock account ids by name, resolved per Books org and cached — the id differs
+// per org and the app is multi-tenant, so a single env value can't serve every
+// connected org.
 // ponytail: in-memory cache, warm-instance only; a cold start re-fetches once.
-const _fgAccountCache = new Map(); // orgId -> account_id | null
-async function getFinishedGoodsAccountId(catalyst) {
+const _stockAccountCache = new Map(); // `${orgId}:${name}` -> account_id | null
+async function getStockAccountId(catalyst, accountName) {
   const orgId = await getOrgId(catalyst);
-  if (_fgAccountCache.has(orgId)) return _fgAccountCache.get(orgId);
+  const key = `${orgId}:${accountName}`;
+  if (_stockAccountCache.has(key)) return _stockAccountCache.get(key);
   const data = await apiRequest(catalyst, "GET", "/chartofaccounts");
-  const fg = (data.chartofaccounts || []).find(
-    (a) => a.account_type === "stock" && String(a.account_name || "").trim().toLowerCase() === "finished goods",
+  const hit = (data.chartofaccounts || []).find(
+    (a) => a.account_type === "stock" && String(a.account_name || "").trim().toLowerCase() === accountName.toLowerCase(),
   );
-  const id = fg ? String(fg.account_id) : null;
-  _fgAccountCache.set(orgId, id);
+  const id = hit ? String(hit.account_id) : null;
+  _stockAccountCache.set(key, id);
   return id;
 }
+const getFinishedGoodsAccountId = (catalyst) => getStockAccountId(catalyst, "finished goods");
 
 // api_name -> [option label] for item dropdown custom fields, cached per org.
 const _itemCfOptionsCache = new Map(); // orgId -> Map(api_name -> string[])
@@ -96,9 +98,14 @@ const ITEM_DEFAULT_CFS = [
 // so they're only set here (create), never in updateItem.
 // ponytail: serial key is `track_serial_number` per Books v3; verify against the org
 // on first live push and adjust if the response omits it.
+// Default CFs + dropdown-label normalization in one step — shared by the plain
+// item path here and the composite path in inventoryApi.js.
+const buildItemCfs = (catalyst, customFields) =>
+  normalizeCustomFields(catalyst, [...ITEM_DEFAULT_CFS, ...(customFields || [])]);
+
 async function createItem(catalyst, name, sku, description, customFields) {
   const inventoryAccountId = await getFinishedGoodsAccountId(catalyst);
-  const cfs = await normalizeCustomFields(catalyst, [...ITEM_DEFAULT_CFS, ...(customFields || [])]);
+  const cfs = await buildItemCfs(catalyst, customFields);
   const data = await apiRequest(catalyst, "POST", "/items", {
     name,
     sku,
@@ -107,6 +114,7 @@ async function createItem(catalyst, name, sku, description, customFields) {
     item_type: "inventory",
     product_type: "goods",
     unit: "pcs",
+    is_taxable: true,
     track_serial_number: true,
     inventory_valuation_method: "fifo",
     inventory_account_id: inventoryAccountId || undefined,
@@ -151,10 +159,44 @@ async function findItemByName(catalyst, name) {
   return (data.items || []).find((i) => String(i.name || "").trim().toLowerCase() === wanted) || null;
 }
 
+// Find an existing Books item by exact (case-insensitive) SKU — `search_text`
+// matches SKUs too, so one call plus an exact filter suffices.
+async function findItemBySku(catalyst, sku) {
+  if (!sku) return null;
+  const data = await apiRequest(catalyst, "GET", `/items?search_text=${encodeURIComponent(sku)}&per_page=200`);
+  const wanted = String(sku).trim().toLowerCase();
+  return (data.items || []).find((i) => String(i.sku || "").trim().toLowerCase() === wanted) || null;
+}
+
+// Minimal raw-material item for a BOM component (CR-028). Deliberately NOT
+// createItem: that one stamps Finished Goods custom fields, serial tracking and
+// the Finished Goods account — all wrong for a component. Uses the Books
+// default "Inventory Asset" stock account; if the org lacks it, Books' own
+// error names the missing field.
+async function createComponentItem(catalyst, name, sku) {
+  const inventoryAccountId = await getStockAccountId(catalyst, "inventory asset");
+  const data = await apiRequest(catalyst, "POST", "/items", {
+    name,
+    sku: sku || undefined,
+    item_type: "inventory",
+    product_type: "goods",
+    unit: "pcs",
+    rate: 0,
+    inventory_account_id: inventoryAccountId || undefined,
+  });
+  return data.item;
+}
+
 // Item detail — the list endpoint omits custom_fields, so import fetches per-item.
 async function getItem(catalyst, zohoItemId) {
   const data = await apiRequest(catalyst, "GET", `/items/${zohoItemId}`);
   return data.item;
+}
+
+// Books refuses deletion of an item with transactions — that error surfaces
+// verbatim to the caller (used by the plain-item → composite migration heal).
+async function deleteItem(catalyst, zohoItemId) {
+  await apiRequest(catalyst, "DELETE", `/items/${zohoItemId}`);
 }
 
 // Custom-field definitions configured on Books items — the source list for the
@@ -282,12 +324,17 @@ async function getOrganizations(catalyst) {
 
 module.exports = {
   apiRequest,
+  getStockAccountId,
+  buildItemCfs,
   createItem,
   updateItem,
   getOrganizations,
   listItems,
   findItemByName,
+  findItemBySku,
+  createComponentItem,
   getItem,
+  deleteItem,
   listItemCustomFields,
   getSalesOrder,
   listSalesOrders,

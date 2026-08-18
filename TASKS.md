@@ -10,11 +10,30 @@ Related docs: [CHANGES.md](CHANGES.md) (change requests + shipped log),
 [SCHEMA.md](SCHEMA.md) (DB), [ARCHITECTURE.md](ARCHITECTURE.md) (system),
 [ZOHO_AUTH.md](ZOHO_AUTH.md) (OAuth setup).
 
-Last updated: 2026-08-02.
+Last updated: 2026-08-18.
 
 ---
 
 ## In progress
+
+### CR-029 — Manufacturing SKUs push as Books composite items (branch `feat/zoho-field-mapping`)
+- [x] `zoho/push.js` — `pushToZoho` branches on `type`; `pushManufacturing` (fields-only re-push, stale-link + legacy plain-item heal); `buildAssociatedItems` (flagged props → selections → `pushValueToZoho`, throws with captions on any gap)
+- [x] `zoho/inventoryApi.js` — `createCompositeItem` full payload (descriptions, CFs via shared `buildItemCfs`, rate 0, taxable, serial, FIFO); `updateCompositeItemFields` (never touches `mapped_items`)
+- [x] `zoho/booksApi.js` — `is_taxable:true` on plain create too; `buildItemCfs`; `deleteItem`
+- [x] Type lock after push — API 400 in `routes/skuItems.js` PUT, disabled Type select in `SKUItemsPage.jsx`
+- [x] Check: `zoho/push.test.js` (payload + validation paths)
+- [ ] Verify on deploy: Manufacturing push creates a Books assembly item (PCS, rate 0, Taxable, both descriptions, §3+§4 CFs, serial/Finished Goods/FIFO, flagged values as associated items qty 1); missing flagged value fails with caption; Trading regression; type lock; re-push preserves BOM edits
+- [ ] Deferred: Copy-from-Total price, composite-aware import, HSN/GST fields
+
+### CR-028 — BOM page = Books composite items + create in Books (branch `feat/zoho-field-mapping`)
+- [x] `zoho/inventoryApi.js` — `listCompositeItems` (paged), `createCompositeItem` (minimal body)
+- [x] `zoho/booksApi.js` — `findItemBySku`, `createComponentItem` (plain inventory item, "Inventory Asset" account via generalized `getStockAccountId`)
+- [x] Routes `GET/POST /api/wo/composites*` — grid, cache-first BOM read, preview (Books lookup for unmatched → `missing`), apply with optional `createMissing`, new-composite create
+- [x] `CompositeBomPage.jsx` replaces `WorkOrderBomPage.jsx` (deleted) on `/wo/bom` — composite grid → drill-in diff/import; "New composite item" flow
+- [x] `BomTab.jsx` — "⬇ Download template" CSV button; parse helpers exported
+- [x] Zoho Books composite-items export format accepted (`parseBooksComposites`) — grid "Import Books export" bulk flow (`POST /api/wo/composites/import`: update matched / create unknown), detail upload picks the matching group, new-composite form prefills from a single-group export
+- [x] Resolves CR-023's deferred "BOM save as new composite" (`POST /compositeitems` now exists)
+- [ ] Verify on deploy (live org): composites grid lists Books composites; preview buckets new/missing correctly; apply with `createMissing` creates a plain item (no FG custom fields) + updates `mapped_items`; `POST /composites` creates a composite visible in Books; per-WO BomTab regression (revision + guard intact); org switcher changes the list
 
 ### CR-027 — Books item field-mapping defaults on push (branch `feat/zoho-field-mapping`)
 - [x] `zoho/booksApi.js` `createItem` — `unit:"pcs"`, `product_type:"goods"`, `track_serial_number:true`, `inventory_valuation_method:"fifo"`; `updateItem` re-sends `unit`

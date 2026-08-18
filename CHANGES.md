@@ -7,6 +7,8 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 | CR | Date | Title | Status |
 |----|------|-------|--------|
+| CR-029 | 2026-08-18 | Manufacturing SKUs push as Books composite (assembly) items — associated items from Books-item properties, full field mapping, type locked after push | 🚧 in progress |
+| CR-028 | 2026-08-13 | BOM page lists Books composite items (no work orders); import can create composite + missing component items in Books; CSV template download | 🚧 in progress |
 | CR-027 | 2026-08-11 | Books item field-mapping defaults on push (Pcs unit, serial inventory tracking, Finished Goods / FIFO, §3 constants, §4 param custom fields) | 🚧 in progress |
 | CR-026 | 2026-08-11 | Property value can also be created as a standalone Zoho Books item (checkbox + dedupe + "Books items" tracking grid) | 🚧 in progress |
 | CR-025 | 2026-08-11 | Club properties into one un-separated SKU segment (Body+Gland, 3-part Seat) | 🚧 in progress |
@@ -33,6 +35,103 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 | CR-003 | 2026-07-02 | Item search, grid filters, pagination, sidebar, branding | ✅ shipped |
 | CR-002 | 2026-06-30 | Migrate backend to Catalyst Data Store | ✅ shipped |
 | CR-001 | 2026-05-28 | SKU editing + Zoho Books value sync & import | ✅ shipped |
+
+---
+
+## CR-029 — Manufacturing SKUs push as Books composite items (2026-08-18) — 🚧 in progress
+
+**Asked** (client doc "SKU Generator to Zoho Books Composite Item Automation"): a
+Manufacturing SKU must land in Zoho as a **Composite/Assembly item** — associated
+items taken from the selected values of properties flagged *Books item*
+(`createValuesAsItems`), same descriptions/custom fields/inventory settings as
+the Trading path, Taxable, price 0.00, and validation that every flagged
+property resolves to a live Books item before the composite is created.
+
+**Decisions:** associated-item quantity always **1** (BOM refined later on the
+BOM pages); *Copy from Total* pricing **deferred**; tax = `is_taxable: true`
+only (HSN/GST stays manual in Books); **type locks after first push** — Books
+can't convert plain↔composite in place, and the lock is what lets `SKUItem.type`
+double as the "which Books API does `zohoItemId` belong to" flag (no new column).
+
+**Shipped:**
+- [zoho/push.js](functions/skuapi/zoho/push.js) — `pushToZoho` branches on `type`.
+  New `pushManufacturing`: update composite fields on re-push (never
+  `mapped_items` — a BOM refined on the BOM pages must survive), stale-link
+  self-heal, plus **legacy-link heal**: a Manufacturing item pushed pre-CR-029
+  holds a plain-item id → composite update 404s → delete the plain item (Books
+  refuses if it has transactions; error surfaces) → recreate as composite.
+- New `buildAssociatedItems` — flagged active properties → the item's
+  `SKUItemValue` selections → each resolved via `pushValueToZoho` (heals stale
+  links, reuses twins, links by name, creates). Throws with property captions /
+  value names when anything can't resolve (§11.5–11.6). Range values count as
+  missing (a number can't be a Books item).
+- [zoho/inventoryApi.js](functions/skuapi/zoho/inventoryApi.js) —
+  `createCompositeItem` enriched (descriptions in both boxes, normalized custom
+  fields incl. §3 defaults via shared `buildItemCfs`, rate 0, `is_taxable`,
+  serial tracking, FIFO); new `updateCompositeItemFields` (top-level fields
+  only, no `mapped_items`). Work-order BOM callers unaffected.
+- [zoho/booksApi.js](functions/skuapi/zoho/booksApi.js) — `is_taxable: true` on
+  plain-item create too; `buildItemCfs` extracted; `deleteItem`.
+- Type lock: [routes/skuItems.js](functions/skuapi/routes/skuItems.js) PUT
+  returns 400 on a type change once `zohoItemId` is set;
+  [SKUItemsPage.jsx](frontend/src/pages/SKUItemsPage.jsx) disables the Type
+  select with an explanatory tooltip.
+- Check: [zoho/push.test.js](functions/skuapi/zoho/push.test.js) — composite
+  payload asserts + missing-value validation paths (stubbed catalyst/booksApi).
+
+**Not done (and why):** *Copy from Total* selling price — deferred until needed
+(composite rate stays 0.00). Composite-aware Books→app **import** — import
+remains Trading-only plain items. Full GST (HSN/tax ids) — org defaults apply,
+manual in Books.
+
+---
+
+## CR-028 — BOM page = Books composite items; create in Books; CSV template (2026-08-13) — 🚧 in progress
+
+**Requested:** the BOM sidebar page must not show work orders. Instead it lists the
+org's Zoho Books composite items directly; drilling in shows/imports that BOM. The
+import must also be able to **create** — a new composite item in Books, and missing
+component items as plain inventory items. Add a downloadable sample sheet.
+
+**Shipped (code):**
+- **Zoho API** — `listCompositeItems` (paged) + `createCompositeItem`
+  (`POST /compositeitems`, minimal body) in `zoho/inventoryApi.js`; `findItemBySku` +
+  `createComponentItem` in `zoho/booksApi.js`. Component create deliberately does NOT
+  reuse `createItem` — no Finished Goods custom fields / serial tracking / FG account;
+  uses the org's "Inventory Asset" stock account via the generalized
+  `getStockAccountId` (the old `getFinishedGoodsAccountId` is now a wrapper).
+- **Routes** (`routes/workorder.js`, static paths above `/:id`): `GET /api/wo/composites`
+  (grid), `GET /composites/:itemId/bom` (cache-first via `bom.getComposite`, `?refresh=1`),
+  `POST /composites/:itemId/bom/preview` (matchUpload → Books lookup for unmatched →
+  `diffBom`; rows found nowhere returned as `missing`), `POST /composites/:itemId/bom/apply`
+  (optional `createMissing` → `updateCompositeItem` → cache refresh), `POST /composites`
+  (new composite from a sheet; 400 listing missing SKUs unless `createMissing`).
+  No WorkOrderLine / BomRevision / committed-material guard — those stay WO-only.
+- **Frontend** — new `CompositeBomPage.jsx` replaces `WorkOrderBomPage.jsx` (deleted) on
+  `/wo/bom`: composite-item grid (Name/SKU/Status, search, GridFooter) → drill-in with
+  upload/paste/refresh, coloured diff, "create missing items in Books" checkbox, and a
+  "New composite item" flow. `BomTab.jsx` gains a "⬇ Download template" button
+  (client-side CSV blob `SKU,Name,Qty`) and exports its parse helpers for reuse.
+- **Per-WO BOM unchanged** — `BomTab` inside `WorkOrderPage` keeps revisions, the
+  committed-material guard, and `/api/wo/:id/bom*`.
+- **Books composite-items export accepted** (customer sample sheet) —
+  `parseBooksComposites` (`BomTab.jsx`) detects Zoho's own export format
+  (`Composite Item Name`/`SKU` + `Mapped Item Name`/`Mapped Quantity`, one row per
+  component) and groups it per composite. Grid gets "⬆ Import Books export" →
+  `POST /api/wo/composites/import`: matched composites (SKU→name) get `mapped_items`
+  replaced, unknown ones created; per-group errors don't abort the rest. Detail
+  upload picks the matching group out of a multi-composite export; the
+  new-composite form prefills name/SKU from a single-composite export.
+
+**Schema:** no change.
+
+**Not done (deliberately):** no local table for composites (live paged list — the
+`CompositeItemCache` only holds drilled-into items).
+
+**Live-org finding:** `POST /compositeitems` rejects a non-tracked item (code 13084
+"The composite item should be inventory-tracked") — create now sends
+`item_type:"inventory"` + `inventory_account_id` ("Finished Goods" account, falling
+back to "Inventory Asset").
 
 ---
 

@@ -1,7 +1,7 @@
 "use strict";
 
 /** Zoho Inventory v1 calls for the work-order / reserve add-ons (needs ZohoInventory scope). */
-const { apiRequest } = require("./booksApi");
+const { apiRequest, getStockAccountId, buildItemCfs } = require("./booksApi");
 
 // BOM: composite_item.mapped_items[] = { item_id, name, sku, quantity }
 async function getCompositeItem(catalyst, itemId) {
@@ -13,6 +13,58 @@ async function updateCompositeItem(catalyst, itemId, mappedItems) {
   const data = await apiRequest(catalyst, "PUT", `/compositeitems/${itemId}`, {
     mapped_items: mappedItems.map((m) => ({ item_id: String(m.rmItemId), quantity: Number(m.perUnitQty) || 0 })),
   }, "inventory");
+  return data.composite_item;
+}
+
+// Every composite item in the org — the global BOM page's grid (CR-028).
+async function listCompositeItems(catalyst) {
+  const items = [];
+  let page = 1;
+  for (;;) {
+    const data = await apiRequest(catalyst, "GET", `/compositeitems?page=${page}&per_page=200`, null, "inventory");
+    items.push(...(data.composite_items || []));
+    if (!data.page_context || !data.page_context.has_more_page) break;
+    page++;
+  }
+  return items;
+}
+
+// Zoho requires the composite to be inventory-tracked (code 13084 otherwise):
+// item_type "inventory" + a stock account. A composite is a finished good, so
+// prefer the org's "Finished Goods" account, falling back to the Books default
+// "Inventory Asset". Anything else the org demands surfaces verbatim.
+// description/customFields are optional (CR-029 Manufacturing push sends them;
+// the work-order BOM screens don't) — a composite is a finished good, so it
+// gets the same defaults as booksApi.createItem: descriptions in both boxes,
+// default CFs, rate 0, Taxable, serial tracking, FIFO.
+async function createCompositeItem(catalyst, { name, sku, description, customFields, mappedItems }) {
+  const inventoryAccountId = (await getStockAccountId(catalyst, "finished goods"))
+    || (await getStockAccountId(catalyst, "inventory asset"));
+  const data = await apiRequest(catalyst, "POST", "/compositeitems", {
+    name,
+    sku: sku || undefined,
+    description: description || undefined,
+    purchase_description: description || undefined,
+    unit: "pcs",
+    item_type: "inventory",
+    product_type: "goods",
+    rate: 0,
+    is_taxable: true,
+    track_serial_number: true,
+    inventory_valuation_method: "fifo",
+    inventory_account_id: inventoryAccountId || undefined,
+    custom_fields: customFields ? await buildItemCfs(catalyst, customFields) : undefined,
+    mapped_items: (mappedItems || []).map((m) => ({ item_id: String(m.rmItemId), quantity: Number(m.perUnitQty) || 0 })),
+  }, "inventory");
+  return data.composite_item;
+}
+
+// Top-level field update (name/sku/descriptions/custom_fields) WITHOUT
+// mapped_items — a re-push must never clobber a BOM refined on the Composite
+// BOM page. Custom fields are normalized here; everything else passes through.
+async function updateCompositeItemFields(catalyst, itemId, body) {
+  if (body.custom_fields) body = { ...body, custom_fields: await buildItemCfs(catalyst, body.custom_fields) };
+  const data = await apiRequest(catalyst, "PUT", `/compositeitems/${itemId}`, body, "inventory");
   return data.composite_item;
 }
 
@@ -98,6 +150,6 @@ async function getTransferOrder(catalyst, transferOrderId) {
 }
 
 module.exports = {
-  getCompositeItem, updateCompositeItem, listWarehouses, getItemStock,
-  listItemsWithStock, createTransferOrder, getTransferOrder,
+  getCompositeItem, updateCompositeItem, updateCompositeItemFields, listCompositeItems, createCompositeItem,
+  listWarehouses, getItemStock, listItemsWithStock, createTransferOrder, getTransferOrder,
 };

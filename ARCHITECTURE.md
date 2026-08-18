@@ -130,7 +130,7 @@ ROWID (List props) or a raw number string (Range props).
 | GET | `/api/sku-items?industryId=` | List items (optionally filtered), newest first, each with `industry.name` |
 | POST | `/api/sku-items/search` | AND-combined search. Body `{ industryId?, q?, sku?, type?, filters:[{propertyId, valueId?, text?}] }` — `q` = LIKE on sku+name, `sku` = LIKE on sku, `type` = exact. NB: ZCQL LIKE wildcard is `*`, not `%` |
 | POST | `/api/sku-items` | Direct create (no generation) + Zoho push |
-| PUT | `/api/sku-items/:id` | Update + re-push to Zoho |
+| PUT | `/api/sku-items/:id` | Update (400 on a type change once pushed — CR-029) |
 | DELETE | `/api/sku-items/:id` | Delete + cascade its SKUItemValue rows |
 | POST | `/api/sku-items/:id/push-zoho` | Manual (re)push a single item to Zoho Books |
 | POST | `/api/sku-items/backfill-values` | One-shot, idempotent backfill of SKUItemValue for legacy items by reverse-matching SKU tokens |
@@ -154,6 +154,12 @@ ROWID (List props) or a raw number string (Range props).
 | GET/PUT | `/api/wo/settings` | Org config (warehouses, alert recipients, thresholds, number prefixes) + live warehouse list |
 | GET | `/api/wo/sales-orders?q=` · `/api/wo/so/:soId` | SO picker + detail for the create flow |
 | GET | `/api/wo/vendors` | Books vendors for the Purchase Request screen |
+| GET | `/api/wo/composites` | All Books composite items — the global BOM page's grid (CR-028) |
+| GET | `/api/wo/composites/:itemId/bom` | Composite BOM, cache-first (`?refresh=1` forces Zoho) |
+| POST | `/api/wo/composites/:itemId/bom/preview` | Sheet vs composite diff; unmatched rows resolved against Books, rest → `missing` |
+| POST | `/api/wo/composites/:itemId/bom/apply` | Write `mapped_items` to Books; `createMissing` creates plain component items first |
+| POST | `/api/wo/composites` | Create a new Books composite item from a sheet |
+| POST | `/api/wo/composites/import` | Bulk import of a Books composite-items export — update matched composites, create unknown ones |
 | GET/POST | `/api/wo` | List work orders / create from an SO (seeds each FG's BOM from its composite item) |
 | GET/PUT | `/api/wo/:id` | Work order with FGs, purchase requests, transactions, approvals |
 | POST | `/api/wo/:id/status` | Status transition, incl. the QC gate (Rejected → back to In Progress) |
@@ -218,8 +224,8 @@ Old-scope tokens (pre-Inventory) make reserve endpoints return `409 {error:"reau
 | `routes/*.js` | The route handlers above (`auth`, `zohoAuth`, `industries`, `properties`, `propertyValues`, `sku`, `skuItems`, `reserve`, `admin`) |
 | `zoho/auth.js` | OAuth config, multi-DC host resolution (`dcHosts`), token load/exchange/refresh, org selection |
 | `zoho/booksApi.js` | Zoho Books v3 / Inventory v1 client (`createItem`, `updateItem`, `getOrganizations`, `listItems`, `getItem`, `listItemCustomFields`, SO/PO reads) |
-| `zoho/inventoryApi.js` | `getCompositeItem` (BOM), `listWarehouses`, `getItemStock` + write stubs |
-| `zoho/push.js` | `pushToZoho` — best-effort create-or-update of a Books item (incl. custom fields), no-op until configured. Invoked **only** by the manual `POST /sku-items/:id/push-zoho` route (not on create/update — CR-021) |
+| `zoho/inventoryApi.js` | `getCompositeItem`/`updateCompositeItem`/`updateCompositeItemFields`/`listCompositeItems`/`createCompositeItem` (BOM + CR-029 full payload), `listWarehouses`, `getItemStock` + write stubs |
+| `zoho/push.js` | `pushToZoho` — best-effort create-or-update, no-op until configured, branching on `SKUItem.type` (CR-029): Trading → plain Books item, Manufacturing → composite/assembly item with associated items from `createValuesAsItems` properties (`buildAssociatedItems`, resolves each value via `pushValueToZoho`, hard-fails on gaps). Type locks after first push, so `type` also says which Books API `zohoItemId` belongs to. Invoked **only** by the manual `POST /sku-items/:id/push-zoho` route (not on create/update — CR-021) |
 | `zoho/import.js` | `importFromBooks` — create-only import of Books items, mapping custom fields to SKUItemValue (find-or-create PropertyValue) |
 | `reserve/sync.js` | Legacy per-item stock sync (superseded by `workorder/sync.js`'s bulk reconcile) |
 | `reserve/zohoDocs.js` | Legacy seam — the real document mapping now lives in `workorder/formulas.js` `ROUTES` |
@@ -269,7 +275,7 @@ list+generator page — CR-014); default landing is `/sku/industries`.
 | `/sku/books-items` | `BooksLinkedValuesPage` | The "Books items" tab: read-only grid of property values also created as standalone Zoho Books items (CR-026), filterable by industry |
 | `/wo` | `WorkOrderListPage` | Work order grid + "new from sales order" flow (tick the FG lines, BOMs seed from Zoho) |
 | `/wo/:id` | `WorkOrderPage` | Zoho-Books-style split view (CR-018): left rail of all work orders, right detail with toolbar (Edit modal · Approve ▾ two-level dropdown · status actions · ⋯ Print PDF / Delete) and sub-tabs **Details** (the A–I Materials grid), Approvals, History |
-| `/wo/bom` | `WorkOrderBomPage` | Global BOM page: grid of WOs (FGs, Rev, BOM date; BOMs first) → row drills into `BomTab` (upload + coloured diff + revisions) |
+| `/wo/bom` | `CompositeBomPage` | Global BOM page (CR-028): grid of Books composite items (no work orders) → row drills into upload/paste + coloured diff, apply straight to Books (optionally creating missing component items); "New composite item" builds one in Books from a sheet |
 | `/wo/purchase` | `WorkOrderPurchasePage` | Global Purchase page: Requests/Orders grids (Orders = all Books POs via `/api/wo/purchase-orders`, 🔒 when received/billed) → row drills into `PurchaseTab` (per WO) or `PoSplit` (per PO) |
 | `/wo/reports` | `WorkOrderReportsPage` | SO–BOM status + shortfall/pending + item pipeline (WO/vendor filters), CSV export |
 | `/wo/settings` | `WorkOrderSettingsPage` | Warehouse map, alert recipients, thresholds, number prefixes |
