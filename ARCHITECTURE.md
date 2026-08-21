@@ -118,8 +118,9 @@ pins `req.orgId` from the user's ZohoToken.
 ### SKU generation — `routes/sku.js` (mounted `/api/sku`)
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/api/sku/generate` | **Preview only.** Body `{ industryId, selectedValues }`. Assembles `{ sku, name, description, missingRequired[], duplicate }` without saving. Validates Range bounds. Skips properties with `activeInSku = false`; `name` = the `includeInName` properties, space-joined; `description` = one `Caption: Value` line per filled property |
+| POST | `/api/sku/generate` | **Preview only.** Body `{ industryId, selectedValues, excludeItemId? }`. Assembles `{ sku, name, description, missingRequired[], duplicate }` without saving (`excludeItemId` keeps an edited item from being its own duplicate — CR-030). Validates Range bounds. Skips properties with `activeInSku = false`; `name` = the `includeInName` properties, space-joined; `description` = one `Caption: Value` line per filled property |
 | POST | `/api/sku/create-item` | Persist a SKUItem. Gates on required props + SKU uniqueness, saves SKUItemValue rows, fires best-effort Zoho push. Body `{ name, sku, description, type, industryId, selectedValues }` |
+| POST | `/api/sku/update-item` | Edit-in-generator save (CR-030). Body `{ itemId, name, sku, description, selectedValues }` (type not editable). Replaces the item's SKUItemValue rows; a Books-linked item **auto-pushes** (the one exception to CR-021) — a Books failure returns `zohoWarning`, never fails the save |
 
 `selectedValues` is `{ propertyId: value }` where `value` is a PropertyValue
 ROWID (List props) or a raw number string (Range props).
@@ -132,6 +133,7 @@ ROWID (List props) or a raw number string (Range props).
 | POST | `/api/sku-items` | Direct create (no generation) + Zoho push |
 | PUT | `/api/sku-items/:id` | Update (400 on a type change once pushed — CR-029) |
 | DELETE | `/api/sku-items/:id` | Delete + cascade its SKUItemValue rows |
+| GET | `/api/sku-items/:id/values` | Item + stored selections (`{ propertyId: valueId \| rangeText }`) — feeds the generator's edit mode (CR-030) |
 | POST | `/api/sku-items/:id/push-zoho` | Manual (re)push a single item to Zoho Books |
 | POST | `/api/sku-items/backfill-values` | One-shot, idempotent backfill of SKUItemValue for legacy items by reverse-matching SKU tokens |
 | POST | `/api/sku-items/import-zoho` | Import new items from Zoho Books into an industry. Body `{ industryId }`. Create-only — items already linked (by `zohoItemId`, then `sku`) are skipped. Reverse-maps Books custom fields → SKUItemValue via `zohoCfApiName`. Returns `{ total, imported, skipped, valuesMapped, errors }` |
@@ -225,7 +227,7 @@ Old-scope tokens (pre-Inventory) make reserve endpoints return `409 {error:"reau
 | `zoho/auth.js` | OAuth config, multi-DC host resolution (`dcHosts`), token load/exchange/refresh, org selection |
 | `zoho/booksApi.js` | Zoho Books v3 / Inventory v1 client (`createItem`, `updateItem`, `getOrganizations`, `listItems`, `getItem`, `listItemCustomFields`, SO/PO reads) |
 | `zoho/inventoryApi.js` | `getCompositeItem`/`updateCompositeItem`/`updateCompositeItemFields`/`listCompositeItems`/`createCompositeItem` (BOM + CR-029 full payload), `listWarehouses`, `getItemStock` + write stubs |
-| `zoho/push.js` | `pushToZoho` — best-effort create-or-update, no-op until configured, branching on `SKUItem.type` (CR-029): Trading → plain Books item, Manufacturing → composite/assembly item with associated items from `createValuesAsItems` properties (`buildAssociatedItems`, resolves each value via `pushValueToZoho`, hard-fails on gaps). Type locks after first push, so `type` also says which Books API `zohoItemId` belongs to. Invoked **only** by the manual `POST /sku-items/:id/push-zoho` route (not on create/update — CR-021) |
+| `zoho/push.js` | `pushToZoho` — best-effort create-or-update, no-op until configured, branching on `SKUItem.type` (CR-029): Trading → plain Books item, Manufacturing → composite/assembly item with associated items from `createValuesAsItems` properties (`buildAssociatedItems`, resolves each value via `pushValueToZoho`; unselected flagged properties are skipped — CR-030 — only a selected value that can't resolve fails). A Manufacturing re-push also swaps the composite's property-derived BOM lines (`mergeMappedLines`/`syncMappedItems` — manual lines and quantities untouched, write only on change). Type locks after first push, so `type` also says which Books API `zohoItemId` belongs to. Invoked by the manual `POST /sku-items/:id/push-zoho` route and by `POST /sku/update-item` for already-linked items (CR-030's exception to CR-021's no-auto-push rule) |
 | `zoho/import.js` | `importFromBooks` — create-only import of Books items, mapping custom fields to SKUItemValue (find-or-create PropertyValue) |
 | `reserve/sync.js` | Legacy per-item stock sync (superseded by `workorder/sync.js`'s bulk reconcile) |
 | `reserve/zohoDocs.js` | Legacy seam — the real document mapping now lives in `workorder/formulas.js` `ROUTES` |

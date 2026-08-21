@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
@@ -100,19 +100,39 @@ export default function SKUGeneratorPage() {
   const [preview, setPreview] = useState(null);
   const [itemType, setItemType] = useState('Trading');
   const [creating, setCreating] = useState(false);
+  // Edit mode (CR-030): ?item=<id> reopens the generator on an existing SKU.
+  const [editItem, setEditItem] = useState(null);
+  const editSelsRef = useRef(null); // stored selections, consumed by loadProperties
 
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
   useEffect(() => {
-    axios.get('/api/industries').then(({ data }) => {
+    (async () => {
+      const { data } = await axios.get('/api/industries');
       setIndustries(data);
+      const editId = searchParams.get('item');
+      if (editId) {
+        try {
+          const { data: ed } = await axios.get(`/api/sku-items/${editId}/values`);
+          const ind = data.find(i => String(i.id) === String(ed.item.industryId));
+          if (ind) {
+            setEditItem(ed.item);
+            setItemType(ed.item.type);
+            editSelsRef.current = ed.selections;
+            setSelectedIndustry(ind);
+            return;
+          }
+        } catch (err) {
+          toast.error(err.response?.data?.error || 'Failed to load item for editing');
+        }
+      }
       const qInd = searchParams.get('industry');
       const found = qInd && data.find(i => String(i.id) === String(qInd));
       // No industry in the permalink: open on the first one so the properties
       // are already on screen instead of an empty prompt.
       if (found || data.length) setSelectedIndustry(found || data[0]);
-    });
+    })();
   }, []);
 
   const loadProperties = useCallback(async (industry) => {
@@ -133,6 +153,11 @@ export default function SKUGeneratorPage() {
         const qVal = searchParams.get(`p${p.id}`);
         if (qVal) initSels[p.id] = qVal;
       });
+      // Edit mode: the item's stored selections win over permalink params.
+      if (editSelsRef.current) {
+        Object.assign(initSels, editSelsRef.current);
+        editSelsRef.current = null;
+      }
       setSelections(initSels);
     } catch {
       toast.error('Failed to load properties');
@@ -153,10 +178,13 @@ export default function SKUGeneratorPage() {
   const generatePreview = useCallback(async () => {
     if (!selectedIndustry || Object.keys(selections).length === 0) { setPreview(null); return; }
     try {
-      const { data } = await axios.post('/api/sku/generate', { industryId: selectedIndustry.id, selectedValues: selections });
+      const { data } = await axios.post('/api/sku/generate', {
+        industryId: selectedIndustry.id, selectedValues: selections,
+        excludeItemId: editItem?.id, // don't flag the edited item's own SKU as a duplicate
+      });
       setPreview(data);
     } catch { setPreview(null); }
-  }, [selectedIndustry, selections]);
+  }, [selectedIndustry, selections, editItem]);
 
   useEffect(() => { generatePreview(); }, [generatePreview]);
 
@@ -170,16 +198,28 @@ export default function SKUGeneratorPage() {
     if (preview.duplicate) { toast.error(`SKU "${preview.sku}" already exists`); return; }
     setCreating(true);
     try {
-      await axios.post('/api/sku/create-item', {
-        name: preview.name, sku: preview.sku,
-        description: preview.description, type: itemType,
-        industryId: selectedIndustry.id,
-        selectedValues: selections,
-      });
-      toast.success(`SKU "${preview.sku}" created`);
-      navigate('/sku/items'); // land on the list with the new SKU visible
+      if (editItem) {
+        const { data } = await axios.post('/api/sku/update-item', {
+          itemId: editItem.id, name: preview.name, sku: preview.sku,
+          description: preview.description, selectedValues: selections,
+        });
+        if (data.zohoWarning) {
+          toast.error(`Saved, but Zoho Books push failed: ${data.zohoWarning}`, { duration: 8000 });
+        } else {
+          toast.success(`SKU "${preview.sku}" updated${editItem.zohoItemId ? ' · synced to Zoho Books' : ''}`);
+        }
+      } else {
+        await axios.post('/api/sku/create-item', {
+          name: preview.name, sku: preview.sku,
+          description: preview.description, type: itemType,
+          industryId: selectedIndustry.id,
+          selectedValues: selections,
+        });
+        toast.success(`SKU "${preview.sku}" created`);
+      }
+      navigate('/sku/items'); // land on the list with the (new) SKU visible
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to create item');
+      toast.error(err.response?.data?.error || (editItem ? 'Failed to update item' : 'Failed to create item'));
     } finally { setCreating(false); }
   }
 
@@ -266,12 +306,15 @@ export default function SKUGeneratorPage() {
                   return (
                     <button
                       key={ind.id}
-                      onClick={() => setSelectedIndustry(ind)}
+                      onClick={() => !editItem && setSelectedIndustry(ind)}
+                      disabled={Boolean(editItem) && !active}
+                      title={editItem && !active ? 'Industry is fixed while editing an existing SKU' : undefined}
                       style={{
                         padding: '6px 14px', borderRadius: 8, fontSize: 13,
                         fontWeight: active ? 600 : 500,
                         border: `1.5px solid ${active ? T.accent : T.borderStrong}`,
-                        cursor: 'pointer',
+                        cursor: editItem && !active ? 'not-allowed' : 'pointer',
+                        opacity: editItem && !active ? 0.45 : 1,
                         color: active ? '#fff' : T.ink2,
                         background: active ? T.accent : T.bgElev,
                         transition: 'all 0.12s', fontFamily: T.sans,
@@ -452,13 +495,25 @@ export default function SKUGeneratorPage() {
             {/* Actions */}
             <div style={{ background: T.bgElev, border: `1px solid ${T.border}`, borderRadius: 12, overflow: 'hidden', boxShadow: shadowSm }}>
               <div style={{ padding: '16px 18px 14px' }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 3 }}>Save this SKU</div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 3 }}>
+                  {editItem ? `Editing ${editItem.sku}` : 'Save this SKU'}
+                </div>
                 <div style={{ fontSize: 12, color: T.ink3, marginBottom: 14, minHeight: 18 }}>
                   {preview?.sku
                     ? <span style={{ fontFamily: T.mono, fontWeight: 600, color: T.accentInk }}>{preview.sku}</span>
-                    : 'Choose the item type, then create'}
+                    : editItem ? 'Adjust values, then update' : 'Choose the item type, then create'}
                 </div>
 
+                {editItem ? (
+                  // Type is fixed while editing (locked entirely once pushed —
+                  // Books can't convert a plain item ↔ composite).
+                  <div
+                    title={editItem.zohoItemId ? 'Type is locked after pushing to Zoho Books' : 'Type can be changed in the SKUs list before the first push'}
+                    style={{ background: T.bgSubtle, borderRadius: 8, padding: '7px 10px', marginBottom: 14, fontSize: 12.5, fontWeight: 500, color: T.ink3, textAlign: 'center' }}
+                  >
+                    {editItem.type}{editItem.zohoItemId ? ' · linked to Zoho Books' : ''}
+                  </div>
+                ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: T.bgSubtle, borderRadius: 8, padding: 3, marginBottom: 14 }}>
                   {['Trading', 'Manufacturing'].map(t => (
                     <button
@@ -476,6 +531,7 @@ export default function SKUGeneratorPage() {
                     >{t}</button>
                   ))}
                 </div>
+                )}
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <button
@@ -495,7 +551,7 @@ export default function SKUGeneratorPage() {
                     }}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
-                    {creating ? 'Creating…' : 'Create Item'}
+                    {creating ? (editItem ? 'Updating…' : 'Creating…') : (editItem ? 'Update SKU' : 'Create Item')}
                     {!creating && preview?.sku && (
                       <span style={{ fontFamily: T.mono, fontSize: 10, opacity: 0.65, padding: '1px 5px', border: '1px solid rgba(255,255,255,0.35)', borderRadius: 3, lineHeight: 1 }}>⌘↵</span>
                     )}

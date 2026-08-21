@@ -439,6 +439,21 @@ export default function SKUItemsPage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                     {selectedItem && (
                       <button
+                        onClick={() => navigate(`/sku/generator?item=${selectedItem.id}`)}
+                        title="Reopen this SKU in the generator to change its parameter values — SKU/name/description regenerate, and a Books-linked item re-syncs on save"
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', fontSize: 11, fontWeight: 600,
+                          background: 'var(--bg-secondary)', color: 'var(--text-secondary)',
+                          border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+                          cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                        Edit parameters
+                      </button>
+                    )}
+                    {selectedItem && (
+                      <button
                         onClick={e => handlePushZoho(selectedItem, e)}
                         disabled={pushingId === selectedItem.id}
                         title={selectedItem.zohoItemId ? `Synced to Zoho Books (ID ${selectedItem.zohoItemId}) — click to re-push updates` : 'Push to Zoho Books'}

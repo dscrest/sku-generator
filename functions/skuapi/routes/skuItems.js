@@ -170,6 +170,28 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
+// Item + stored property selections for the edit-in-generator flow (CR-030).
+// selections: { propertyId: valueId } for list props, { propertyId: valueText }
+// for Range — the same shape the generator's `selections` state uses.
+router.get("/:id/values", async (req, res) => {
+  const id = req.params.id;
+  if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
+  try {
+    const rows = rowList(
+      await req.catalyst.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE ROWID = ${id} AND ${orgClause(req.catalyst)}`),
+    );
+    if (!rows.length) return res.status(404).json({ error: "Not found" });
+    const vals = rowList(
+      await req.catalyst.zcql().executeZCQLQuery(`SELECT * FROM SKUItemValue WHERE skuItemId = ${id} AND ${orgClause(req.catalyst)}`),
+    ).map(out);
+    const selections = {};
+    for (const v of vals) selections[String(v.propertyId)] = idOk(v.valueId) ? String(v.valueId) : v.valueText;
+    res.json({ item: out(rows[0]), selections });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post("/:id/push-zoho", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });

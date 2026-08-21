@@ -1,12 +1,15 @@
 "use strict";
 const express = require("express");
 const { rowList, out, idOk, orgClause, ownsRow, findSkuRowId, isActive, nameFilter } = require("../store");
-const { saveItemValues, missingRequired } = require("../itemValues");
+const { saveItemValues, deleteItemValues, missingRequired } = require("../itemValues");
+const { pushToZoho } = require("../zoho/push");
 
 const router = express.Router();
 
 router.post("/generate", async (req, res) => {
-  const { industryId, selectedValues } = req.body;
+  // excludeItemId: set while editing an existing item (CR-030) so its own SKU
+  // doesn't flag as a duplicate when unchanged.
+  const { industryId, selectedValues, excludeItemId } = req.body;
   if (!industryId || !selectedValues) {
     return res.status(400).json({ error: "industryId and selectedValues are required" });
   }
@@ -83,7 +86,7 @@ router.post("/generate", async (req, res) => {
       // in the Books item (sales) and purchase descriptions.
       description: descParts.join("\n"),
       missingRequired,
-      duplicate: sku ? Boolean(await findSkuRowId(req.catalyst, sku)) : false,
+      duplicate: sku ? Boolean(await findSkuRowId(req.catalyst, sku, idOk(excludeItemId) ? excludeItemId : undefined)) : false,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -123,6 +126,51 @@ router.post("/create-item", async (req, res) => {
     // Zoho Books sync is manual only — user clicks "Push" on the SKU Items page
     // (POST /sku-items/:id/push-zoho). No automatic push on create (CR-021).
     res.status(201).json(item);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Edit-in-generator save (CR-030): regenerated name/sku/description + the new
+// property selections replace the item's stored values. Type is not editable
+// here. Items already linked to Books auto-push — the one deliberate exception
+// to CR-021's manual-only rule ("edit should effect the same in Books"); a
+// Books failure never fails the save, it comes back as zohoWarning.
+router.post("/update-item", async (req, res) => {
+  const { itemId, name, sku, description, selectedValues } = req.body;
+  if (!idOk(itemId)) return res.status(400).json({ error: "Invalid itemId" });
+  if (!name || !sku) return res.status(400).json({ error: "name and sku are required" });
+
+  try {
+    const rows = rowList(
+      await req.catalyst.zcql().executeZCQLQuery(`SELECT * FROM SKUItem WHERE ROWID = ${itemId} AND ${orgClause(req.catalyst)}`),
+    );
+    if (!rows.length) return res.status(404).json({ error: "SKU item not found" });
+    const existing = out(rows[0]);
+
+    const missing = await missingRequired(req.catalyst, existing.industryId, selectedValues);
+    if (missing.length) return res.status(400).json({ error: `Required fields missing: ${missing.join(", ")}` });
+    if (await findSkuRowId(req.catalyst, sku, itemId)) {
+      return res.status(409).json({ error: "SKU already exists" });
+    }
+
+    await req.catalyst.datastore().table("SKUItem").updateRow({
+      ROWID: itemId, name, sku, description: description || null,
+    });
+    await deleteItemValues(req.catalyst, itemId);
+    await saveItemValues(req.catalyst, itemId, existing.industryId, selectedValues);
+
+    const item = { ...existing, name, sku, description: description || null };
+    let zohoWarning;
+    if (existing.zohoItemId) {
+      try {
+        await pushToZoho(req.catalyst, item, item.description);
+      } catch (e) {
+        console.error("[Zoho] auto-push on edit failed:", e.message);
+        zohoWarning = e.message;
+      }
+    }
+    res.json({ ...item, ...(zohoWarning ? { zohoWarning } : {}) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

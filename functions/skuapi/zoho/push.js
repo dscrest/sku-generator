@@ -1,7 +1,7 @@
 "use strict";
 const { isConfigured } = require("./auth");
 const { createItem, updateItem, findItemByName, getItem, deleteItem } = require("./booksApi");
-const { createCompositeItem, updateCompositeItemFields } = require("./inventoryApi");
+const { createCompositeItem, updateCompositeItemFields, getCompositeItem, updateCompositeItem } = require("./inventoryApi");
 const { buildZohoCustomFields } = require("../itemValues");
 const { rowList, out, orgClause, zStr, isActive, idOk } = require("../store");
 
@@ -16,9 +16,11 @@ const isGone = (e) => e.zohoCode === 1002 || e.zohoCode === 2006 || e.httpStatus
  * Associated items for a Manufacturing composite (CR-029, spec §4/§11): the
  * selected values of every active property flagged createValuesAsItems, each
  * resolved to a live Books item via pushValueToZoho (which heals stale links,
- * reuses twins, links by name, or creates). Throws — failing the push — when a
- * flagged property has no usable selection or a value can't be resolved.
- * Quantity is always 1 (per-unit); the BOM is refined later on the BOM pages.
+ * reuses twins, links by name, or creates). An unselected flagged property is
+ * simply not part of this SKU and is skipped (CR-030 — most industries have
+ * far more parameters than any one SKU uses); only a *selected* value that
+ * can't be resolved fails the push. Quantity is always 1 (per-unit); the BOM
+ * is refined later on the BOM pages.
  */
 async function buildAssociatedItems(catalyst, item) {
   const zcql = catalyst.zcql();
@@ -32,15 +34,11 @@ async function buildAssociatedItems(catalyst, item) {
   ).map(out);
   const valByProp = Object.fromEntries(vals.map((v) => [String(v.propertyId), v]));
 
-  // A flagged property needs a list-value selection (valueId) — a Range number
-  // can never be a Books item, so it counts as missing too.
-  const missing = flagged.filter((p) => !idOk((valByProp[String(p.id)] || {}).valueId));
-  if (missing.length) {
-    throw new Error(`Books-item properties missing a value: ${missing.map((p) => p.caption).join(", ")}`);
-  }
+  // Only list-value selections can be Books items (a Range number can't).
+  const selected = flagged.filter((p) => idOk((valByProp[String(p.id)] || {}).valueId));
 
   const mapped = [];
-  for (const prop of flagged) {
+  for (const prop of selected) {
     const sel = valByProp[String(prop.id)];
     const pvs = rowList(
       await zcql.executeZCQLQuery(`SELECT * FROM PropertyValue WHERE ROWID = ${sel.valueId} AND ${orgClause(catalyst)}`),
@@ -55,6 +53,49 @@ async function buildAssociatedItems(catalyst, item) {
   return mapped;
 }
 
+/**
+ * Merge a composite's existing BOM with the current property-derived lines
+ * (CR-030). `poolIds` is the set of item ids the generator owns (every
+ * zohoItemId a flagged property's values could contribute): lines outside the
+ * pool are manual BOM work and pass through untouched, quantities included;
+ * pool lines are replaced by `desired` (keeping an existing line's quantity
+ * when the item stays). Pure — exported for the self-check.
+ */
+function mergeMappedLines(existingLines, desired, poolIds) {
+  const existing = (existingLines || []).map((l) => ({ id: String(l.item_id), qty: Number(l.quantity) || 0 }));
+  const byId = Object.fromEntries(existing.map((l) => [l.id, l]));
+  const manual = existing.filter((l) => !poolIds.has(l.id));
+  const propLines = desired.map((d) => {
+    const id = String(d.rmItemId);
+    return { id, qty: byId[id] ? byId[id].qty : Number(d.perUnitQty) || 1 };
+  });
+  const merged = [...manual, ...propLines];
+  const key = (ls) => ls.map((l) => `${l.id}:${l.qty}`).sort().join("|");
+  return { lines: merged.map((l) => ({ rmItemId: l.id, perUnitQty: l.qty })), changed: key(merged) !== key(existing) };
+}
+
+// After a Manufacturing re-push, bring the composite's property-derived
+// associated items in line with the current selections — swap out the old
+// value's item, swap in the new — without ever touching manual BOM lines.
+async function syncMappedItems(catalyst, item, desired) {
+  const zcql = catalyst.zcql();
+  // Pool = every Books item any flagged property's values map to. A manual
+  // line that happens to reuse one of those items is treated as
+  // property-derived — acceptable ambiguity; the generator re-adds it if selected.
+  const flaggedProps = rowList(
+    await zcql.executeZCQLQuery(`SELECT ROWID, createValuesAsItems FROM Property WHERE industryId = ${item.industryId} AND ${orgClause(catalyst)}`),
+  ).map(out).filter((p) => p.createValuesAsItems === true).map((p) => String(p.id));
+  if (!flaggedProps.length) return;
+  const pool = new Set(rowList(
+    await zcql.executeZCQLQuery(
+      `SELECT zohoItemId FROM PropertyValue WHERE propertyId IN (${flaggedProps.join(",")}) AND zohoItemId IS NOT NULL AND ${orgClause(catalyst)}`,
+    ),
+  ).map((r) => String(r.zohoItemId)));
+  const comp = await getCompositeItem(catalyst, item.zohoItemId);
+  const { lines, changed } = mergeMappedLines(comp.mapped_items, desired, pool);
+  if (changed) await updateCompositeItem(catalyst, item.zohoItemId, lines);
+}
+
 // Manufacturing → Books composite (assembly) item. Same self-heal shape as the
 // plain path, plus the legacy case: an item pushed before CR-029 holds a
 // plain-item id, so the composite update 404s — if that plain item still
@@ -63,12 +104,14 @@ async function buildAssociatedItems(catalyst, item) {
 async function pushManufacturing(catalyst, item, description, customFields) {
   if (item.zohoItemId) {
     try {
-      return await updateCompositeItemFields(catalyst, item.zohoItemId, {
+      const updated = await updateCompositeItemFields(catalyst, item.zohoItemId, {
         name: item.name,
         sku: item.sku,
         ...(description !== undefined ? { description, purchase_description: description } : {}),
         ...(customFields && customFields.length ? { custom_fields: customFields } : {}),
       });
+      await syncMappedItems(catalyst, item, await buildAssociatedItems(catalyst, item));
+      return updated;
     } catch (e) {
       if (!isGone(e)) throw e;
       let plain = null;
@@ -178,4 +221,4 @@ async function pushValueToZoho(catalyst, value) {
   return zohoItemId ? { item_id: zohoItemId } : null;
 }
 
-module.exports = { pushToZoho, pushValueToZoho, buildAssociatedItems };
+module.exports = { pushToZoho, pushValueToZoho, buildAssociatedItems, mergeMappedLines };

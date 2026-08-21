@@ -7,6 +7,7 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 | CR | Date | Title | Status |
 |----|------|-------|--------|
+| CR-030 | 2026-08-21 | Unselected Books-item properties skip (not error); edit a generated SKU in the generator with auto Books re-sync incl. property-derived BOM lines | 🚧 in progress |
 | CR-029 | 2026-08-18 | Manufacturing SKUs push as Books composite (assembly) items — associated items from Books-item properties, full field mapping, type locked after push | 🚧 in progress |
 | CR-028 | 2026-08-13 | BOM page lists Books composite items (no work orders); import can create composite + missing component items in Books; CSV template download | 🚧 in progress |
 | CR-027 | 2026-08-11 | Books item field-mapping defaults on push (Pcs unit, serial inventory tracking, Finished Goods / FIFO, §3 constants, §4 param custom fields) | 🚧 in progress |
@@ -35,6 +36,49 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 | CR-003 | 2026-07-02 | Item search, grid filters, pagination, sidebar, branding | ✅ shipped |
 | CR-002 | 2026-06-30 | Migrate backend to Catalyst Data Store | ✅ shipped |
 | CR-001 | 2026-05-28 | SKU editing + Zoho Books value sync & import | ✅ shipped |
+
+---
+
+## CR-030 — Skip unselected Books-item properties + edit SKU in generator (2026-08-21) — 🚧 in progress
+
+**Asked** (from CR-029 live testing): (1) with 24 parameters a SKU legitimately
+uses only some — an unselected Books-item property must not block the
+Manufacturing push ("Books-item properties missing a value: …" was wrong);
+(2) a generated SKU's *parameters* must be editable afterwards, with the change
+reflected in Zoho Books.
+
+**Decisions:** unselected flagged property → skipped (only a *selected* value
+that can't resolve still fails, §11.6); edit = reopen the generator prefilled;
+**auto-push on save** for Books-linked items — the one deliberate exception to
+CR-021's manual-only rule; Manufacturing BOM sync swaps only property-derived
+associated items, manual BOM lines and their quantities are never touched.
+
+**Shipped:**
+- [zoho/push.js](functions/skuapi/zoho/push.js) — `buildAssociatedItems` skips
+  flagged properties without a usable list selection (Range numbers included).
+  New pure `mergeMappedLines(existing, desired, poolIds)` + `syncMappedItems`:
+  on Manufacturing re-push, the composite's BOM is re-read, lines whose item is
+  in the "generator-owned pool" (every `zohoItemId` any flagged property's
+  values map to) are replaced by the current selections (existing quantity kept
+  when the item stays), all other lines pass through untouched; PUT only when
+  something changed.
+- Edit-in-generator: `GET /api/sku-items/:id/values`
+  ([routes/skuItems.js](functions/skuapi/routes/skuItems.js)) returns the item +
+  stored selections; `POST /api/sku/update-item`
+  ([routes/sku.js](functions/skuapi/routes/sku.js)) validates (required props,
+  duplicate SKU excluding self), updates the row, replaces `SKUItemValue`s, and
+  auto-pushes linked items (Books failure → `zohoWarning`, save never fails);
+  `/api/sku/generate` takes `excludeItemId` so an unchanged SKU isn't its own
+  duplicate.
+- [SKUGeneratorPage.jsx](frontend/src/pages/SKUGeneratorPage.jsx) — `?item=<id>`
+  edit mode: selections prefilled, industry + type locked, "Update SKU" button,
+  zohoWarning toast. [SKUItemsPage.jsx](frontend/src/pages/SKUItemsPage.jsx) —
+  "Edit parameters" button in the detail panel.
+- Check: [push.test.js](functions/skuapi/zoho/push.test.js) — skip cases +
+  `mergeMappedLines` (swap, manual-line preservation, no-change detection).
+
+**Not done (and why):** editing an item's industry (would orphan its values —
+industry locked in edit mode). Auto-push on *create* stays off (CR-021).
 
 ---
 

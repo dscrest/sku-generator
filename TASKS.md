@@ -10,11 +10,18 @@ Related docs: [CHANGES.md](CHANGES.md) (change requests + shipped log),
 [SCHEMA.md](SCHEMA.md) (DB), [ARCHITECTURE.md](ARCHITECTURE.md) (system),
 [ZOHO_AUTH.md](ZOHO_AUTH.md) (OAuth setup).
 
-Last updated: 2026-08-18.
+Last updated: 2026-08-21.
 
 ---
 
 ## In progress
+
+### CR-030 — Skip unselected Books-item props + edit SKU in generator (branch `feat/zoho-field-mapping`)
+- [x] `zoho/push.js` — `buildAssociatedItems` skips unselected flagged props; `mergeMappedLines` + `syncMappedItems` (property-derived BOM swap on re-push, manual lines untouched, write only on change)
+- [x] `GET /api/sku-items/:id/values` (item + stored selections); `POST /api/sku/update-item` (validate, replace values, auto-push linked items → `zohoWarning` on Books failure); `generate` takes `excludeItemId`
+- [x] `SKUGeneratorPage.jsx` `?item=` edit mode (prefill, industry/type locked, Update SKU); `SKUItemsPage.jsx` "Edit parameters"
+- [x] Check: `push.test.js` skip + merge cases
+- [ ] Verify on deploy: partial-selection Manufacturing push succeeds; edit → SKU/name/description regenerate (no self-duplicate) → Books item/composite auto-syncs; BOM swap keeps manual lines; unlinked edit saves without push
 
 ### CR-029 — Manufacturing SKUs push as Books composite items (branch `feat/zoho-field-mapping`)
 - [x] `zoho/push.js` — `pushToZoho` branches on `type`; `pushManufacturing` (fields-only re-push, stale-link + legacy plain-item heal); `buildAssociatedItems` (flagged props → selections → `pushValueToZoho`, throws with captions on any gap)
