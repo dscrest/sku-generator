@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
+import { ConfirmModal } from '../components/Modal.jsx';
 import RowDeleteButton from '../components/RowDeleteButton.jsx';
 import RowEditButton from '../components/RowEditButton.jsx';
 import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
@@ -21,6 +22,7 @@ export default function PropertiesPage() {
   const [fIndustry, setFIndustry] = useState('');
   const [fType, setFType] = useState('');
   const [fRequired, setFRequired] = useState('');
+  const [confirmDel, setConfirmDel] = useState(null);
   const navigate = useNavigate();
 
   const load = useCallback(async () => {
@@ -51,11 +53,11 @@ export default function PropertiesPage() {
   }
 
   async function handleDelete(p) {
-    if (!confirm(`Delete property "${p.caption || p.name}" and its values?`)) return;
     try {
       await axios.delete(`/api/properties/${p.id}`);
       toast.success('Property deleted'); load();
     } catch { toast.error('Failed to delete property'); }
+    finally { setConfirmDel(null); }
   }
 
   const SortArrow = ({ col }) => (
@@ -125,7 +127,7 @@ export default function PropertiesPage() {
                   <td style={{ padding: '8px 12px' }}>
                     <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
                       <RowEditButton onEdit={() => navigate(`/sku/industries/${p.industryId}/properties`)} title={`Edit in ${p.industryName || 'industry'} manager`} />
-                      <RowDeleteButton onDelete={() => handleDelete(p)} title={`Delete ${p.caption || p.name}`} />
+                      <RowDeleteButton onDelete={() => setConfirmDel(p)} title={`Delete ${p.caption || p.name}`} />
                     </div>
                   </td>
                 </tr>
@@ -136,6 +138,17 @@ export default function PropertiesPage() {
       </div>
 
       <GridFooter pager={pager} />
+
+      {confirmDel && (
+        <ConfirmModal
+          title={`Delete property "${confirmDel.caption || confirmDel.name}"?`}
+          confirmLabel="Delete property"
+          onConfirm={() => handleDelete(confirmDel)}
+          onClose={() => setConfirmDel(null)}
+        >
+          The property and its values are removed. This cannot be undone.
+        </ConfirmModal>
+      )}
     </div>
   );
 }

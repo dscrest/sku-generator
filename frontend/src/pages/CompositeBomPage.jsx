@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import GridFooter, { usePager } from '../components/GridFooter.jsx';
@@ -20,6 +21,24 @@ export default function CompositeBomPage() {
   const [q, setQ] = useState('');
   const [selected, setSelected] = useState(null); // { id, name, sku } | 'new'
   const [blocked, setBlocked] = useState(null);
+  // ?composite= deep-links a drill-in so refresh keeps the place (CR-038).
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const id = searchParams.get('composite');
+    if (id && !selected && rows) {
+      const r = rows.find(x => String(x.id) === String(id));
+      if (r) setSelected(r);
+    }
+    // eslint-disable-next-line
+  }, [rows]);
+  useEffect(() => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      if (selected && selected !== 'new' && selected.id) p.set('composite', selected.id);
+      else p.delete('composite');
+      return p;
+    }, { replace: true });
+  }, [selected, setSearchParams]);
   const [importGroups, setImportGroups] = useState(null); // parsed Books export
   const [impCreateMissing, setImpCreateMissing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -78,6 +97,7 @@ export default function CompositeBomPage() {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
         <input
           value={q} onChange={e => setQ(e.target.value)} placeholder="Search name, SKU…"
+          aria-label="Search composite items"
           style={{ width: 260, padding: '7px 11px', fontSize: 13, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)' }}
         />
         <div style={{ flex: 1 }} />

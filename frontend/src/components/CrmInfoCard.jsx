@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import axios from 'axios';
 
 // Shows the originating Zoho CRM Deal when the generator is opened from a CRM
@@ -17,12 +18,16 @@ const lookup = (v) => (v && typeof v === 'object' ? v.name : v) || null;
 // HashRouter's useSearchParams only sees the query INSIDE the hash
 // (/app/#/sku/...?dealId=). Zoho link buttons often put it BEFORE the hash
 // (/app/?dealId=...#/sku/...) — read both so either form works.
-export function readDealId(searchParams) {
+export function readParam(searchParams, key) {
   return (
-    (searchParams && searchParams.get('dealId')) ||
-    new URLSearchParams(window.location.search).get('dealId') ||
+    (searchParams && searchParams.get(key)) ||
+    new URLSearchParams(window.location.search).get(key) ||
     ''
   );
+}
+
+export function readDealId(searchParams) {
+  return readParam(searchParams, 'dealId');
 }
 
 export default function CrmInfoCard({ dealId }) {
@@ -92,6 +97,12 @@ export default function CrmInfoCard({ dealId }) {
             <div style={{ fontSize: 13.5, fontWeight: 600, color: C.ink }}>{value}</div>
           </div>
         ))}
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <Link to={`/estimate?dealId=${encodeURIComponent(dealId)}`}
+          style={{ fontSize: 13, color: C.accent, fontWeight: 600 }}>
+          Print Estimate →
+        </Link>
       </div>
     </div>
   );

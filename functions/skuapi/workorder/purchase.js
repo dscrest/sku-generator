@@ -622,16 +622,26 @@ async function refreshPurchaseOrders(catalyst, orgId, { poIds } = {}) {
     byPo.get(String(l.zohoPoId)).push(l);
   }
 
+  // Fetch the PO details concurrently (capped well under Zoho's ~100 req/min),
+  // then apply the line updates sequentially as before.
+  const CONCURRENCY = 5;
+  const poIdsList = [...byPo.keys()];
+  const fetched = new Map();
+  for (let i = 0; i < poIdsList.length; i += CONCURRENCY) {
+    await Promise.all(poIdsList.slice(i, i + CONCURRENCY).map(async (poId) => {
+      try {
+        fetched.set(poId, await getPurchaseOrder(catalyst, poId));
+      } catch (err) {
+        console.error(`PO ${poId} refresh failed:`, err && err.message);
+      }
+    }));
+  }
+
   const table = catalyst.datastore().table("PurchaseRequestLine");
   let refreshed = 0;
   for (const [poId, poLines] of byPo) {
-    let po;
-    try {
-      po = await getPurchaseOrder(catalyst, poId);
-    } catch (err) {
-      console.error(`PO ${poId} refresh failed:`, err && err.message);
-      continue;
-    }
+    const po = fetched.get(poId);
+    if (!po) continue;
     // A grouped PO line (CR-023) can back several local lines — one per WO that
     // shares the item. Split the PO line's received/billed across them by
     // purchaseQty share so no WO double-counts. One local line → it gets the lot.
@@ -729,14 +739,33 @@ async function listAllPRs(catalyst, orgId) {
 // Coarse procurement status per work order (CR-023), for the WO list/detail and
 // filters. One scan of this org's PR lines; older lines without workOrderId fall
 // back to their parent request's WO so nothing has to be backfilled.
-async function procStatusByWo(catalyst, orgId) {
-  const lines = await byOrg(catalyst, orgId, "PurchaseRequestLine", null);
-  if (!lines.length) return new Map();
+// Pass `workOrderId` to scope the scan to one WO (the detail page) — the
+// org-wide scan is only for the list.
+async function procStatusByWo(catalyst, orgId, workOrderId) {
+  let lines;
   let prById = new Map();
-  if (lines.some((l) => !l.workOrderId)) {
-    const prs = await byOrg(catalyst, orgId, "PurchaseRequest", null);
+  if (workOrderId) {
+    const woId = String(workOrderId);
+    const prs = await byOrg(catalyst, orgId, "PurchaseRequest", `workOrderId = ${zStr(woId)}`);
     prById = new Map(prs.map((p) => [String(p.ROWID), p]));
+    const ids = inList(prs.map((p) => p.ROWID));
+    // Two paths cover both new lines (stamped with workOrderId) and older ones
+    // that only know their parent request; dedupe by ROWID.
+    const [direct, viaPr] = await Promise.all([
+      byOrg(catalyst, orgId, "PurchaseRequestLine", `workOrderId = ${zStr(woId)}`),
+      ids ? byOrg(catalyst, orgId, "PurchaseRequestLine", `purchaseRequestId IN (${ids})`) : [],
+    ]);
+    const seen = new Map();
+    for (const l of [...direct, ...viaPr]) seen.set(String(l.ROWID), l);
+    lines = [...seen.values()];
+  } else {
+    lines = await byOrg(catalyst, orgId, "PurchaseRequestLine", null);
+    if (lines.some((l) => !l.workOrderId)) {
+      const prs = await byOrg(catalyst, orgId, "PurchaseRequest", null);
+      prById = new Map(prs.map((p) => [String(p.ROWID), p]));
+    }
   }
+  if (!lines.length) return new Map();
   const byWo = new Map();
   for (const l of lines) {
     const parent = prById.get(String(l.purchaseRequestId));

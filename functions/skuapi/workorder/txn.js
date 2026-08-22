@@ -12,7 +12,7 @@ const { rowList, zStr } = require("../store");
 const { dsDate } = require("../zoho/auth");
 const { createTransferOrder } = require("../zoho/inventoryApi");
 const { validateLine, applyToBalance, TXN_TYPES } = require("./formulas");
-const { routeFor, nextNumber, logActivity, byOrg, settings } = require("./store");
+const { routeFor, nextNumber, logActivity, byOrg, settings, inList } = require("./store");
 const { buildGrid, indexRows } = require("./grid");
 
 const n = (v) => Number(v) || 0;
@@ -143,6 +143,7 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
 
   await applyBalances(catalyst, orgId, wo, fg, txn.type, lines);
   await adjustSnapshots(catalyst, orgId, route, lines);
+  await advanceWoStatus(catalyst, orgId, wo, txn, userId);
 
   await logActivity(catalyst, orgId, "MaterialTxn", txn.ROWID, `txn.confirm.${txn.type}`, userId, {
     txnNumber: txn.txnNumber, transferOrder: to.transfer_order_number, lines,
@@ -158,6 +159,26 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
   };
 }
 
+/**
+ * Confirmed material movement drives the WO lifecycle (BRD §6.1.2): the first
+ * reserve marks allocation underway, the first issue marks production started.
+ * Forward-only — dereserve/return never demote, so the completion sweep
+ * (autoReturnOnComplete) leaves the status alone.
+ */
+const STATUS_BUMP = {
+  reserve: { to: "MaterialAllocationPending", from: ["Draft", "Approved"] },
+  issue: { to: "InProgress", from: ["Draft", "Approved", "MaterialAllocationPending", "ReadyForProduction"] },
+};
+
+async function advanceWoStatus(catalyst, orgId, wo, txn, userId) {
+  const bump = STATUS_BUMP[txn.type];
+  if (!bump || !bump.from.includes(String(wo.status))) return;
+  await catalyst.datastore().table("WorkOrder").updateRow({ ROWID: String(wo.ROWID), status: bump.to });
+  await logActivity(catalyst, orgId, "WorkOrder", wo.ROWID, "wo.status", userId, {
+    from: wo.status, to: bump.to, via: txn.txnNumber,
+  });
+}
+
 async function cancelTxn(catalyst, orgId, txnId, userId) {
   const txn = await loadTxn(catalyst, orgId, txnId);
   if (txn.status === "Confirmed") {
@@ -170,6 +191,56 @@ async function cancelTxn(catalyst, orgId, txnId, userId) {
   await catalyst.datastore().table("MaterialTxn").updateRow({ ROWID: String(txn.ROWID), status: "Cancelled" });
   await logActivity(catalyst, orgId, "MaterialTxn", txn.ROWID, "txn.cancel", userId, { txnNumber: txn.txnNumber });
   return { id: String(txn.ROWID), status: "Cancelled" };
+}
+
+// ---- auto-return on completion (CR-031) -----------------------------------
+
+/**
+ * Pure: what goes back to Main once production is done. Everything still in the
+ * Reserve warehouse is leftover (dereserve = C), and anything issued beyond the
+ * final requirement is over-issue (return = max(0, D − A)). Issued stock within
+ * the requirement is assumed consumed by assembly — the app cannot know
+ * otherwise; users return unconsumed material via the grid before completing.
+ */
+function sweepLines(gridRows) {
+  const dereserve = [];
+  const ret = [];
+  for (const r of gridRows || []) {
+    if (n(r.reserved) > 0) dereserve.push({ itemId: String(r.itemId), qty: n(r.reserved) });
+    const over = n(r.issued) - n(r.bom);
+    if (over > 0) ret.push({ itemId: String(r.itemId), qty: over });
+  }
+  return { dereserve, return: ret };
+}
+
+/**
+ * Send leftover material back to Main when a work order completes. One
+ * dereserve and/or return txn per FG, confirmed immediately (each writes a Zoho
+ * Transfer Order). A Zoho failure throws — the caller aborts the status change,
+ * and a retry sweeps only what is still outstanding.
+ */
+async function autoReturnOnComplete(catalyst, orgId, wo, userId) {
+  const fgs = await byOrg(catalyst, orgId, "WorkOrderFG", `workOrderId = ${zStr(String(wo.ROWID))}`);
+  const transferOrders = [];
+  for (const fg of fgs) {
+    const grid = await buildGrid(catalyst, orgId, wo, fg);
+    const sweep = sweepLines(grid.rows);
+    for (const [type, lines] of [["dereserve", sweep.dereserve], ["return", sweep.return]]) {
+      if (!lines.length) continue;
+      const draft = await createDraft(
+        catalyst, orgId,
+        {
+          workOrderId: wo.ROWID, workOrderFgId: fg.ROWID, type,
+          requested: lines.map((l) => ({ itemId: l.itemId, qty: l.qty })),
+          notes: "Auto-return on completion",
+        },
+        userId,
+      );
+      const confirmed = await confirmTxn(catalyst, orgId, draft.id, userId);
+      transferOrders.push({ type, txnNumber: confirmed.txnNumber, transferOrderNumber: confirmed.transferOrderNumber });
+    }
+  }
+  return { transferOrders };
 }
 
 // ---- balances & snapshots -------------------------------------------------
@@ -240,9 +311,9 @@ async function recompute(catalyst, orgId, workOrderId) {
     "CREATEDTIME",
   );
   const fresh = new Map(); // `${fgId}|${itemId}` -> balance
+  const lineMap = await txnLines(catalyst, orgId, txns);
   for (const t of txns) {
-    const lines = await byOrg(catalyst, orgId, "MaterialTxnLine", `txnId = ${zStr(String(t.ROWID))}`);
-    for (const l of lines) {
+    for (const l of lineMap.get(String(t.ROWID)) || []) {
       const key = `${t.workOrderFgId}|${l.rmItemId}`;
       fresh.set(key, applyToBalance(t.type, fresh.get(key) || {}, l.qty));
     }
@@ -286,14 +357,28 @@ async function loadTxn(catalyst, orgId, txnId) {
   return rows[0];
 }
 
+// All lines of a set of transactions in one IN (...) query, grouped by txn id.
+async function txnLines(catalyst, orgId, txns) {
+  const ids = inList(txns.map((t) => t.ROWID));
+  const map = new Map();
+  if (!ids) return map;
+  for (const l of await byOrg(catalyst, orgId, "MaterialTxnLine", `txnId IN (${ids})`)) {
+    const k = String(l.txnId);
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(l);
+  }
+  return map;
+}
+
 // History for the work order's History tab.
 async function listTxns(catalyst, orgId, workOrderId) {
   const txns = await byOrg(
     catalyst, orgId, "MaterialTxn", `workOrderId = ${zStr(String(workOrderId))}`, "CREATEDTIME DESC",
   );
+  const lineMap = await txnLines(catalyst, orgId, txns);
   const out = [];
   for (const t of txns) {
-    const lines = await byOrg(catalyst, orgId, "MaterialTxnLine", `txnId = ${zStr(String(t.ROWID))}`);
+    const lines = lineMap.get(String(t.ROWID)) || [];
     out.push({
       id: String(t.ROWID),
       txnNumber: t.txnNumber,
@@ -311,7 +396,7 @@ async function listTxns(catalyst, orgId, workOrderId) {
 
 module.exports = {
   planLines, createDraft, confirmTxn, cancelTxn, recompute, listTxns,
-  applyBalances, adjustSnapshots, loadContext, loadTxn,
+  applyBalances, adjustSnapshots, loadContext, loadTxn, sweepLines, autoReturnOnComplete,
 };
 
 // ponytail self-check: `node functions/skuapi/workorder/txn.js --selftest`
@@ -360,6 +445,17 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.match(planLines("teleport", rows, [{ itemId: "11", qty: 1 }]).errors[0], /Unknown transaction type/);
   assert.match(planLines("reserve", rows, []).errors[0], /at least one line/);
   assert.match(planLines("reserve", rows, [{ itemId: "11", qty: 1 }, { itemId: "11", qty: 1 }]).errors[0], /twice/);
+
+  // Auto-return sweep (CR-031): reserved stock always goes back; issued only
+  // when it exceeds the final requirement (a removed line has bom = 0).
+  const sweep = sweepLines([
+    gridRow({ rmItemId: "11", requiredQty: 10 }, { stockOnHand: 0 }, { reservedQty: 2, issuedQty: 1 }, {}),
+    gridRow({ rmItemId: "22", requiredQty: 0 }, { stockOnHand: 0 }, { reservedQty: 3, issuedQty: 4, returnedQty: 1 }, {}),
+    gridRow({ rmItemId: "33", requiredQty: 5 }, { stockOnHand: 9 }, {}, {}),
+  ]);
+  assert.deepStrictEqual(sweep.dereserve, [{ itemId: "11", qty: 2 }, { itemId: "22", qty: 3 }]);
+  assert.deepStrictEqual(sweep.return, [{ itemId: "22", qty: 3 }], "removed line: issued 4 − returned 1 − bom 0 = 3 back");
+  assert.deepStrictEqual(sweepLines([]), { dereserve: [], return: [] }, "nothing committed → nothing to sweep");
 
   console.log("workorder/txn.js self-check passed");
 }

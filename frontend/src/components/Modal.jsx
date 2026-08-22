@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 
-export default function Modal({ title, onClose, children, width = 480 }) {
+// Pass `onSubmit` to make Enter in any field trigger the primary action —
+// the children render inside a <form> with a hidden submit button.
+export default function Modal({ title, onClose, onSubmit, children, width = 480 }) {
   useEffect(() => {
     const h = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', h);
@@ -52,9 +54,19 @@ export default function Modal({ title, onClose, children, width = 480 }) {
             </svg>
           </button>
         </div>
-        <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {children}
-        </div>
+        {onSubmit ? (
+          <form
+            onSubmit={e => { e.preventDefault(); onSubmit(); }}
+            style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}
+          >
+            {children}
+            <button type="submit" style={{ display: 'none' }} aria-hidden="true" tabIndex={-1} />
+          </form>
+        ) : (
+          <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {children}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -73,6 +85,20 @@ export function ModalFooter({ children }) {
   );
 }
 
+// One-question destructive confirm — replaces window.confirm so Esc/close
+// always means "keep it", never a hidden second meaning.
+export function ConfirmModal({ title, children, confirmLabel = 'Delete', onConfirm, onClose }) {
+  return (
+    <Modal title={title} onClose={onClose} width={420}>
+      <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{children}</div>
+      <ModalFooter>
+        <ModalBtn onClick={onClose}>Keep it</ModalBtn>
+        <ModalBtn variant="primary" onClick={onConfirm}>{confirmLabel}</ModalBtn>
+      </ModalFooter>
+    </Modal>
+  );
+}
+
 export function ModalBtn({ onClick, variant = 'ghost', children, disabled }) {
   const base = {
     padding: '8px 16px', borderRadius: 'var(--radius-md)',
@@ -84,5 +110,5 @@ export function ModalBtn({ onClick, variant = 'ghost', children, disabled }) {
     primary: { ...base, background: 'var(--blue)', color: '#fff' },
     ghost: { ...base, background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border-mid)' },
   };
-  return <button onClick={onClick} disabled={disabled} style={styles[variant]}>{children}</button>;
+  return <button type="button" onClick={onClick} disabled={disabled} style={styles[variant]}>{children}</button>;
 }

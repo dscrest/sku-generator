@@ -3,10 +3,12 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
-import { ModalBtn } from '../components/Modal.jsx';
+import Modal, { ModalFooter, ModalBtn } from '../components/Modal.jsx';
 import { readDealId } from '../components/CrmInfoCard';
 import RowDeleteButton from '../components/RowDeleteButton.jsx';
+import RowEditButton from '../components/RowEditButton.jsx';
 import GridFooter, { usePager } from '../components/GridFooter.jsx';
+import { fmtDate } from '../format.js';
 
 const inputStyle = {
   width: '100%', background: 'var(--bg-secondary)', border: '1px solid var(--border)',
@@ -24,6 +26,13 @@ const thStyle = {
   background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)',
 };
 
+// Edited after the last Books push → the row in Books is out of date. The 5s
+// slack absorbs the push handler's own lastPushedAt write bumping MODIFIEDTIME.
+function isStale(item) {
+  return Boolean(item.zohoItemId && item.lastPushedAt && item.updatedAt &&
+    new Date(item.updatedAt) - new Date(item.lastPushedAt) > 5000);
+}
+
 const selectStyle = {
   background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
   padding: '6px 10px', fontSize: 12, color: 'var(--text-primary)', fontFamily: 'var(--font)', outline: 'none',
@@ -32,21 +41,23 @@ const selectStyle = {
 export default function SKUItemsPage() {
   const navigate = useNavigate();
   const [items, setItems] = useState([]);
+  const [loaded, setLoaded] = useState(false); // first fetch resolved — distinguishes Loading… from empty
   const [industries, setIndustries] = useState([]);
   const [filterIndustry, setFilterIndustry] = useState('');
   const [sortCol, setSortCol] = useState('createdAt');
   const [sortDir, setSortDir] = useState('desc');
   // Zoho Books master–detail: selected item id opens the left-list + detail
-  // layout; editForm is the detail panel's working copy.
-  // ponytail: local state; promote to a /sku/items/:id route if deep-linking is needed
-  const [selected, setSelected] = useState(null);
+  // layout; editForm is the detail panel's working copy. ?item= deep-links a
+  // selection so refresh / back / share keep the place (CR-038).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [selected, setSelected] = useState(searchParams.get('item') || null);
   const [editForm, setEditForm] = useState(null); // { id, name, sku, description, type } | null
   const [saving, setSaving] = useState(false);
-  const [pushingId, setPushingId] = useState(null); // item id currently syncing to Zoho
+  const [pushingId, setPushingId] = useState(null); // item id (or 'bulk') currently syncing to Zoho
+  const [confirmDelete, setConfirmDelete] = useState(null); // item awaiting delete confirmation
 
   // Text filters (free-text + SKU), debounced so we don't fire per keystroke.
   // ?q= seeds the box so a global-search hit lands on a filtered grid.
-  const [searchParams] = useSearchParams();
   const initialQ = searchParams.get('q') || '';
   const [q, setQ] = useState(initialQ);
   const [skuFilter, setSkuFilter] = useState('');
@@ -56,6 +67,24 @@ export default function SKUItemsPage() {
     const t = setTimeout(() => setDebounced({ q: q.trim(), sku: skuFilter.trim() }), 300);
     return () => clearTimeout(t);
   }, [q, skuFilter]);
+
+  // Mirror selection + search into the URL so refresh keeps the user's place.
+  useEffect(() => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      selected ? p.set('item', selected) : p.delete('item');
+      debounced.q ? p.set('q', debounced.q) : p.delete('q');
+      return p;
+    }, { replace: true });
+  }, [selected, debounced.q, setSearchParams]);
+
+  // Deep link (?item=) arrives before the items load — hydrate the detail
+  // panel's working copy once the row is available.
+  useEffect(() => {
+    if (!selected || editForm) return;
+    const item = items.find(i => String(i.id) === String(selected));
+    if (item) setEditForm({ id: item.id, name: item.name, sku: item.sku, description: item.description || '', type: item.type });
+  }, [items, selected, editForm]);
 
   // Property search
   const [properties, setProperties] = useState([]);
@@ -75,6 +104,7 @@ export default function SKUItemsPage() {
       });
       setItems(data);
     } catch { toast.error('Failed to load SKU items'); }
+    finally { setLoaded(true); }
   }, [filterIndustry, filters, debounced, typeFilter]);
 
   useEffect(() => {
@@ -192,13 +222,35 @@ export default function SKUItemsPage() {
   }
 
   async function handleDelete(item) {
-    if (!confirm(`Delete SKU "${item.sku}"?`)) return;
     try {
       await axios.delete(`/api/sku-items/${item.id}`);
       toast.success('Item deleted');
       if (String(item.id) === String(selected)) closeDetail();
       load();
     } catch { toast.error('Failed to delete item'); }
+    finally { setConfirmDelete(null); }
+  }
+
+  // Bulk push (CR-038): loop the unsynced items through the existing endpoint.
+  async function handlePushAll() {
+    const unsynced = items.filter(i => !i.zohoItemId);
+    if (!unsynced.length) return toast('Everything is already synced to Books');
+    setPushingId('bulk');
+    const tid = toast.loading(`Pushing 0/${unsynced.length} to Zoho Books…`);
+    let ok = 0; const failed = [];
+    for (const item of unsynced) {
+      try {
+        await axios.post(`/api/sku-items/${item.id}/push-zoho`);
+        ok++;
+      } catch (err) {
+        failed.push(`${item.sku}: ${err.response?.data?.error || 'failed'}`);
+      }
+      toast.loading(`Pushing ${ok + failed.length}/${unsynced.length} to Zoho Books…`, { id: tid });
+    }
+    if (failed.length) toast.error(`Pushed ${ok}; ${failed.length} failed — ${failed[0]}${failed.length > 1 ? ` (+${failed.length - 1} more)` : ''}`, { id: tid, duration: 8000 });
+    else toast.success(`Pushed ${ok} item${ok !== 1 ? 's' : ''} to Zoho Books`, { id: tid });
+    setPushingId(null);
+    load();
   }
 
   const SortArrow = ({ col }) => (
@@ -231,11 +283,18 @@ export default function SKUItemsPage() {
           </button>
           <button
             onClick={handleImportZoho}
-            disabled={!filterIndustry}
-            title={filterIndustry ? 'Import new items from Zoho Books into this industry' : 'Select an industry first'}
-            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: 12, fontWeight: 600, borderRadius: 'var(--radius-md)', border: '1px solid #fed7aa', background: '#fff7ed', color: '#ea580c', cursor: filterIndustry ? 'pointer' : 'not-allowed', opacity: filterIndustry ? 1 : 0.5, whiteSpace: 'nowrap' }}
+            title="Import new items from Zoho Books into the selected industry"
+            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: 12, fontWeight: 600, borderRadius: 'var(--radius-md)', border: '1px solid #fed7aa', background: '#fff7ed', color: '#ea580c', cursor: 'pointer', whiteSpace: 'nowrap' }}
           >
             <span style={{ fontWeight: 700 }}>Z</span> Import from Zoho
+          </button>
+          <button
+            onClick={handlePushAll}
+            disabled={pushingId === 'bulk'}
+            title="Push every SKU not yet in Zoho Books, one by one"
+            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: 12, fontWeight: 600, borderRadius: 'var(--radius-md)', border: '1px solid #bbf7d0', background: '#f0fdf4', color: '#16a34a', cursor: pushingId === 'bulk' ? 'wait' : 'pointer', opacity: pushingId === 'bulk' ? 0.6 : 1, whiteSpace: 'nowrap' }}
+          >
+            <span style={{ fontWeight: 700 }}>Z</span> {pushingId === 'bulk' ? 'Pushing…' : 'Push all unsynced'}
           </button>
           <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-muted)', background: 'var(--bg-card)', border: '1px solid var(--border)', padding: '4px 10px', borderRadius: 'var(--radius-sm)' }}>
             {items.length} record{items.length !== 1 ? 's' : ''}
@@ -249,12 +308,14 @@ export default function SKUItemsPage() {
           value={q}
           onChange={e => setQ(e.target.value)}
           placeholder="Search SKU or name…"
+          aria-label="Search SKU or name"
           style={{ ...selectStyle, width: 200 }}
         />
         <input
           value={skuFilter}
           onChange={e => setSkuFilter(e.target.value)}
           placeholder="SKU…"
+          aria-label="Filter by SKU"
           style={{ ...selectStyle, width: 130, fontFamily: 'var(--font-mono)' }}
         />
         <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={selectStyle}>
@@ -297,7 +358,11 @@ export default function SKUItemsPage() {
             {filters.map((f, i) => (
               <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 500, padding: '4px 10px', borderRadius: 14, background: 'var(--blue-light)', color: 'var(--blue)', border: '1px solid var(--border)' }}>
                 {f.label}
-                <span onClick={() => removeFilter(i)} style={{ cursor: 'pointer', fontWeight: 700 }}>×</span>
+                <button
+                  onClick={() => removeFilter(i)}
+                  aria-label={`Remove filter ${f.label}`}
+                  style={{ cursor: 'pointer', fontWeight: 700, background: 'none', border: 'none', color: 'inherit', padding: 0, fontSize: 'inherit' }}
+                >×</button>
               </span>
             ))}
           </>
@@ -323,27 +388,27 @@ export default function SKUItemsPage() {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
                     <tr>
-                      <th style={thStyle} onClick={() => toggleSort('name')}>Name <SortArrow col="name" /></th>
-                      <th style={thStyle} onClick={() => toggleSort('sku')}>SKU <SortArrow col="sku" /></th>
-                      <th style={thStyle} onClick={() => toggleSort('description')}>Description <SortArrow col="description" /></th>
-                      <th style={thStyle} onClick={() => toggleSort('type')}>Type <SortArrow col="type" /></th>
-                      <th style={thStyle} onClick={() => toggleSort('industry')}>Industry <SortArrow col="industry" /></th>
-                      <th style={thStyle} onClick={() => toggleSort('createdAt')}>Created <SortArrow col="createdAt" /></th>
+                      {[['name', 'Name'], ['sku', 'SKU'], ['description', 'Description'], ['type', 'Type'], ['industry', 'Industry'], ['createdAt', 'Created']].map(([col, label]) => (
+                        <th
+                          key={col} style={thStyle} role="button" tabIndex={0}
+                          aria-label={`Sort by ${label}`}
+                          onClick={() => toggleSort(col)}
+                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort(col); } }}
+                        >{label} <SortArrow col={col} /></th>
+                      ))}
                       <th style={{ ...thStyle, width: 110 }}>Zoho</th>
-                      <th style={{ ...thStyle, width: 48 }}></th>
+                      <th style={{ ...thStyle, width: 76 }}></th>
                     </tr>
                   </thead>
                   <tbody>
                     {sorted.length === 0 && (
-                      <tr><td colSpan={8} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No SKU items yet. Click "+ New" to generate one.</td></tr>
+                      <tr><td colSpan={8} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>{loaded ? 'No SKU items yet. Click "+ New" to generate one.' : 'Loading…'}</td></tr>
                     )}
                     {paged.map(item => {
                       return (
                         <tr
                           key={item.id}
-                          onClick={() => openDetail(item)}
-                          title="Click to view details"
-                          style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
+                          style={{ borderTop: '1px solid var(--border)', transition: 'background 0.1s' }}
                           onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
                           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                         >
@@ -358,29 +423,40 @@ export default function SKUItemsPage() {
                             </span>
                           </td>
                           <td style={{ padding: '10px 16px', color: 'var(--text-secondary)' }}>{item.industry?.name || '—'}</td>
-                          <td style={{ padding: '10px 16px', color: 'var(--text-muted)', fontSize: 12 }}>{new Date(item.createdAt).toLocaleDateString()}</td>
-                          <td style={{ padding: '8px 16px' }} onClick={e => e.stopPropagation()}>
-                            <button
-                              onClick={e => handlePushZoho(item, e)}
-                              disabled={pushingId === item.id}
-                              title={item.zohoItemId ? `Synced to Zoho Books (ID ${item.zohoItemId}) — click to re-push updates` : 'Push to Zoho Books'}
-                              style={{
-                                display: 'flex', alignItems: 'center', gap: 5,
-                                padding: '4px 10px', fontSize: 11, fontWeight: 600,
-                                background: item.zohoItemId ? '#f0fdf4' : '#fff7ed',
-                                color: item.zohoItemId ? '#16a34a' : '#ea580c',
-                                border: `1px solid ${item.zohoItemId ? '#bbf7d0' : '#fed7aa'}`,
-                                borderRadius: 'var(--radius-sm)',
-                                cursor: pushingId === item.id ? 'wait' : 'pointer',
-                                opacity: pushingId === item.id ? 0.6 : 1, whiteSpace: 'nowrap',
-                              }}
-                            >
-                              <span style={{ fontWeight: 700 }}>Z</span>
-                              {pushingId === item.id ? 'Pushing…' : item.zohoItemId ? '✓ Synced · Re-push' : 'Push'}
-                            </button>
+                          <td style={{ padding: '10px 16px', color: 'var(--text-muted)', fontSize: 12 }}>{fmtDate(item.createdAt)}</td>
+                          <td style={{ padding: '8px 16px' }}>
+                            {(() => {
+                              const stale = isStale(item);
+                              return (
+                                <button
+                                  onClick={e => handlePushZoho(item, e)}
+                                  disabled={pushingId === item.id}
+                                  title={stale ? 'Edited since the last push — Books is out of date. Click to re-push.'
+                                    : item.zohoItemId ? `Synced to Zoho Books (ID ${item.zohoItemId}) — click to re-push updates` : 'Push to Zoho Books'}
+                                  style={{
+                                    display: 'flex', alignItems: 'center', gap: 5,
+                                    padding: '4px 10px', fontSize: 11, fontWeight: 600,
+                                    background: stale ? '#fefce8' : item.zohoItemId ? '#f0fdf4' : '#fff7ed',
+                                    color: stale ? '#a16207' : item.zohoItemId ? '#16a34a' : '#ea580c',
+                                    border: `1px solid ${stale ? '#fde68a' : item.zohoItemId ? '#bbf7d0' : '#fed7aa'}`,
+                                    borderRadius: 'var(--radius-sm)',
+                                    cursor: pushingId === item.id ? 'wait' : 'pointer',
+                                    opacity: pushingId === item.id ? 0.6 : 1, whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  <span style={{ fontWeight: 700 }}>Z</span>
+                                  {pushingId === item.id ? 'Pushing…'
+                                    : stale ? 'Edited · Re-push'
+                                    : item.zohoItemId ? '✓ Synced · Re-push' : 'Push'}
+                                </button>
+                              );
+                            })()}
                           </td>
-                          <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
-                            <RowDeleteButton onDelete={() => handleDelete(item)} title={`Delete ${item.sku}`} />
+                          <td style={{ padding: '8px 12px' }}>
+                            <div style={{ display: 'flex', gap: 2 }}>
+                              <RowEditButton onEdit={() => openDetail(item)} title={`Edit ${item.sku}`} />
+                              <RowDeleteButton onDelete={() => setConfirmDelete(item)} title={`Delete ${item.sku}`} />
+                            </div>
                           </td>
                         </tr>
                       );
@@ -505,13 +581,13 @@ export default function SKUItemsPage() {
                     <div><label style={labelStyle}>Industry</label>
                       <div style={{ ...inputStyle, background: 'transparent', border: '1px solid transparent', padding: '9px 0' }}>{selectedItem?.industry?.name || '—'}</div></div>
                     <div><label style={labelStyle}>Created</label>
-                      <div style={{ ...inputStyle, background: 'transparent', border: '1px solid transparent', padding: '9px 0' }}>{selectedItem ? new Date(selectedItem.createdAt).toLocaleDateString() : '—'}</div></div>
+                      <div style={{ ...inputStyle, background: 'transparent', border: '1px solid transparent', padding: '9px 0' }}>{fmtDate(selectedItem?.createdAt)}</div></div>
                   </div>
                 </div>
 
                 <div style={{ padding: '14px 20px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <button
-                    onClick={() => selectedItem && handleDelete(selectedItem)}
+                    onClick={() => selectedItem && setConfirmDelete(selectedItem)}
                     style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', fontSize: 13, fontWeight: 500, fontFamily: 'var(--font)', border: '1px solid #fecdd3', background: 'transparent', color: '#e11d48', cursor: 'pointer' }}
                   >
                     Delete
@@ -525,6 +601,19 @@ export default function SKUItemsPage() {
             </div>
           )}
         </div>
+      )}
+
+      {confirmDelete && (
+        <Modal title={`Delete SKU "${confirmDelete.sku}"?`} onClose={() => setConfirmDelete(null)} width={420}>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+            The SKU and its stored property values are removed. This cannot be undone.
+            {confirmDelete.zohoItemId ? ' The linked item in Zoho Books is not touched.' : ''}
+          </div>
+          <ModalFooter>
+            <ModalBtn onClick={() => setConfirmDelete(null)}>Keep it</ModalBtn>
+            <ModalBtn variant="primary" onClick={() => handleDelete(confirmDelete)}>Delete SKU</ModalBtn>
+          </ModalFooter>
+        </Modal>
       )}
     </div>
   );

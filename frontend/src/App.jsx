@@ -1,24 +1,31 @@
 import { HashRouter, Routes, Route, Navigate, NavLink, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import toast from 'react-hot-toast';
 import GlobalSearch from './components/GlobalSearch.jsx';
-import IndustriesPage from './pages/IndustriesPage.jsx';
-import PropertyManagerPage from './pages/PropertyManagerPage.jsx';
-import PropertiesPage from './pages/PropertiesPage.jsx';
-import BooksLinkedValuesPage from './pages/BooksLinkedValuesPage.jsx';
-import SKUGeneratorPage from './pages/SKUGeneratorPage.jsx';
-import SKUItemsPage from './pages/SKUItemsPage.jsx';
+// Auth-flow pages stay eager — they render before anything else and are tiny.
 import ZohoConnectPage from './pages/ZohoConnectPage.jsx';
 import OrgSelectPage from './pages/OrgSelectPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
-import AddonAdminPage from './pages/AddonAdminPage.jsx';
-import ReservePage from './pages/ReservePage.jsx';
-import WorkOrderListPage from './pages/WorkOrderListPage.jsx';
-import WorkOrderPage from './pages/WorkOrderPage.jsx';
-import WorkOrderSettingsPage from './pages/WorkOrderSettingsPage.jsx';
-import WorkOrderReportsPage from './pages/WorkOrderReportsPage.jsx';
-import CompositeBomPage from './pages/CompositeBomPage.jsx';
-import WorkOrderPurchasePage from './pages/WorkOrderPurchasePage.jsx';
+// Everything behind the shell is code-split per route.
+const IndustriesPage = lazy(() => import('./pages/IndustriesPage.jsx'));
+const PropertyManagerPage = lazy(() => import('./pages/PropertyManagerPage.jsx'));
+const PropertiesPage = lazy(() => import('./pages/PropertiesPage.jsx'));
+const BooksLinkedValuesPage = lazy(() => import('./pages/BooksLinkedValuesPage.jsx'));
+const SKUGeneratorPage = lazy(() => import('./pages/SKUGeneratorPage.jsx'));
+const SKUItemsPage = lazy(() => import('./pages/SKUItemsPage.jsx'));
+const AddonAdminPage = lazy(() => import('./pages/AddonAdminPage.jsx'));
+const ReservePage = lazy(() => import('./pages/ReservePage.jsx'));
+const EstimatePage = lazy(() => import('./pages/EstimatePage.jsx'));
+const WorkOrderListPage = lazy(() => import('./pages/WorkOrderListPage.jsx'));
+const WorkOrderPage = lazy(() => import('./pages/WorkOrderPage.jsx'));
+const WorkOrderSettingsPage = lazy(() => import('./pages/WorkOrderSettingsPage.jsx'));
+const WorkOrderReportsPage = lazy(() => import('./pages/WorkOrderReportsPage.jsx'));
+const CompositeBomPage = lazy(() => import('./pages/CompositeBomPage.jsx'));
+const WorkOrderPurchasePage = lazy(() => import('./pages/WorkOrderPurchasePage.jsx'));
+
+const PageLoading = () => (
+  <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
+);
 
 const API = '/server/skuapi';
 
@@ -156,7 +163,7 @@ function HeaderBar({ zoho, addons, onLogout, onSwitchOrg }) {
               )}
               <button
                 style={menuItem}
-                onClick={() => { setOpen(false); toast.success('Submitted to helpdesk'); }}
+                onClick={() => { setOpen(false); window.location.href = 'mailto:dhiraj.s@octfis.com?subject=SKU%20Generator%20support'; }}
                 onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
               >
@@ -409,6 +416,7 @@ function AppShell({ user, refreshUser, onLogout }) {
           org's catalog instead of showing the previous org's data. */}
       <div style={S.main} key={user.orgId}>
         <HeaderBar zoho={zoho} addons={addons} onLogout={onLogout} onSwitchOrg={() => setSwitchOrg(true)} />
+        <Suspense fallback={<PageLoading />}>
         <Routes>
           <Route path="/" element={<Navigate to="/sku/industries" replace />} />
           <Route path="/sku/*" element={<SkuLayout />} />
@@ -416,6 +424,8 @@ function AppShell({ user, refreshUser, onLogout }) {
               backend 403s if the addon is off — the page shows a clear notice. */}
           <Route path="/wo/*" element={<WorkOrderLayout />} />
           <Route path="/reserve" element={<ReservePage />} />
+          {/* Deep link from a CRM deal: /#/estimate?dealId=… — no sidebar entry */}
+          <Route path="/estimate" element={<EstimatePage />} />
           {user.isAdmin && <Route path="/admin/addons" element={<AddonAdminPage />} />}
           {/* legacy paths (old bookmarks, OAuth redirects) */}
           <Route path="/sku-generator" element={<LegacyGeneratorRedirect />} />
@@ -425,6 +435,7 @@ function AppShell({ user, refreshUser, onLogout }) {
           <Route path="/admin/industries/:id/properties" element={<LegacyPropertiesRedirect />} />
           <Route path="*" element={<Navigate to="/sku/industries" replace />} />
         </Routes>
+        </Suspense>
       </div>
     </>
   );
@@ -449,7 +460,12 @@ export default function App() {
   function loadUser() {
     return fetch(`${API}/auth/me`)
       .then(r => (r.ok ? r.json() : null))
-      .then(setUser)
+      .then(u => {
+        // Successful login re-arms the CRM deep-link auto-redirect for the
+        // next session expiry.
+        if (u) sessionStorage.removeItem('autoAuthTried');
+        setUser(u);
+      })
       .catch(() => setUser(null));
   }
 
@@ -481,6 +497,10 @@ export default function App() {
         .catch(() => { setAuthError('Network error during Zoho sign-in.'); return false; })
         .then(navigating => {
           if (navigating) return;
+          // The OAuth roundtrip loses the hash (redirect_uri is the SPA root);
+          // restore the deep link stashed before the auto-redirect.
+          const returnTo = sessionStorage.getItem('returnTo');
+          if (returnTo) { sessionStorage.removeItem('returnTo'); window.location.hash = returnTo; }
           window.history.replaceState({}, '', window.location.pathname + window.location.hash);
           loadUser().finally(() => setLoading(false));
         });
@@ -501,7 +521,23 @@ export default function App() {
   }
 
   const errorParam = authError || new URLSearchParams(window.location.hash.split('?')[1] || '').get('error');
-  if (!user) return <LoginPage onAuthed={loadUser} error={errorParam} />;
+
+  // Seamless login for CRM deep links (deal/quote buttons): skip the login page
+  // and bounce silently through Zoho OAuth — no password when the user is
+  // already signed into Zoho (they just came from CRM). Once-per-tab guard so a
+  // cancelled/failed OAuth falls back to the login page instead of looping.
+  if (!user) {
+    const hashQ = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    const preQ = new URLSearchParams(window.location.search);
+    const crmDeepLink = ['dealId', 'quoteId'].some(k => hashQ.get(k) || preQ.get(k));
+    if (crmDeepLink && !sessionStorage.getItem('autoAuthTried')) {
+      sessionStorage.setItem('autoAuthTried', '1');
+      sessionStorage.setItem('returnTo', window.location.hash || `#/estimate?${preQ}`);
+      window.location.replace(`${API}/auth/zoho`);
+      return null;
+    }
+    return <LoginPage onAuthed={loadUser} error={errorParam} />;
+  }
 
   return (
     // HashRouter: Catalyst web hosting has no SPA fallback, so a hard refresh on

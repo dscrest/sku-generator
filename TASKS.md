@@ -16,6 +16,42 @@ Last updated: 2026-08-21.
 
 ## In progress
 
+### CR-035 — App-wide improvement pass (review findings, 4 phases)
+- [x] Phase 1 quick wins: `--bg-page` token, QC gate modal (Esc = do nothing), ⌘↵ create shortcut, debounced SKU preview, labeled CSV headers, helpdesk mailto, loading-vs-empty states, PR-line save toast
+- [x] Phase 2 backend perf: `buildGridsBulk` (batch the reports N+1 → ~6 queries), per-request Zoho token memo (`catalyst.__zohoToken`), scoped `procStatusByWo` for GET /:id, parallel/bulk Zoho loops (PO refresh, stock reconcile via `listItemsWithStock`, txn lines `IN`, grid self-heal)
+- [ ] Verify on deploy: reports + shortfall pages return same data faster; WO detail unchanged; force-expired token refreshes once
+- [x] Phase 3 frontend perf: WO page single-row refetch, lazy per-tab lists in WorkOrderPurchasePage, `React.memo` MaterialsGrid rows, route-level code splitting (main bundle 546→325 kB)
+- [x] Phase 4 UX: SKUItems house-grid compliance (no row-click), bulk push to Books, stale-sync badge (`lastPushedAt` column via Catalyst MCP + SCHEMA.md), URL state for selection/filters, controlled PR qty input + qty-clear guard, modal Enter-to-submit, confirm() → Modal deletes, shared fmtMoney/fmtDate, a11y basics, required-field markers, String() id compares, EstimatePage chrome tokens
+- [ ] Verify on deploy: push a SKU → badge "✓ Synced"; edit it → "Edited · Re-push"; bulk push; ?item= deep link survives refresh; Enter submits the Industry modal; QC modal Esc does nothing
+
+### CR-034 — WO status auto-advance on material movement (branch `feat/zoho-field-mapping`)
+- [x] `workorder/txn.js` — `advanceWoStatus` from `confirmTxn`: first reserve → MaterialAllocationPending (from Draft/Approved), first issue → InProgress; forward-only so the CR-031 completion sweep can't demote
+- [ ] Verify on deploy: confirm a reserve on a Draft WO → chip shows MaterialAllocationPending; confirm an issue → InProgress; complete a WO → auto-return sweep leaves status at Completed
+
+### CR-032 — Print Estimate from CRM Quote (branch `feat/zoho-field-mapping`)
+- [x] `zoho/crmApi.js` — `getQuote`, `getDealQuotes` (explicit `fields` for the related-records API)
+- [x] `routes/crm.js` — `GET /api/crm/deal/:id/quotes` (200 + array), `GET /api/crm/quote/:id` (404 on missing)
+- [x] `frontend/src/pages/estimateParser.js` — tolerant description parser (specs / DESIGN groups / size rows) + flat fallback + totals; self-check `estimateParser.test.js` (prototype totals 13,12,800 / 3,93,840 / 9,18,960 / qty 25)
+- [x] `EstimatePage.jsx` — quote picker (auto-select lone quote), sheet port of the prototype, A–F / A–D template toggle, `window.print()` with A4 print CSS
+- [x] Route `/#/estimate` in `App.jsx`; "Print Estimate →" link in `CrmInfoCard.jsx`
+- [x] `?quoteId=` deep link (Quote-record button) → sheet directly, no picker; `readParam` helper
+- [x] Checkbox multi-select on the deal's quote list → one sheet per quote, page-break between, `← Quotes` back button; print CSS wrapper `.est-print-area`
+- [x] Seamless login: CRM deep link + logged out → auto Zoho OAuth with `sessionStorage` returnTo (hash survives roundtrip) + once-per-tab loop guard
+- [x] Totals inside the item grid (TOTAL-A / DISC / TOTAL rows) + sequential PAGE nn in the grid's final row
+- [x] T&C last page: `estimateTerms.js` (defaults + localStorage + normalize, self-check `estimateTerms.test.js`) + `EstimateTerms.jsx` (`TermsSheet` printed last, `TermsEditor` behind toolbar "✎ Edit T&C" toggle)
+- [ ] CRM console: Deal button `/app/#/estimate?dealId=${Deal.Id}`, Quote button `/app/#/estimate?quoteId=${Quotes.Quote Id}`
+- [ ] Verify on deploy: deal link → checkbox list → tick 2 → two sheets, page break, no trailing blank page; quote link → direct sheet; template toggle flips all sheets; discount row present/absent; flat fallback on plain-text line; logged-out deep link auto-logs-in and returns to the estimate; cancelled OAuth → login page (no loop); pre-CRM-scope token → Connect CRM prompt
+- [ ] Pin the quote-line description convention with real quotes, then tighten the parser
+
+### CR-031 — WO item editability + completion auto-return + reconciliation (branch `feat/zoho-field-mapping`)
+- [x] `zoho/booksApi.js` — `searchItems` typeahead helper
+- [x] `routes/workorder.js` — `assertEditable` (locked at Completed/Closed/Cancelled); `GET /api/wo/items?q=`; `POST /api/wo/:id/lines` (add/setQty/remove/replace + reason, internal only, committed lines kept at qty 0); status hook runs auto-return before `Completed`; `GET /reports/reconciliation`
+- [x] `workorder/txn.js` — `sweepLines` + `autoReturnOnComplete` (+ selftest)
+- [x] `workorder/reports.js` — `reconcileRows` + `reconciliation` (+ selftest)
+- [x] `WoItemsTab.jsx` (new Items tab: grid, Books-item picker, change notes, locked banner) wired into `WorkOrderPage.jsx`; completion toast lists Transfer Orders
+- [x] `WorkOrderReportsPage.jsx` — Reconciliation view (WO filter, CSV)
+- [ ] Verify on deploy: edit at InProgress (qty/add/replace/remove, picker only shows Books items, note in "Changes", no composite/SO change); replace a reserved item → line at 0 on the grid; Completed (QC Passed) → dereserve/return TOs in Zoho Inventory + toast; edit on Completed → 409; QC Rejected → no TOs; reconciliation per-WO + org-wide incl. removed lines
+
 ### CR-030 — Skip unselected Books-item props + edit SKU in generator (branch `feat/zoho-field-mapping`)
 - [x] `zoho/push.js` — `buildAssociatedItems` skips unselected flagged props; `mergeMappedLines` + `syncMappedItems` (property-derived BOM swap on re-push, manual lines untouched, write only on change)
 - [x] `GET /api/sku-items/:id/values` (item + stored selections); `POST /api/sku/update-item` (validate, replace values, auto-push linked items → `zohoWarning` on Books failure); `generate` takes `excludeItemId`

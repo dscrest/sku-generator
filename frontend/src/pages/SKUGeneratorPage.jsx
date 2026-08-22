@@ -91,7 +91,7 @@ function PropRow({ prop, children }) {
 }
 
 export default function SKUGeneratorPage() {
-  const [industries, setIndustries] = useState([]);
+  const [industries, setIndustries] = useState(null); // null = still loading
   const [selectedIndustry, setSelectedIndustry] = useState(null);
   const [properties, setProperties] = useState([]);
   const [loadingProps, setLoadingProps] = useState(false);
@@ -109,7 +109,13 @@ export default function SKUGeneratorPage() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await axios.get('/api/industries');
+      let data;
+      try {
+        ({ data } = await axios.get('/api/industries'));
+      } catch {
+        toast.error('Failed to load industries');
+        return;
+      }
       setIndustries(data);
       const editId = searchParams.get('item');
       if (editId) {
@@ -186,14 +192,28 @@ export default function SKUGeneratorPage() {
     } catch { setPreview(null); }
   }, [selectedIndustry, selections, editItem]);
 
-  useEffect(() => { generatePreview(); }, [generatePreview]);
+  useEffect(() => {
+    const t = setTimeout(generatePreview, 250);
+    return () => clearTimeout(t);
+  }, [generatePreview]);
 
   function handleSelect(propId, value) {
     setSelections(prev => ({ ...prev, [propId]: value }));
   }
 
+  // ⌘↵ / Ctrl+Enter fires the Create button (it already advertises the shortcut).
+  const createRef = useRef();
+  createRef.current = handleCreateItem;
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); createRef.current(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   async function handleCreateItem() {
-    if (!preview?.sku) return;
+    if (!preview?.sku || creating) return;
     if (missingRequired.length) { toast.error(`Required fields missing: ${missingRequired.join(', ')}`); return; }
     if (preview.duplicate) { toast.error(`SKU "${preview.sku}" already exists`); return; }
     setCreating(true);
@@ -301,7 +321,7 @@ export default function SKUGeneratorPage() {
                 Industry
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {industries.map(ind => {
+                {(industries || []).map(ind => {
                   const active = selectedIndustry?.id === ind.id;
                   return (
                     <button
@@ -325,8 +345,11 @@ export default function SKUGeneratorPage() {
                     </button>
                   );
                 })}
-                {industries.length === 0 && (
+                {industries?.length === 0 && (
                   <span style={{ fontSize: 13, color: T.ink4, fontStyle: 'italic' }}>No industries — add one in Admin</span>
+                )}
+                {!industries && (
+                  <span style={{ fontSize: 13, color: T.ink4, fontStyle: 'italic' }}>Loading…</span>
                 )}
               </div>
             </div>

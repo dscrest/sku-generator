@@ -37,7 +37,8 @@ function out(row) {
   for (const [k, v] of Object.entries(row)) {
     if (k === "ROWID") { o.id = String(v); continue; }
     if (k === "CREATEDTIME") { o.createdAt = v; continue; }
-    if (k === "MODIFIEDTIME" || k === "CREATORID") continue;
+    if (k === "MODIFIEDTIME") { o.updatedAt = v; continue; }
+    if (k === "CREATORID") continue;
     if (NUM_COLS.has(k)) { o[k] = v === null || v === "" || v === undefined ? null : Number(v); continue; }
     if (BOOL_COLS.has(k)) { o[k] = v === true || v === "true"; continue; }
     if (TRIBOOL_COLS.has(k)) { o[k] = v === null || v === "" || v === undefined ? null : v === true || v === "true"; continue; }

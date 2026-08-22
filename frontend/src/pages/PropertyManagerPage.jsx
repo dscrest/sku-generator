@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
-import Modal, { ModalFooter, ModalBtn } from '../components/Modal.jsx';
+import Modal, { ModalFooter, ModalBtn, ConfirmModal } from '../components/Modal.jsx';
 import RowDeleteButton from '../components/RowDeleteButton.jsx';
 
 const inputStyle = {
@@ -167,6 +167,7 @@ export default function PropertyManagerPage() {
   const [showEditProp, setShowEditProp] = useState(false);
   const [showAddVal, setShowAddVal] = useState(false);
   const [showEditVal, setShowEditVal] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(null); // { kind: 'prop'|'val', row }
   const [propForm, setPropForm] = useState(emptyProp);
   const [valForm, setValForm] = useState(emptyVal);
   const [dragOver, setDragOver] = useState(null);
@@ -222,7 +223,7 @@ export default function PropertyManagerPage() {
   }
 
   async function handleDeleteProp(prop) {
-    if (!confirm(`Delete property "${prop.name}"?`)) return;
+    setConfirmDel(null);
     try {
       await axios.delete(`/api/properties/${prop.id}`);
       toast.success('Property deleted');
@@ -253,7 +254,7 @@ export default function PropertyManagerPage() {
   }
 
   async function handleDeleteVal(val) {
-    if (!confirm(`Delete value "${val.displayValue}"?`)) return;
+    setConfirmDel(null);
     try {
       await axios.delete(`/api/property-values/${val.id}`);
       toast.success('Value deleted');
@@ -334,7 +335,7 @@ export default function PropertyManagerPage() {
                       >
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
                       </button>
-                      <RowDeleteButton onDelete={() => handleDeleteProp(prop)} title={`Delete ${prop.name}`} />
+                      <RowDeleteButton onDelete={() => setConfirmDel({ kind: 'prop', row: prop })} title={`Delete ${prop.name}`} />
                     </div>
                   </div>
                 );
@@ -363,7 +364,7 @@ export default function PropertyManagerPage() {
                           <td style={{ padding: '10px 16px', color: 'var(--text-secondary)' }}>{val.name}</td>
                           <td style={{ padding: '10px 16px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--blue)' }}>{val.sku}</td>
                           <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
-                            <RowDeleteButton onDelete={() => handleDeleteVal(val)} title={`Delete ${val.displayValue}`} />
+                            <RowDeleteButton onDelete={() => setConfirmDel({ kind: 'val', row: val })} title={`Delete ${val.displayValue}`} />
                           </td>
                         </tr>
                       );
@@ -381,10 +382,22 @@ export default function PropertyManagerPage() {
         </div>
       </div>
 
-      {showAddProp && <Modal title="Add Property" onClose={() => setShowAddProp(false)}><PropForm form={propForm} setForm={setPropForm} clubKeys={clubKeys} onSubmit={handleAddProp} onCancel={() => setShowAddProp(false)} label="Create" /></Modal>}
-      {showEditProp && <Modal title="Edit Property" onClose={() => setShowEditProp(false)}><PropForm form={propForm} setForm={setPropForm} clubKeys={clubKeys} onSubmit={handleEditProp} onCancel={() => setShowEditProp(false)} label="Save" /></Modal>}
-      {showAddVal && <Modal title="Add Value" onClose={() => setShowAddVal(false)}><ValForm form={valForm} setForm={setValForm} onSubmit={handleAddVal} onCancel={() => setShowAddVal(false)} label="Create" /></Modal>}
-      {showEditVal && <Modal title="Edit Value" onClose={() => setShowEditVal(false)}><ValForm form={valForm} setForm={setValForm} onSubmit={handleEditVal} onCancel={() => setShowEditVal(false)} label="Save" /></Modal>}
+      {showAddProp && <Modal title="Add Property" onClose={() => setShowAddProp(false)} onSubmit={handleAddProp}><PropForm form={propForm} setForm={setPropForm} clubKeys={clubKeys} onSubmit={handleAddProp} onCancel={() => setShowAddProp(false)} label="Create" /></Modal>}
+      {showEditProp && <Modal title="Edit Property" onClose={() => setShowEditProp(false)} onSubmit={handleEditProp}><PropForm form={propForm} setForm={setPropForm} clubKeys={clubKeys} onSubmit={handleEditProp} onCancel={() => setShowEditProp(false)} label="Save" /></Modal>}
+      {showAddVal && <Modal title="Add Value" onClose={() => setShowAddVal(false)} onSubmit={handleAddVal}><ValForm form={valForm} setForm={setValForm} onSubmit={handleAddVal} onCancel={() => setShowAddVal(false)} label="Create" /></Modal>}
+      {showEditVal && <Modal title="Edit Value" onClose={() => setShowEditVal(false)} onSubmit={handleEditVal}><ValForm form={valForm} setForm={setValForm} onSubmit={handleEditVal} onCancel={() => setShowEditVal(false)} label="Save" /></Modal>}
+      {confirmDel && (
+        <ConfirmModal
+          title={confirmDel.kind === 'prop' ? `Delete property "${confirmDel.row.name}"?` : `Delete value "${confirmDel.row.displayValue}"?`}
+          confirmLabel={confirmDel.kind === 'prop' ? 'Delete property' : 'Delete value'}
+          onConfirm={() => (confirmDel.kind === 'prop' ? handleDeleteProp(confirmDel.row) : handleDeleteVal(confirmDel.row))}
+          onClose={() => setConfirmDel(null)}
+        >
+          {confirmDel.kind === 'prop'
+            ? 'The property and its values are removed. This cannot be undone.'
+            : 'The value is removed. This cannot be undone.'}
+        </ConfirmModal>
+      )}
     </div>
   );
 }

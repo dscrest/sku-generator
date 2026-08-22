@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
@@ -172,9 +172,10 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
     if (!any) toast(`Nothing can be ${act.verb.toLowerCase()}d on these lines yet`);
   }
 
-  function toggleRow(itemId) {
+  const toggleRow = useCallback((itemId) => {
     setSel(s => { const n = new Set(s); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n; });
-  }
+  }, []);
+  const setRowQty = useCallback((itemId, v) => setQty(q => ({ ...q, [itemId]: v })), []);
   const allTicked = visible.length > 0 && visible.every(r => sel.has(r.itemId));
   function toggleAll() {
     setSel(s => {
@@ -223,7 +224,15 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
       {/* action selector — the only thing that changes between the four jobs */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' }}>
         {fgs.length > 1 && (
-          <select value={fgId || ''} onChange={e => setFgId(e.target.value)} style={select}>
+          <select
+            value={fgId || ''}
+            onChange={e => {
+              // Switching FG reloads the grid and clears typed quantities — ask first.
+              if (entered.length && !window.confirm('Switching the finished good clears the quantities you typed. Continue?')) return;
+              setFgId(e.target.value);
+            }}
+            style={select}
+          >
             {fgs.map(f => <option key={f.id} value={f.id}>{f.name} × {f.qty}</option>)}
           </select>
         )}
@@ -231,7 +240,12 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
           {ACTIONS.map(a => (
             <button
               key={a.key}
-              onClick={() => { setAction(a.key); setQty({}); setSel(new Set()); }}
+              onClick={() => {
+                if (a.key === action) return;
+                // Same guard: the typed quantities belong to the current action.
+                if (entered.length && !window.confirm(`Switching to ${a.label} clears the quantities you typed. Continue?`)) return;
+                setAction(a.key); setQty({}); setSel(new Set());
+              }}
               title={a.help}
               style={{
                 padding: '7px 14px', fontSize: 13, border: 'none', cursor: 'pointer',
@@ -384,58 +398,13 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
               </tr>
             </thead>
             <tbody>
-              {visible.map(r => {
-                const cap = r[act.capKey];
-                const typed = Number(qty[r.itemId] || 0);
-                const over = typed > cap;
-                return (
-                  <tr key={r.itemId} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ textAlign: 'center' }}>
-                      <input type="checkbox" checked={sel.has(r.itemId)} onChange={() => toggleRow(r.itemId)} aria-label={`Select ${r.name || r.itemId}`} />
-                    </td>
-                    <td style={{ ...num, textAlign: 'left', fontFamily: 'var(--font)' }}>
-                      <div style={{ fontWeight: 500 }}>{r.name || r.itemId}</div>
-                      {r.sku && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{r.sku}{r.uom ? ` · ${r.uom}` : ''}</div>}
-                    </td>
-                    <td style={{ ...num, fontWeight: r.needed > 0 ? 700 : 400, color: r.short ? '#b91c1c' : undefined }}>{r.bom.toLocaleString()}</td>
-                    <td style={num}>{r.stock.toLocaleString()}</td>
-                    <td style={num}>{r.reserved.toLocaleString()}</td>
-                    <td style={num}>{r.issued.toLocaleString()}</td>
-                    {visibleCols.map(c => (
-                      <td key={c.key} style={{ ...num, color: c.key === 'reservable' && r[c.key] > 0 ? '#16a34a' : undefined }}>
-                        {r[c.key]}
-                      </td>
-                    ))}
-                    <td style={{ padding: '8px 10px' }}><CoverageBar r={r} /></td>
-                    <td style={{ padding: '4px 8px' }}>
-                      <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', alignItems: 'center' }}>
-                        <input
-                          type="number" min="0" max={cap} step="any"
-                          value={qty[r.itemId] ?? ''}
-                          onChange={e => setQty(q => ({ ...q, [r.itemId]: e.target.value }))}
-                          placeholder={cap > 0 ? '0' : '—'}
-                          disabled={cap <= 0}
-                          title={cap > 0 ? `Up to ${cap}` : `Nothing to ${act.verb.toLowerCase()} on this line`}
-                          style={{
-                            width: 72, padding: '5px 8px', fontSize: 13, textAlign: 'right',
-                            fontFamily: 'var(--font-mono)', borderRadius: 'var(--radius-sm)',
-                            border: `1px solid ${over ? '#dc2626' : 'var(--border)'}`,
-                            background: cap <= 0 ? 'var(--bg-page)' : 'var(--bg-card)',
-                            color: over ? '#dc2626' : 'inherit',
-                          }}
-                        />
-                        <button
-                          onClick={() => cap > 0 && setQty(q => ({ ...q, [r.itemId]: String(cap) }))}
-                          disabled={cap <= 0}
-                          title={cap > 0 ? `Fill the most this line can take (${cap})` : 'Nothing available'}
-                          style={{ ...maxBtn, opacity: cap <= 0 ? 0.4 : 1, cursor: cap <= 0 ? 'not-allowed' : 'pointer' }}>
-                          MAX
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+              {visible.map(r => (
+                <GridRow
+                  key={r.itemId} r={r} act={act} visibleCols={visibleCols}
+                  qtyVal={qty[r.itemId] ?? ''} ticked={sel.has(r.itemId)}
+                  onToggle={toggleRow} onQty={setRowQty}
+                />
+              ))}
             </tbody>
           </table>
         )}
@@ -478,6 +447,60 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
 // Coverage against the full requirement: issued (green) + reserved (blue) + the
 // outstanding remainder — hatched red when it can't be covered from stock, a
 // neutral track when it just hasn't been reserved yet.
+// Memoized row: typing in one row's qty input re-renders only that row, not
+// the whole grid — matters on multi-hundred-line BOMs.
+const GridRow = memo(function GridRow({ r, act, visibleCols, qtyVal, ticked, onToggle, onQty }) {
+  const cap = r[act.capKey];
+  const over = Number(qtyVal || 0) > cap;
+  return (
+    <tr style={{ borderBottom: '1px solid var(--border)' }}>
+      <td style={{ textAlign: 'center' }}>
+        <input type="checkbox" checked={ticked} onChange={() => onToggle(r.itemId)} aria-label={`Select ${r.name || r.itemId}`} />
+      </td>
+      <td style={{ ...num, textAlign: 'left', fontFamily: 'var(--font)' }}>
+        <div style={{ fontWeight: 500 }}>{r.name || r.itemId}</div>
+        {r.sku && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{r.sku}{r.uom ? ` · ${r.uom}` : ''}</div>}
+      </td>
+      <td style={{ ...num, fontWeight: r.needed > 0 ? 700 : 400, color: r.short ? '#b91c1c' : undefined }}>{r.bom.toLocaleString()}</td>
+      <td style={num}>{r.stock.toLocaleString()}</td>
+      <td style={num}>{r.reserved.toLocaleString()}</td>
+      <td style={num}>{r.issued.toLocaleString()}</td>
+      {visibleCols.map(c => (
+        <td key={c.key} style={{ ...num, color: c.key === 'reservable' && r[c.key] > 0 ? '#16a34a' : undefined }}>
+          {r[c.key]}
+        </td>
+      ))}
+      <td style={{ padding: '8px 10px' }}><CoverageBar r={r} /></td>
+      <td style={{ padding: '4px 8px' }}>
+        <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', alignItems: 'center' }}>
+          <input
+            type="number" min="0" max={cap} step="any"
+            value={qtyVal}
+            onChange={e => onQty(r.itemId, e.target.value)}
+            placeholder={cap > 0 ? '0' : '—'}
+            disabled={cap <= 0}
+            title={cap > 0 ? `Up to ${cap}` : `Nothing to ${act.verb.toLowerCase()} on this line`}
+            style={{
+              width: 72, padding: '5px 8px', fontSize: 13, textAlign: 'right',
+              fontFamily: 'var(--font-mono)', borderRadius: 'var(--radius-sm)',
+              border: `1px solid ${over ? '#dc2626' : 'var(--border)'}`,
+              background: cap <= 0 ? 'var(--bg-page)' : 'var(--bg-card)',
+              color: over ? '#dc2626' : 'inherit',
+            }}
+          />
+          <button
+            onClick={() => cap > 0 && onQty(r.itemId, String(cap))}
+            disabled={cap <= 0}
+            title={cap > 0 ? `Fill the most this line can take (${cap})` : 'Nothing available'}
+            style={{ ...maxBtn, opacity: cap <= 0 ? 0.4 : 1, cursor: cap <= 0 ? 'not-allowed' : 'pointer' }}>
+            MAX
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+});
+
 function CoverageBar({ r }) {
   const basis = r.bom > 0 ? r.bom : (r.reserved + r.issued + r.needed);
   if (!basis) return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>—</span>;

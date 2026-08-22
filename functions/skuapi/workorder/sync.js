@@ -17,7 +17,7 @@
  */
 const { rowList, zStr } = require("../store");
 const { dsDate } = require("../zoho/auth");
-const { getItemStock } = require("../zoho/inventoryApi");
+const { getItemStock, listItemsWithStock } = require("../zoho/inventoryApi");
 const { byOrg, inList, warehouses, logActivity } = require("./store");
 const { refreshPurchaseOrders } = require("./purchase");
 const { refreshComposite } = require("./bom");
@@ -87,18 +87,36 @@ async function reconcileOrg(catalyst, orgId) {
   const result = { items: 0, purchaseOrders: 0, compositeItems: 0 };
   if (!itemIds.length) return result;
 
-  // One detail call per working-set item, not the bulk /items sweep: on
-  // Locations-enabled orgs the bulk payload reports stock_on_hand 0 with no
-  // per-location breakdown, and only the item detail carries locations[].
-  // The working set is bounded by open work orders, so this stays cheap.
+  // Bulk /items sweep first (200 per call), then a per-item detail call only
+  // where the bulk payload is ambiguous: Locations-enabled orgs report
+  // stock_on_hand 0 there with no per-location breakdown — only the item
+  // detail carries locations[]. Everything the bulk row answers costs zero
+  // extra calls and zero rate-limit sleeps.
+  const wanted = new Set(itemIds.map(String));
+  let bulk = new Map();
+  try {
+    bulk = new Map(
+      (await listItemsWithStock(catalyst))
+        .filter((i) => wanted.has(String(i.item_id)))
+        .map((i) => [String(i.item_id), i]),
+    );
+  } catch (err) {
+    console.error("bulk stock list failed, falling back to per-item:", err && err.message);
+  }
   for (const itemId of itemIds) {
+    const b = bulk.get(String(itemId));
+    const trustworthy = b && (n(b.stock_on_hand) > 0 || (b.warehouses || []).length || (b.locations || []).length);
     try {
-      await writeStock(catalyst, orgId, await getItemStock(catalyst, itemId), "cron");
+      if (trustworthy) {
+        await writeStock(catalyst, orgId, b, "cron");
+      } else {
+        await writeStock(catalyst, orgId, await getItemStock(catalyst, itemId), "cron");
+        await sleep(DELAY_MS);
+      }
       result.items++;
     } catch (err) {
       console.error(`item ${itemId} stock refresh failed:`, err && err.message);
     }
-    await sleep(DELAY_MS);
   }
 
   const po = await refreshPurchaseOrders(catalyst, orgId);

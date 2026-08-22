@@ -1,5 +1,5 @@
 "use strict";
-const { isConfigured } = require("./auth");
+const { isConfigured, dsDate } = require("./auth");
 const { createItem, updateItem, findItemByName, getItem, deleteItem } = require("./booksApi");
 const { createCompositeItem, updateCompositeItemFields, getCompositeItem, updateCompositeItem } = require("./inventoryApi");
 const { buildZohoCustomFields } = require("../itemValues");
@@ -144,19 +144,32 @@ async function pushToZoho(catalyst, item, description) {
     return null;
   }
   const customFields = await buildZohoCustomFields(catalyst, item.id);
-  if (item.type === "Manufacturing") return pushManufacturing(catalyst, item, description, customFields);
-  if (item.zohoItemId) {
-    try {
-      return await updateItem(catalyst, item.zohoItemId, item.name, item.sku, description, customFields);
-    } catch (e) {
-      if (!isGone(e)) throw e; // stale link: item was deleted in Books → re-create below
+  let result;
+  if (item.type === "Manufacturing") {
+    result = await pushManufacturing(catalyst, item, description, customFields);
+  } else {
+    if (item.zohoItemId) {
+      try {
+        result = await updateItem(catalyst, item.zohoItemId, item.name, item.sku, description, customFields);
+      } catch (e) {
+        if (!isGone(e)) throw e; // stale link: item was deleted in Books → re-create below
+      }
+    }
+    if (result === undefined) {
+      result = await createItem(catalyst, item.name, item.sku, description, customFields);
+      if (result && result.item_id) {
+        await catalyst.datastore().table("SKUItem").updateRow({ ROWID: item.id, zohoItemId: String(result.item_id) });
+      }
     }
   }
-  const zohoItem = await createItem(catalyst, item.name, item.sku, description, customFields);
-  if (zohoItem && zohoItem.item_id) {
-    await catalyst.datastore().table("SKUItem").updateRow({ ROWID: item.id, zohoItemId: String(zohoItem.item_id) });
+  // Stamp when the push landed — the grid's stale-sync badge compares this to
+  // the row's MODIFIEDTIME. Best-effort: a failed stamp must not fail the push.
+  if (result) {
+    await catalyst.datastore().table("SKUItem")
+      .updateRow({ ROWID: item.id, lastPushedAt: dsDate(Date.now()) })
+      .catch((e) => console.error("lastPushedAt stamp failed:", e && e.message));
   }
-  return zohoItem;
+  return result;
 }
 
 /**

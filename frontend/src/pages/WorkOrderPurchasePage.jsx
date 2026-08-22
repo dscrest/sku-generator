@@ -5,6 +5,7 @@ import PurchaseTab, { PoSplit } from '../components/PurchaseTab.jsx';
 import GridFooter, { usePager } from '../components/GridFooter.jsx';
 import { Empty } from '../components/MaterialsGrid.jsx';
 import { StatusChip, AccessNotice, Table, btn, select } from '../components/woCommon.jsx';
+import { fmtMoney, fmtDate } from '../format.js';
 
 /**
  * Purchase Request page. Primary view is **By item** (CR-023): the shortfall of
@@ -27,7 +28,9 @@ export default function WorkOrderPurchasePage() {
   const [wo, setWo] = useState(null);
   const [blocked, setBlocked] = useState(null);
 
-  function loadLists() {
+  // Each list loads when a view first needs it — the Orders list in particular
+  // crawls every PO in the Books org, so it must not load (or reload) for free.
+  function loadWos() {
     axios.get('/api/wo')
       .then(({ data }) => setWos(data))
       .catch(err => {
@@ -35,11 +38,24 @@ export default function WorkOrderPurchasePage() {
         else if (err.response?.status === 403) setBlocked('disabled');
         else toast.error(err.response?.data?.error || 'Could not load work orders');
       });
-    axios.get('/api/wo/purchase-requests').then(({ data }) => setPrs(data)).catch(() => setPrs([]));
-    // Every PO in the Books org (CR-020), not just the ones raised from here.
-    axios.get('/api/wo/purchase-orders').then(({ data }) => setPos(data)).catch(() => setPos([]));
   }
-  useEffect(loadLists, []);
+  const loadPrs = () => axios.get('/api/wo/purchase-requests').then(({ data }) => setPrs(data)).catch(() => setPrs([]));
+  // Every PO in the Books org (CR-020), not just the ones raised from here.
+  const loadPos = () => axios.get('/api/wo/purchase-orders').then(({ data }) => setPos(data)).catch(() => setPos([]));
+
+  useEffect(loadWos, []);
+  useEffect(() => {
+    if (view === 'Requests' && prs === null) loadPrs();
+    if (view === 'Orders' && pos === null) loadPos();
+    // eslint-disable-next-line
+  }, [view]);
+  useEffect(() => { if (selectedPo && pos === null) loadPos(); /* eslint-disable-next-line */ }, [selectedPo]);
+
+  // After a purchase action, refresh only the lists already on screen.
+  function loadLists() {
+    if (prs !== null) loadPrs();
+    if (pos !== null) loadPos();
+  }
 
   function loadDetail() {
     if (!selected) return;
@@ -129,7 +145,7 @@ export default function WorkOrderPurchasePage() {
                     <b style={{ color: 'var(--blue)' }}>{pr.prNumber}</b>, pr.woNumber || '— consolidated', pr.customerName || '—',
                     <StatusChip status={pr.status} />, pr.lines.length,
                     [...new Set(pr.lines.map(l => l.poNumber).filter(Boolean))].join(', ') || '—',
-                    String(pr.createdAt || '').slice(0, 10),
+                    fmtDate(pr.createdAt),
                   ],
                 }))}
               />
@@ -148,7 +164,7 @@ export default function WorkOrderPurchasePage() {
                     <StatusChip status={p.status} />,
                     p.prNumber || <span style={{ color: 'var(--text-muted)' }}>Books</span>, p.woNumber || '—',
                     nice(p.receivedStatus), nice(p.billedStatus),
-                    p.total.toLocaleString('en-IN'),
+                    fmtMoney(p.total),
                   ],
                 }))}
               />

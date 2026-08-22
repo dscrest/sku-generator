@@ -85,11 +85,24 @@ function uid(catalyst, userId) {
   return String(id);
 }
 
+// Memoized per catalyst instance (one request / one cron run) so the several
+// API calls a handler makes share one SELECT. The promise is memoized, not the
+// row, so concurrent callers (Promise.all in booksApi) also share it.
 async function loadToken(catalyst, userId) {
-  const rows = rowList(
-    await catalyst.zcql().executeZCQLQuery(`SELECT * FROM ZohoToken WHERE userId = '${uid(catalyst, userId)}'`),
-  );
-  return rows.length ? rows[0] : null;
+  const id = uid(catalyst, userId);
+  const memo = (catalyst.__zohoToken ||= {});
+  if (!memo[id]) {
+    memo[id] = catalyst.zcql().executeZCQLQuery(`SELECT * FROM ZohoToken WHERE userId = '${id}'`)
+      .then((r) => { const rows = rowList(r); return rows.length ? rows[0] : null; })
+      .catch((err) => { delete memo[id]; throw err; });
+  }
+  return memo[id];
+}
+
+// Drop the memo after a direct ZohoToken write so the same request re-reads.
+function forgetToken(catalyst, userId) {
+  const id = userId || catalyst.__userId;
+  if (id && catalyst.__zohoToken) delete catalyst.__zohoToken[String(id)];
 }
 
 // Fetch the Zoho account profile (needs AaaServer.profile.READ) — used to
@@ -143,6 +156,7 @@ async function saveToken(catalyst, userId, data, dc) {
     if (!data.refresh_token) throw new Error("Zoho did not return a refresh token on first connect — retry with consent.");
     await ds.insertRow(fields);
   }
+  forgetToken(catalyst, userId);
 }
 
 async function getAccessToken(catalyst, userId) {
@@ -169,6 +183,10 @@ async function getAccessToken(catalyst, userId) {
     accessToken: data.access_token,
     expiresAt: dsDate(Date.now() + data.expires_in * 1000),
   });
+  // `token` IS the memoized row — update it in place so later calls in this
+  // request see the fresh token without re-querying or re-refreshing.
+  token.accessToken = data.access_token;
+  token.expiresAt = dsDate(Date.now() + data.expires_in * 1000);
   return { accessToken: data.access_token, dc: token.dc };
 }
 
@@ -181,6 +199,7 @@ async function saveOrg(catalyst, userId, orgId, orgName) {
   const token = await loadToken(catalyst, userId);
   if (!token) throw new Error("Zoho not connected.");
   await catalyst.datastore().table("ZohoToken").updateRow({ ROWID: token.ROWID, orgId, orgName: orgName || null });
+  forgetToken(catalyst, userId);
 }
 
 module.exports = {
@@ -196,3 +215,40 @@ module.exports = {
   saveOrg,
   loadToken,
 };
+
+// ponytail self-check: `node functions/skuapi/zoho/auth.js --selftest`
+if (require.main === module && process.argv.includes("--selftest")) {
+  const assert = require("assert");
+
+  const fake = () => {
+    let queries = 0;
+    return {
+      _count: () => queries,
+      zcql: () => ({
+        executeZCQLQuery: async () => {
+          queries++;
+          return [{ ZohoToken: { ROWID: "T1", userId: "u1", accessToken: "tok", orgId: "o1" } }];
+        },
+      }),
+    };
+  };
+
+  (async () => {
+    const c = fake();
+    const [a, b] = await Promise.all([loadToken(c, "u1"), loadToken(c, "u1")]);
+    await loadToken(c, "u1");
+    assert.strictEqual(c._count(), 1, "token row is loaded once per request, even concurrently");
+    assert.strictEqual(a, b, "concurrent callers share the row");
+
+    // In-place mutation (the refresh path) is visible to later loads.
+    a.accessToken = "fresh";
+    assert.strictEqual((await loadToken(c, "u1")).accessToken, "fresh");
+
+    // A write invalidates the memo → next load re-queries.
+    forgetToken(c, "u1");
+    await loadToken(c, "u1");
+    assert.strictEqual(c._count(), 2, "forgetToken forces a re-read");
+
+    console.log("zoho/auth.js self-check passed");
+  })().catch((err) => { console.error(err); process.exit(1); });
+}

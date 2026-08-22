@@ -7,6 +7,14 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 | CR | Date | Title | Status |
 |----|------|-------|--------|
+| CR-038 | 2026-08-22 | Improvement pass, phase 4: UX & consistency — house-grid compliance on the SKU list, bulk push to Books, stale-sync badge (`SKUItem.lastPushedAt`), URL deep-links for selection/filters, ConfirmModal deletes, modal Enter-to-submit, controlled PR qty + qty-clear guards, shared en-IN formatters, a11y basics | ✅ shipped |
+| CR-037 | 2026-08-21 | Improvement pass, phase 3: frontend perf — WO page patches the rail instead of re-fetching the list, purchase lists load lazily per tab and refresh only what's on screen, memoized MaterialsGrid rows, route-level code splitting (main bundle 546→325 kB) | ✅ shipped |
+| CR-036 | 2026-08-21 | Improvement pass, phase 2: backend perf — `buildGridsBulk` kills the reports N+1 (~6 queries total), per-request Zoho token memo, WO detail's proc-status scan scoped to the one WO, bulk/parallel Zoho loops (stock reconcile, PO refresh, txn lines, stock self-heal) | ✅ shipped |
+| CR-035 | 2026-08-21 | App-wide improvement pass, phase 1: quick wins — missing `--bg-page` token, QC gate modal, ⌘↵ create shortcut, debounced SKU preview, labeled CSV headers, honest helpdesk mailto, loading-vs-empty states, PR-line save toast | ✅ shipped |
+| CR-034 | 2026-08-21 | WO status auto-advances on material movement — first reserve → MaterialAllocationPending, first issue → InProgress | ✅ shipped |
+| CR-033 | 2026-08-21 | Books push skips custom fields the connected org doesn't have (multi-client safe; no per-client field setup needed) | ✅ shipped |
+| CR-032 | 2026-08-21 | Print Estimate from a CRM Quote — deal & quote buttons, checkbox multi-quote print, items parsed from quote line descriptions (flat fallback), two templates (A–F priced / A–D technical), seamless Zoho auto-login | 🚧 in progress |
+| CR-031 | 2026-08-21 | WO items editable during production (internal only, Books-item picker, substitution notes); leftover material auto-returns to Main on completion; reconciliation report | 🚧 in progress |
 | CR-030 | 2026-08-21 | Unselected Books-item properties skip (not error); edit a generated SKU in the generator with auto Books re-sync incl. property-derived BOM lines | 🚧 in progress |
 | CR-029 | 2026-08-18 | Manufacturing SKUs push as Books composite (assembly) items — associated items from Books-item properties, full field mapping, type locked after push | 🚧 in progress |
 | CR-028 | 2026-08-13 | BOM page lists Books composite items (no work orders); import can create composite + missing component items in Books; CSV template download | 🚧 in progress |
@@ -36,6 +44,321 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 | CR-003 | 2026-07-02 | Item search, grid filters, pagination, sidebar, branding | ✅ shipped |
 | CR-002 | 2026-06-30 | Migrate backend to Catalyst Data Store | ✅ shipped |
 | CR-001 | 2026-05-28 | SKU editing + Zoho Books value sync & import | ✅ shipped |
+
+---
+
+## CR-038 — Improvement pass, phase 4: UX & consistency (2026-08-22) — ✅ shipped
+
+**Asked:** phase 4 (final) of the review-findings plan — ease-of-use and
+consistency items.
+
+**Shipped:**
+- **SKU grid follows the house pattern (CR-005b):** no row-click edit; hover
+  pencil (`RowEditButton`) opens the detail, trash confirms via Modal.
+- **Bulk push:** "Push all unsynced" loops SKUs without a `zohoItemId` through
+  the existing push endpoint with a progress toast + failure summary.
+- **Stale-sync badge:** new `SKUItem.lastPushedAt` (stamped in `pushToZoho`,
+  all push paths) + `out()` now exposes `MODIFIEDTIME` as `updatedAt`; a row
+  edited after its last push shows amber "Edited · Re-push" instead of a false
+  "✓ Synced".
+- **URL state:** `?item=` (SKU detail), `?composite=` (BOM drill-in), `?view=`
+  (reports tab), and WO-list filters (`status/customer/proc/q`) + SKU search
+  `?q=` mirror into the query string — refresh, back and share keep the place.
+- **Deletes:** shared `ConfirmModal` (Modal.jsx) replaces `window.confirm` in
+  SKUItems / Industries / Properties / PropertyManager; Esc or close = keep.
+- **Enter-to-submit:** `Modal` accepts `onSubmit` (children render in a form,
+  `ModalBtn` is `type="button"`); wired on Industry add/edit, Property/Value
+  add/edit and WO edit. OpModal left click-only — its typeahead owns Enter.
+- **Input guards:** PR-line qty is a controlled `QtyInput` (commits on
+  blur/Enter, amber border while uncommitted); MaterialsGrid confirms before
+  an action/FG switch clears typed quantities.
+- **Shared formatters:** `frontend/src/format.js` (`fmtMoney`/`fmtNum`/
+  `fmtDate`, en-IN) replaces the four ad-hoc styles (raw WO costs, hardcoded
+  ₹, browser-locale `toLocaleString`, `slice(0,10)` dates).
+- **A11y:** filter-chip remove is a real `<button aria-label>`; sortable
+  headers are keyboard-reachable (`role`, `tabIndex`, Enter/Space); search
+  inputs have `aria-label`s; required-field asterisks in OpModal.
+- "Import from Zoho" button is always enabled — clicking without an industry
+  explains itself instead of a dead greyed button.
+- Estimate toolbar/editor chrome uses the app's CSS variables (print sheet
+  keeps its own brand styling).
+
+**Not done (deliberate):** no undo-after-delete (toast-with-undo needs a
+soft-delete window server-side); MaterialsGrid's qty-clear guard uses a plain
+confirm — it protects typed input, Esc = stay, so a Modal adds nothing.
+
+## CR-037 — Improvement pass, phase 3: frontend performance (2026-08-21) — ✅ shipped
+
+**Asked:** phase 3 of the review-findings plan — frontend fetch and render costs.
+
+**Shipped:**
+- `WorkOrderPage`: the left rail's `/api/wo` list loads once on mount; after a
+  mutation only the single WO is re-fetched and its status patched into the
+  rail (each list fetch used to re-trigger the org-wide proc-status scan).
+  Rail/detail id comparisons now `String()`-coerced.
+- `WorkOrderPurchasePage`: the three lists load lazily — work orders on mount
+  (the raise-for dropdown needs them), requests/orders when their tab or the
+  PO split first opens. `onChanged` refreshes only lists already loaded, so a
+  purchase action no longer re-crawls every Books PO from the By-item tab.
+- `MaterialsGrid`: rows extracted into a memoized `GridRow` (+ `useCallback`
+  handlers) — typing a quantity re-renders one row, not the whole BOM.
+- `App.jsx`: all shell pages are `React.lazy` route chunks behind one
+  `<Suspense>` (auth-flow pages stay eager). Main bundle 546 kB → 325 kB
+  (gzip 151 → 104) plus on-demand per-page chunks.
+
+**Not done (deliberate):** no data-fetching library (SWR/React Query) — the
+axios + targeted-refetch pattern covers current needs.
+
+## CR-036 — Improvement pass, phase 2: backend performance (2026-08-21) — ✅ shipped
+
+**Asked:** phase 2 of the review-findings plan — the backend query hot spots.
+
+**Shipped:**
+- `workorder/grid.js` — `buildGridsBulk(catalyst, orgId, pairs)`: loads
+  WorkOrderLine / ReservationLine / PurchaseRequest / PurchaseRequestLine /
+  ItemStockSnapshot for **all** (WO, FG) pairs with `IN (...)` queries and
+  assembles every grid in memory — **~6 queries total** instead of ~6 per pair.
+  `buildGrid` unchanged for single-grid callers (txn validation, `/:id/grid`);
+  the pure tail is now `assemble()`, the self-heal is `healStock()` and pulls
+  missing items in parallel. Selftest asserts bulk output deep-equals per-pair
+  `buildGrid` output. Consumers swapped: `reports.js` soBom + shortfall,
+  `/purchase/shortfall-by-item`, `/:id/shortfall`.
+- `zoho/auth.js` — `loadToken` memoizes the token-row *promise* per userId on
+  the catalyst instance (`catalyst.__zohoToken`), so a request's many Books
+  calls share one ZohoToken SELECT. Refresh mutates the memoized row in place;
+  `saveToken`/`saveOrg` invalidate via `forgetToken` (OAuth callback does
+  save → API call → save in one request). Selftest covers all three paths.
+- `workorder/purchase.js` — `procStatusByWo` takes an optional `workOrderId`:
+  `GET /wo/:id` now scans only that WO's PR lines instead of the whole org's
+  purchase history (the org-wide scan remains for the list). The Approval query
+  and proc-status moved into the route's existing `Promise.all`.
+- `workorder/sync.js` — the nightly/manual stock reconcile uses the bulk
+  `listItemsWithStock` (200 items/call) and only falls back to the per-item
+  detail (+150 ms sleep) where the bulk payload is ambiguous
+  (Locations-enabled zero-stock rows).
+- `workorder/purchase.js` — `refreshPurchaseOrders` fetches PO details 5 at a
+  time instead of strictly sequentially.
+- `workorder/txn.js` — `listTxns` (History tab) and `recompute` load all
+  MaterialTxnLine rows in one `txnId IN (...)` query via new `txnLines()`.
+
+**Not done (deliberate):** `listAllPOs` still crawls all Books POs — the
+frontend stops re-fetching it on every action in phase 3; server-side
+filtering only if that is still slow. `alerts.js` cron could adopt
+`buildGridsBulk` later — out of scope here.
+
+## CR-035 — App-wide improvement pass, phase 1: quick wins (2026-08-21) — ✅ shipped
+
+**Asked:** a three-axis review (performance / UI / ease of use) surfaced ~25
+findings; fix everything in phases. Phase 1 = the small-diff, high-impact items.
+
+**Shipped:**
+- `--bg-page: #f8fafc` added to `:root` (`index.css`) — the variable was used in
+  ~10 places (woCommon, MaterialsGrid, BomTab, PurchaseTab, CompositeBomPage…)
+  but never defined, so WO-module table headers rendered transparent.
+- QC gate (`WorkOrderPage`): `window.confirm` (where Esc/Cancel silently meant
+  **Rejected**) replaced with a Modal with explicit Passed / Rejected / Cancel
+  buttons; closing the dialog does nothing.
+- SKU generator: the advertised ⌘↵/Ctrl+Enter shortcut now actually fires
+  Create; the live preview POST is debounced 250 ms; the industries fetch is
+  guarded with a toast on failure and shows "Loading…" instead of the
+  "No industries" empty state while in flight.
+- SKU items grid: first load shows "Loading…" instead of "No SKU items yet".
+- Reports CSV export: human column labels (via a key→label map) instead of raw
+  object keys like `rmItemId` / `noPo`.
+- "Submit to helpdesk" no longer fakes a success toast; it opens a `mailto:`.
+- PR-line vendor/qty edits confirm with a success toast like the rest of the app.
+
+**Not done (deliberate):** phases 2–4 of the same review — backend N+1 batching
++ token memo, frontend refetch/code-splitting, UX & consistency (bulk push,
+stale-sync badge, URL state, shared formatters, a11y) — tracked in TASKS.md.
+
+## CR-034 — WO status auto-advances on material movement (2026-08-21) — ✅ shipped
+
+**Asked:** the work order stays in Draft even after items are reserved or
+issued; the status should change as material moves.
+
+**Shipped:**
+- `advanceWoStatus` in `workorder/txn.js`, called from `confirmTxn` (the one
+  path every confirm goes through — txn route, grid confirm flag, auto-return):
+  first confirmed **reserve** moves Draft/Approved → `MaterialAllocationPending`;
+  first confirmed **issue** moves anything up to ReadyForProduction →
+  `InProgress`. Each bump is logged as a `wo.status` activity with the txn
+  number that triggered it.
+- Forward-only: dereserve/return never touch the status, so the completion
+  auto-return sweep (CR-031) can't demote a completing WO.
+- No frontend change needed — the WO page already refetches after each confirm.
+
+**Not done (deliberate):**
+- No auto-advance to ReadyForProduction on "everything reserved" — that needs a
+  full-coverage check per FG; the manual status menu covers it. Add if asked.
+
+## CR-033 — Books push tolerates missing custom fields per org (2026-08-21) — ✅ shipped
+
+**Asked:** the SKU → Books push is going multi-client; another client's Books org
+may not have our custom fields (the hardcoded `cf_item_type` /
+`cf_item_criticality` / `cf_item_source` defaults, or a mapped property field),
+and Books rejects the whole item over one unknown field. Ignore fields the org
+doesn't have instead of failing; asked whether a per-client field-mapping DB is
+needed.
+
+**Shipped:**
+- `normalizeCustomFields` (booksApi.js) now filters every outgoing custom field
+  against the org's actual item fields (`/settings/fields?entity=item`, already
+  fetched for dropdown normalization; cache extended to carry the api_name set).
+  Unknown fields are dropped with a `console.warn`; one choke point covers all
+  four payload paths (plain/composite × create/update).
+- If the metadata fetch itself fails (e.g. missing scope), fields pass through
+  unfiltered — the push degrades to prior behavior rather than failing on a
+  metadata call.
+- Test: `booksApi.test.js` (filtering + fetch-failure passthrough).
+
+**Not done (deliberate):**
+- No new mapping table — `Property.zohoCfApiName` is org-scoped and already is
+  the per-client add-on-field → Books-field mapping, edited via the existing
+  field-mapping screen.
+- No per-org override of the default CF *values* (OrgSetting) until a client
+  wants different values, not just absent fields.
+- Skipped fields surface in logs only, not the UI.
+
+## CR-032 — Print Estimate from CRM Quote (2026-08-21) — 🚧 in progress
+
+**Asked:** print the estimate developed earlier (estimate-prototype) with items
+coming from a CRM Quote on the originating Deal; two print options — the A–D
+technical template and the A–F priced template.
+
+**Decisions:**
+- Entry from the CRM deal link only (same `?dealId=` flow as CR-024's CRM Info
+  card); a "Print Estimate →" link on that card opens `/#/estimate?dealId=…`.
+- Specs / design groups / size rows are **parsed from the quote line-item
+  Description text**; the exact convention isn't pinned yet, so the parser is
+  tolerant (`KEY:- VALUE` specs, `DESIGN:- X` group markers, `4" / 100MM QTY 4
+  @ 10650` size rows) with a **flat-row fallback** (product name + raw
+  description, CRM qty/list-price) when nothing parses.
+- Discount % from the quote's `Discount` field; discount row omitted if absent.
+- No new OAuth scope — `ZohoCRM.modules.READ` already covers Quotes; stale
+  grants surface as the existing 409 → "Connect CRM" reauth flow.
+
+**Shipped:**
+- [crmApi.js](functions/skuapi/zoho/crmApi.js) — `getQuote` (full record incl.
+  `Quoted_Items`) and `getDealQuotes` (related-records list with explicit
+  `fields`), both over the existing `crmRequest`.
+- [routes/crm.js](functions/skuapi/routes/crm.js) — `GET /api/crm/deal/:id/quotes`
+  (200 + array, empty is valid) and `GET /api/crm/quote/:id` (404 on missing).
+- [estimateParser.js](frontend/src/pages/estimateParser.js) — pure module:
+  `parseLineDescription`, `buildEstimate` (quote → header + items),
+  `computeTotals`; node-runnable self-check in
+  [estimateParser.test.js](frontend/src/pages/estimateParser.test.js) asserting
+  the prototype's known totals (13,12,800 / 3,93,840 / 9,18,960 / qty 25).
+- [EstimatePage.jsx](frontend/src/pages/EstimatePage.jsx) — quote picker
+  (auto-selects a lone quote), estimate sheet ported from
+  [estimate-prototype/msun-estimate.html](estimate-prototype/msun-estimate.html)
+  (rowspan description cell, DESIGN rows, en-IN money), template toggle +
+  native `window.print()` (print CSS hides app chrome, A4 12mm).
+- Route `/#/estimate` in [App.jsx](frontend/src/App.jsx); "Print Estimate →"
+  link in [CrmInfoCard.jsx](frontend/src/components/CrmInfoCard.jsx).
+- **Quote-record entry** — `/#/estimate?quoteId=<id>` renders that quote's sheet
+  directly, no picker (`readParam` generalized from `readDealId`).
+- **Checkbox multi-print** — the deal's quote list is a checkbox list; ticked
+  quotes render **one sheet per quote** with a page break between (print CSS
+  visibility trick moved to an `.est-print-area` wrapper; `:last-child` break
+  reset avoids a trailing blank page). "← Quotes" returns to the list.
+- **Seamless login** — a logged-out arrival on a CRM deep link (`dealId`/
+  `quoteId` in the URL) skips the login page and bounces silently through Zoho
+  OAuth (no password when already signed into Zoho); the deep link survives the
+  roundtrip via a `sessionStorage` returnTo (the redirect URI is the SPA root,
+  which loses the hash). Once-per-tab guard: a cancelled OAuth falls back to
+  the login page instead of looping. Sessions last 30 days, so this only fires
+  on first visit or expiry.
+- **Sheet polish** — banner is the MSUN + Maruti logo (`frontend/public/msun-logo.png`,
+  text-banner fallback until the file is dropped); A–F letter prefixes removed
+  from the column headers (toolbar buttons renamed Priced / Technical); orange
+  `DESIGN:-` sub-section rows unchanged.
+- **Grid totals + page numbers** — totals moved from a separate table into the
+  item grid itself (as in the original scan): TOTAL-A and DISC rows in the
+  price columns, final row carrying PAGE nn + total qty + TOTAL (technical
+  template: PAGE nn + TOTAL QTY row). Sheets number sequentially per print
+  (PAGE 01, 02, …); the T&C page stays unnumbered like the original.
+- **T&C last page** — the "General Terms & Conditions" page (terms A–N, bank &
+  contact grid, logo + factory-address footer) prints as the final page after
+  all quote sheets. "✎ Edit T&C" toolbar toggle makes the sheet itself editable
+  **in place** (scrolls to it; contentEditable cells save on blur, ✕ / + Add /
+  Reset controls appear on the sheet and are `est-noprint`-hidden in print) —
+  replaced the original detached editor panel at the top of the page, which
+  users didn't find. Edits are **per browser only** (localStorage, user
+  decision — no OrgSetting write). Data + normalize/merge in
+  [estimateTerms.js](frontend/src/pages/estimateTerms.js)
+  (self-check [estimateTerms.test.js](frontend/src/pages/estimateTerms.test.js)),
+  components in [EstimateTerms.jsx](frontend/src/pages/EstimateTerms.jsx).
+- **CRM setup (console, not code):** Deal custom link button →
+  `/app/#/estimate?dealId=${Deal.Id}`; Quote custom link button →
+  `/app/#/estimate?quoteId=${Quotes.Quote Id}`. The pre-hash form
+  (`/app/?quoteId=…#/estimate`) also works.
+
+**Not done (and why):** description convention pinning (parser tightens once the
+CRM format is fixed); Estimates 2–4 layouts, cost sheet, USD export,
+Zoho Books estimate push (all deferred from the prototype README); no DB tables
+(frontend owns the shape, routes are thin passthroughs); T&C edits are not
+shared org-wide (OrgSetting + `PUT /settings` exists if that's wanted later).
+
+---
+
+## CR-031 — WO item editability + completion auto-return + reconciliation report (2026-08-21) — 🚧 in progress
+
+**Asked:** during production items change (missing, misfit, brand issue) — the
+user must be able to replace/edit the work order's items until progress is
+complete; the picker must only offer items that exist in Zoho Books; once
+complete, missing/extra material goes back to warehouse inventory; a per-WO and
+an overall report for inventory comparison.
+
+**Decisions:**
+- **Internal only.** Edits touch the WO's frozen lines (`WorkOrderLine`) and
+  nothing else — the Zoho composite item is never updated (avoids composite
+  sprawl) and the Sales Order is never touched. The substitution is instead
+  recorded as a note on the WO ("X added — not part of the composite item").
+- **Committed lines are kept at qty 0, not deleted.** Removing/replacing a line
+  whose material is already reserved/issued flips its `requiredQty` to 0; the
+  row survives so the grid still shows it and completion knows to return the
+  stock. `guardAgainstCommitted` stays untouched for the import path.
+- **Return at completion, not at edit time.** An edit never posts a Transfer
+  Order (the stock hasn't physically moved). On the transition to `Completed`,
+  everything still in the Reserve warehouse is dereserved (Reserve→Main) and
+  any over-issue vs the final requirement is returned (Issue→Main),
+  automatically, before the status is written — a Zoho failure aborts the
+  transition and a retry sweeps only the remainder. Issued stock *within* the
+  requirement is assumed consumed by assembly; unconsumed material is returned
+  manually via the grid before completing.
+- Editing locks at `Completed`/`Closed`/`Cancelled` (`assertEditable`, 409).
+
+**Shipped:**
+- [booksApi.js](functions/skuapi/zoho/booksApi.js) — `searchItems` (one-page
+  `search_text` typeahead).
+- [routes/workorder.js](functions/skuapi/routes/workorder.js) —
+  `GET /api/wo/items?q=` (Books-item picker, min 2 chars);
+  `POST /api/wo/:id/lines` (single-op edit: `add`/`setQty`/`remove`/`replace`
+  + reason → diff entries → `bom.applyBom`, revision + `BomRevision` with a
+  human `note` in the summary, **zero Zoho writes**); `POST /:id/status` runs
+  `txn.autoReturnOnComplete` before writing `Completed` and returns the created
+  Transfer Orders; `GET /api/wo/reports/reconciliation?workOrderId=`.
+- [workorder/txn.js](functions/skuapi/workorder/txn.js) — pure `sweepLines`
+  (dereserve = reserved, return = max(0, issued − required)) +
+  `autoReturnOnComplete` (per-FG grid → draft + confirm via the existing txn
+  path, notes "Auto-return on completion"); selftest cases.
+- [workorder/reports.js](functions/skuapi/workorder/reports.js) — pure
+  `reconcileRows` (lines ⋈ balances → required/reserved/issued/returned/
+  leftover/removedFromBom, orphan balances included) + `reconciliation`
+  (per-WO or org-wide, local tables only); selftest cases.
+- [WoItemsTab.jsx](frontend/src/components/WoItemsTab.jsx) (new) — Items tab on
+  the WO page: record-grid of frozen lines (hover pencil/trash, pager), Add /
+  Replace / Remove modals with a debounced Books-item typeahead and a reason
+  box, "Changes" list rendering the revision notes, read-only banner when
+  locked. Wired in [WorkOrderPage.jsx](frontend/src/pages/WorkOrderPage.jsx)
+  (`Items` tab; completion toast lists the auto-return Transfer Orders).
+- [WorkOrderReportsPage.jsx](frontend/src/pages/WorkOrderReportsPage.jsx) —
+  "Reconciliation" view with WO filter + CSV export.
+
+**Not done (and why):** no auto-return of consumed-range issued stock (the app
+cannot know shop-floor consumption); no SO/composite writes (explicitly out of
+scope — internal to the add-on by design).
 
 ---
 

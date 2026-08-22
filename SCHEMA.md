@@ -125,6 +125,7 @@ A generated, persisted product.
 | `type` | string | `Trading` or `Manufacturing` |
 | `industryId` | string FK | Source industry |
 | `zohoItemId` | string? | Linked Zoho Books `item_id` once pushed |
+| `lastPushedAt` | datetime? | When the SKU last landed in Books (stamped by `pushToZoho`); compared to `MODIFIEDTIME` for the "Edited · Re-push" stale-sync badge (CR-038) |
 | `orgId` | string | Tenant key |
 
 ### SKUItemValue
@@ -395,7 +396,9 @@ Newest first. One row per applied schema change; link the CR that requested it.
 
 | Date | CR | Change | Applied |
 |------|----|--------|---------|
+| 2026-08-21 | [CR-031](CHANGES.md) | No schema change — `BomRevision.summary` (existing JSON text) gains an optional `note` key; `WorkOrderLine.requiredQty = 0` rows are now legal (removed-while-committed lines kept for the completion sweep) | n/a |
 | 2026-08-11 | [CR-026](CHANGES.md) | `Property.createValuesAsItems` (boolean, nullable, default false) — property-level gate: all of the property's values sync to Books as items (replaces per-value `createAsItem`) | ✅ live |
+| 2026-08-22 | [CR-038](CHANGES.md) | `SKUItem.lastPushedAt` (datetime, nullable) — last successful Books push; drives the stale-sync badge. Added via Catalyst MCP (column id 69851000000187037) | ✅ live |
 | 2026-08-11 | [CR-026](CHANGES.md) | `PropertyValue.createAsItem` (boolean, nullable, default false) + `PropertyValue.zohoItemId` (varchar 64, nullable) — create a value as a standalone Books item + the link | ✅ live |
 | 2026-08-11 | [CR-025](CHANGES.md) | `Property.clubKey` (varchar 255, nullable) — properties sharing a club concatenate SKU codes with no separator | ✅ live |
 | 2026-08-06 | [CR-023](CHANGES.md) | `PurchaseRequestLine.workOrderId` (varchar 50, nullable) — WO a line was raised for; consolidated PRs leave `PurchaseRequest.workOrderId`/`salesOrderId` empty. No backfill (read falls back to parent PR) | ✅ live |

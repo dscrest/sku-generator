@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
-import Modal, { ModalFooter, ModalBtn } from '../components/Modal.jsx';
+import Modal, { ModalFooter, ModalBtn, ConfirmModal } from '../components/Modal.jsx';
 import RowDeleteButton from '../components/RowDeleteButton.jsx';
 import RowEditButton from '../components/RowEditButton.jsx';
 import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
@@ -34,6 +34,7 @@ export default function IndustriesPage() {
   const [sortDir, setSortDir] = useState('asc');
   const [fName, setFName] = useState('');
   const [fSep, setFSep] = useState('');
+  const [confirmDel, setConfirmDel] = useState(null);
   const navigate = useNavigate();
 
   const load = useCallback(async () => {
@@ -82,11 +83,11 @@ export default function IndustriesPage() {
   }
 
   async function handleDelete(ind) {
-    if (!confirm(`Delete "${ind.name}"?`)) return;
     try {
       await axios.delete(`/api/industries/${ind.id}`);
       toast.success('Industry deleted'); load();
     } catch { toast.error('Failed to delete industry'); }
+    finally { setConfirmDel(null); }
   }
 
   const SortArrow = ({ col }) => (
@@ -155,7 +156,7 @@ export default function IndustriesPage() {
                     <td style={{ padding: '8px 12px' }}>
                       <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
                         <RowEditButton onEdit={() => openEdit(ind)} title={`Edit ${ind.name}`} />
-                        <RowDeleteButton onDelete={() => handleDelete(ind)} title={`Delete ${ind.name}`} />
+                        <RowDeleteButton onDelete={() => setConfirmDel(ind)} title={`Delete ${ind.name}`} />
                       </div>
                     </td>
                   </tr>
@@ -169,7 +170,7 @@ export default function IndustriesPage() {
       <GridFooter pager={pager} />
 
       {showAdd && (
-        <Modal title="Add Industry" onClose={() => setShowAdd(false)}>
+        <Modal title="Add Industry" onClose={() => setShowAdd(false)} onSubmit={handleAdd}>
           <div>
             <label style={labelStyle}>Name <span style={{ color: '#e11d48' }}>*</span></label>
             <input style={inputStyle} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Valve" autoFocus onFocus={focusIn} onBlur={focusOut} />
@@ -186,7 +187,7 @@ export default function IndustriesPage() {
       )}
 
       {showEdit && selected && (
-        <Modal title="Edit Industry" onClose={() => setShowEdit(false)}>
+        <Modal title="Edit Industry" onClose={() => setShowEdit(false)} onSubmit={handleEdit}>
           <div>
             <label style={labelStyle}>Name <span style={{ color: '#e11d48' }}>*</span></label>
             <input style={inputStyle} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} autoFocus onFocus={focusIn} onBlur={focusOut} />
@@ -200,6 +201,17 @@ export default function IndustriesPage() {
             <ModalBtn onClick={handleEdit} variant="primary">Save</ModalBtn>
           </ModalFooter>
         </Modal>
+      )}
+
+      {confirmDel && (
+        <ConfirmModal
+          title={`Delete "${confirmDel.name}"?`}
+          confirmLabel="Delete industry"
+          onConfirm={() => handleDelete(confirmDel)}
+          onClose={() => setConfirmDel(null)}
+        >
+          The industry and its properties are removed. This cannot be undone.
+        </ConfirmModal>
       )}
     </div>
   );

@@ -11,7 +11,7 @@ const express = require("express");
 const { zStr, idOk } = require("../store");
 const { dsDate } = require("../zoho/auth");
 const {
-  getSalesOrder, listSalesOrders, listVendors, findItemByName, findItemBySku, createComponentItem,
+  getSalesOrder, listSalesOrders, listVendors, findItemByName, findItemBySku, createComponentItem, searchItems,
 } = require("../zoho/booksApi");
 const { getUserById } = require("../session");
 const { updateCompositeItem, listCompositeItems, createCompositeItem } = require("../zoho/inventoryApi");
@@ -19,7 +19,7 @@ const {
   SETTING_KEYS, settings, setSetting, nextNumber, logActivity, byOrg, inList,
 } = require("../workorder/store");
 const bom = require("../workorder/bom");
-const { buildGrid } = require("../workorder/grid");
+const { buildGrid, buildGridsBulk } = require("../workorder/grid");
 const txn = require("../workorder/txn");
 const purchase = require("../workorder/purchase");
 const reports = require("../workorder/reports");
@@ -60,6 +60,16 @@ async function loadWo(req) {
   const rows = await byOrg(req.catalyst, req.orgId, "WorkOrder", `ROWID = ${zStr(req.params.id)}`);
   if (!rows.length) { const e = new Error("Work order not found"); e.status = 404; throw e; }
   return rows[0];
+}
+
+// Items are editable until production is done (CR-031).
+const EDIT_LOCKED = ["Completed", "Closed", "Cancelled"];
+function assertEditable(wo) {
+  if (EDIT_LOCKED.includes(String(wo.status))) {
+    const e = new Error(`${wo.woNumber} is ${wo.status} — items can no longer be edited`);
+    e.status = 409;
+    throw e;
+  }
 }
 
 // ---- settings -------------------------------------------------------------
@@ -114,6 +124,17 @@ router.get("/so/:soId", ok(async (req, res) => {
 }));
 
 router.get("/vendors", ok(async (req, res) => res.json(await listVendors(req.catalyst))));
+
+// Books-item typeahead for the WO Items tab (CR-031) — only items that already
+// exist in Zoho Books can be picked. Static path — must stay above /:id.
+router.get("/items", ok(async (req, res) => {
+  const q = String(req.query.q || "").trim();
+  if (q.length < 2) return res.json([]);
+  const items = await searchItems(req.catalyst, q);
+  res.json(items.map((i) => ({
+    id: String(i.item_id), name: i.name, sku: i.sku || null, unit: i.unit || "",
+  })));
+}));
 
 // ---- composite-item BOM (CR-028) ------------------------------------------
 // The global BOM page works on Zoho composite items directly — no work-order
@@ -271,8 +292,6 @@ router.get("/purchase-orders", ok(async (req, res) => {
 // Item-wise Purchase Request (CR-023): shortfall of every open WO, aggregated
 // by raw material so the buyer orders across work orders in one place. Static
 // path — must stay above /:id.
-// ponytail: grid-per-WO fan-out; batch the stock/composite reads if the open-WO
-// count ever makes this slow.
 router.get("/purchase/shortfall-by-item", ok(async (req, res) => {
   const wos = await byOrg(req.catalyst, req.orgId, "WorkOrder", null, "CREATEDTIME DESC");
   const open = wos.filter((w) => !["Closed", "Cancelled"].includes(String(w.status)));
@@ -285,15 +304,14 @@ router.get("/purchase/shortfall-by-item", ok(async (req, res) => {
     fgsByWo.get(k).push(f);
   }
 
+  const pairs = open.flatMap((wo) => (fgsByWo.get(String(wo.ROWID)) || []).map((fg) => ({ wo, fg })));
+  const grids = await buildGridsBulk(req.catalyst, req.orgId, pairs);
   const tagged = [];
-  for (const wo of open) {
-    for (const fg of fgsByWo.get(String(wo.ROWID)) || []) {
-      const grid = await buildGrid(req.catalyst, req.orgId, wo, fg);
-      for (const l of purchase.shortfallLines(grid)) {
-        tagged.push({ ...l, woId: String(wo.ROWID), woNumber: wo.woNumber, salesOrderNumber: wo.salesOrderNumber });
-      }
+  pairs.forEach(({ wo }, i) => {
+    for (const l of purchase.shortfallLines(grids[i])) {
+      tagged.push({ ...l, woId: String(wo.ROWID), woNumber: wo.woNumber, salesOrderNumber: wo.salesOrderNumber });
     }
-  }
+  });
 
   // Deduct draft-PR quantities (not yet on a PO) so raising never duplicates a
   // pending request — org-wide, since consolidated PRs span work orders.
@@ -323,6 +341,10 @@ router.get("/reports/so-bom", ok(async (req, res) => {
 
 router.get("/reports/shortfall", ok(async (req, res) => {
   res.json(await reports.shortfall(req.catalyst, req.orgId));
+}));
+
+router.get("/reports/reconciliation", ok(async (req, res) => {
+  res.json(await reports.reconciliation(req.catalyst, req.orgId, { workOrderId: req.query.workOrderId }));
 }));
 
 router.get("/reports/item-pipeline", ok(async (req, res) => {
@@ -461,16 +483,16 @@ router.post("/", ok(async (req, res) => {
 
 router.get("/:id", ok(async (req, res) => {
   const wo = await loadWo(req);
-  const [fgs, prs, txns] = await Promise.all([
+  const [fgs, prs, txns, approvals, procMap] = await Promise.all([
     byOrg(req.catalyst, req.orgId, "WorkOrderFG", `workOrderId = ${zStr(String(wo.ROWID))}`),
     purchase.listPRs(req.catalyst, req.orgId, wo.ROWID),
     txn.listTxns(req.catalyst, req.orgId, wo.ROWID),
+    byOrg(
+      req.catalyst, req.orgId, "Approval",
+      `entityType = 'WorkOrder' AND entityId = ${zStr(String(wo.ROWID))}`, "approvalLevel",
+    ),
+    purchase.procStatusByWo(req.catalyst, req.orgId, wo.ROWID),
   ]);
-  const approvals = await byOrg(
-    req.catalyst, req.orgId, "Approval",
-    `entityType = 'WorkOrder' AND entityId = ${zStr(String(wo.ROWID))}`, "approvalLevel",
-  );
-  const procMap = await purchase.procStatusByWo(req.catalyst, req.orgId);
   res.json({
     id: String(wo.ROWID),
     woNumber: wo.woNumber,
@@ -585,11 +607,18 @@ router.post("/:id/status", ok(async (req, res) => {
   }
   // QC rejected sends the job back to production rather than forward (§6.1.4).
   const status = qcStatus === "Rejected" ? "InProgress" : to;
+  // Production is over: whatever still sits in the Reserve/Issue warehouses for
+  // this WO goes back to Main (CR-031). A Zoho failure aborts the transition —
+  // a retry only sweeps the remainder, since confirmed txns update balances.
+  let transferOrders = [];
+  if (status === "Completed") {
+    transferOrders = (await txn.autoReturnOnComplete(req.catalyst, req.orgId, wo, req.userId)).transferOrders;
+  }
   const fields = { ROWID: String(wo.ROWID), status };
   if (qcStatus) fields.qcStatus = qcStatus;
   await req.catalyst.datastore().table("WorkOrder").updateRow(fields);
-  await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.status", req.userId, { from: wo.status, to: status, qcStatus });
-  res.json({ ok: true, status, qcStatus: qcStatus || wo.qcStatus || null });
+  await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.status", req.userId, { from: wo.status, to: status, qcStatus, transferOrders });
+  res.json({ ok: true, status, qcStatus: qcStatus || wo.qcStatus || null, transferOrders });
 }));
 
 // ---- BOM ------------------------------------------------------------------
@@ -707,6 +736,100 @@ router.post("/:id/bom/apply", ok(async (req, res) => {
   res.json({ ...applied, pushedToZoho: pushed });
 }));
 
+/**
+ * Single-line item edit during production (CR-031). Internal to the work order
+ * only: never pushes to the Zoho composite item and never touches the Sales
+ * Order. A removed/replaced line with material already reserved or issued is
+ * kept at requiredQty 0 — the stock goes back to Main automatically when the
+ * work order completes (see txn.autoReturnOnComplete).
+ *
+ * Body: { fgId, op: { action: 'add'|'setQty'|'remove'|'replace',
+ *                     rmItemId?, qty?, item?: {id,name,sku,unit}, reason? } }
+ */
+router.post("/:id/lines", ok(async (req, res) => {
+  const wo = await loadWo(req);
+  assertEditable(wo);
+  const { fgId, op } = req.body || {};
+  const action = String((op || {}).action || "");
+  const fgs = await byOrg(
+    req.catalyst, req.orgId, "WorkOrderFG",
+    `ROWID = ${zStr(String(fgId))} AND workOrderId = ${zStr(String(wo.ROWID))}`,
+  );
+  if (!fgs.length) { const e = new Error("Finished good not found on this work order"); e.status = 404; throw e; }
+  const fg = fgs[0];
+  const fgQty = n(fg.fgQty);
+  const current = await bom.currentLines(req.catalyst, req.orgId, wo.ROWID, fg.ROWID);
+  const byItem = new Map(current.map((l) => [String(l.rmItemId), l]));
+  const balances = await bom.balancesFor(req.catalyst, req.orgId, wo.ROWID, fg.ROWID);
+  const committed = (itemId) => {
+    const b = balances.get(String(itemId));
+    return b ? n(b.reservedQty) + n(b.issuedQty) - n(b.returnedQty) : 0;
+  };
+  const bad = (msg) => { const e = new Error(msg); e.status = 400; throw e; };
+  const label = (l) => `${l.rmName || l.rmItemId}${l.rmSku ? ` (${l.rmSku})` : ""}`;
+
+  const addEntry = (item, qty) => {
+    if (!item || !item.id) bad("Pick an item from Zoho Books");
+    if (byItem.has(String(item.id))) bad(`${item.name} is already on this BOM — edit its quantity instead`);
+    if (!(n(qty) > 0)) bad("Quantity must be greater than zero");
+    return {
+      diffStatus: "new", rmItemId: String(item.id), rmName: item.name || "", rmSku: item.sku || "",
+      uom: item.unit || "", perUnitQty: fgQty ? n(qty) / fgQty : n(qty), requiredQty: n(qty),
+      source: "manual", prevQty: null,
+    };
+  };
+  const dropEntry = (line) => committed(line.rmItemId) > 0
+    // Material already moved: keep the line at 0 so the grid still shows it and
+    // completion knows to send the stock back.
+    ? { ...line, rmItemId: String(line.rmItemId), diffStatus: "qtyChanged", prevQty: n(line.requiredQty), requiredQty: 0, perUnitQty: 0 }
+    : { ...line, rmItemId: String(line.rmItemId), diffStatus: "removed", prevQty: n(line.requiredQty), requiredQty: 0 };
+  const mustFind = (rmItemId) => {
+    const line = byItem.get(String(rmItemId || ""));
+    if (!line) bad("That item is not on this BOM");
+    return line;
+  };
+
+  const entries = [];
+  let note = "";
+  if (action === "add") {
+    const entry = addEntry(op.item, op.qty);
+    entries.push(entry);
+    note = `${label({ rmName: entry.rmName, rmSku: entry.rmSku })} added manually — not part of the composite item`;
+  } else if (action === "setQty") {
+    const line = mustFind(op.rmItemId);
+    const qty = n(op.qty);
+    if (qty < 0) bad("Quantity cannot be negative");
+    entries.push({
+      ...line, rmItemId: String(line.rmItemId), diffStatus: "qtyChanged",
+      prevQty: n(line.requiredQty), requiredQty: qty, perUnitQty: fgQty ? qty / fgQty : qty,
+    });
+    note = `${label(line)} quantity changed from ${n(line.requiredQty)} to ${qty}`;
+  } else if (action === "remove") {
+    const line = mustFind(op.rmItemId);
+    entries.push(dropEntry(line));
+    note = `${label(line)} removed`;
+  } else if (action === "replace") {
+    const line = mustFind(op.rmItemId);
+    const entry = addEntry(op.item, op.qty === undefined || op.qty === null ? n(line.requiredQty) : op.qty);
+    entries.push(dropEntry(line), entry);
+    note = `${label(line)} replaced by ${label({ rmName: entry.rmName, rmSku: entry.rmSku })}`;
+  } else {
+    bad("Unknown action — use add, setQty, remove or replace");
+  }
+  if (op.reason) note += ` — ${String(op.reason).trim()}`;
+
+  const summary = {
+    added: entries.filter((l) => l.diffStatus === "new").map((l) => ({ rmItemId: l.rmItemId, name: l.rmName, qty: l.requiredQty })),
+    removed: entries.filter((l) => l.diffStatus === "removed" || (l.diffStatus === "qtyChanged" && n(l.requiredQty) === 0))
+      .map((l) => ({ rmItemId: l.rmItemId, name: l.rmName, qty: n(l.prevQty) })),
+    changed: entries.filter((l) => l.diffStatus === "qtyChanged" && n(l.requiredQty) > 0)
+      .map((l) => ({ rmItemId: l.rmItemId, name: l.rmName, from: n(l.prevQty), to: n(l.requiredQty) })),
+    note,
+  };
+  const applied = await bom.applyBom(req.catalyst, req.orgId, wo, fg, entries, summary, req.userId);
+  res.json({ revision: applied.revision, note });
+}));
+
 // ---- the grid + material actions ------------------------------------------
 
 router.get("/:id/grid", ok(async (req, res) => {
@@ -756,11 +879,8 @@ router.get("/:id/purchase-requests", ok(async (req, res) => {
 router.get("/:id/shortfall", ok(async (req, res) => {
   const wo = await loadWo(req);
   const fgs = await byOrg(req.catalyst, req.orgId, "WorkOrderFG", `workOrderId = ${zStr(String(wo.ROWID))}`);
-  const lines = [];
-  for (const fg of fgs) {
-    const grid = await buildGrid(req.catalyst, req.orgId, wo, fg);
-    lines.push(...purchase.shortfallLines(grid));
-  }
+  const grids = await buildGridsBulk(req.catalyst, req.orgId, fgs.map((fg) => ({ wo, fg })));
+  const lines = grids.flatMap((grid) => purchase.shortfallLines(grid));
   // Draft PRs are not on a PO yet (poSums can't see them) — deduct their
   // quantities here so raising again never duplicates a pending request.
   const draftPrs = await byOrg(

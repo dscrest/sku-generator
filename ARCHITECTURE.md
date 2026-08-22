@@ -142,6 +142,8 @@ ROWID (List props) or a raw number string (Range props).
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/api/crm/deal/:id` | Read-only Zoho CRM Deal (v6 `GET /Deals/{id}` via `zoho/crmApi.js`) for the "CRM Info" card on the generator page. Needs the `ZohoCRM.modules.READ` scope → `409 reauth_required` if the grant predates it; `404 not_found` if the deal is gone. Opened from a CRM custom link button: `/#/sku/generator?dealId=<id>` (CR-024) |
+| GET | `/api/crm/deal/:id/quotes` | Quotes related to a deal (v6 related-records, explicit `fields` list) for the estimate page's picker. Always 200 + array — empty means the deal has no quotes (CR-032) |
+| GET | `/api/crm/quote/:id` | Full quote incl. `Quoted_Items` subform for the estimate sheet (`/#/estimate?dealId=…`, `EstimatePage.jsx` + `estimateParser.js`). Same reauth/404 semantics as `/deal/:id` (CR-032) |
 
 ### Admin — `routes/admin.js` (mounted `/admin`, requireAuth + requireAdmin via `ADMIN_EMAILS`)
 | Method | Path | Purpose |
@@ -156,6 +158,7 @@ ROWID (List props) or a raw number string (Range props).
 | GET/PUT | `/api/wo/settings` | Org config (warehouses, alert recipients, thresholds, number prefixes) + live warehouse list |
 | GET | `/api/wo/sales-orders?q=` · `/api/wo/so/:soId` | SO picker + detail for the create flow |
 | GET | `/api/wo/vendors` | Books vendors for the Purchase Request screen |
+| GET | `/api/wo/items?q=` | Books-item typeahead for the WO Items tab (CR-031) — only existing Books items |
 | GET | `/api/wo/composites` | All Books composite items — the global BOM page's grid (CR-028) |
 | GET | `/api/wo/composites/:itemId/bom` | Composite BOM, cache-first (`?refresh=1` forces Zoho) |
 | POST | `/api/wo/composites/:itemId/bom/preview` | Sheet vs composite diff; unmatched rows resolved against Books, rest → `missing` |
@@ -164,7 +167,8 @@ ROWID (List props) or a raw number string (Range props).
 | POST | `/api/wo/composites/import` | Bulk import of a Books composite-items export — update matched composites, create unknown ones |
 | GET/POST | `/api/wo` | List work orders / create from an SO (seeds each FG's BOM from its composite item) |
 | GET/PUT | `/api/wo/:id` | Work order with FGs, purchase requests, transactions, approvals |
-| POST | `/api/wo/:id/status` | Status transition, incl. the QC gate (Rejected → back to In Progress) |
+| POST | `/api/wo/:id/status` | Status transition, incl. the QC gate (Rejected → back to In Progress). On `Completed` it first auto-returns leftover material to Main via `txn.autoReturnOnComplete` — a Zoho failure aborts the transition (CR-031) |
+| POST | `/api/wo/:id/lines` | Single-op item edit during production (CR-031): `add`/`setQty`/`remove`/`replace` + reason. Internal only — never writes to the composite item or SO; committed lines are kept at qty 0 for the completion sweep; locked at Completed/Closed/Cancelled |
 | GET | `/api/wo/:id/bom` | Frozen BOM lines + revision history |
 | POST | `/api/wo/:id/bom/preview` | Diff vs the composite item or an uploaded sheet — writes nothing |
 | POST | `/api/wo/:id/bom/apply` | Apply the diff, record a `BomRevision`, push back to the composite item |
@@ -181,7 +185,7 @@ ROWID (List props) or a raw number string (Range props).
 | GET | `/api/wo/purchase-orders` | Orders grid: every Books PO, app-created ones stamped with PR/WO, `locked` when received/billed |
 | GET/PUT/DELETE | `/api/wo/po/:poId` (+ POST `/status`) | Live Books PO detail · edit lines · delete (Books-only POs too) · issue/cancel |
 | POST | `/api/wo/:id/approve` · GET `/invoice-gate` | Two-level approval; the gate blocks invoicing until both |
-| GET | `/api/wo/reports/so-bom` · `/reports/shortfall` · `/reports/item-pipeline` | ZCQL-only reports |
+| GET | `/api/wo/reports/so-bom` · `/reports/shortfall` · `/reports/item-pipeline` · `/reports/reconciliation?workOrderId=` | ZCQL-only reports (reconciliation: required vs reserved/issued/returned/leftover per item, per-WO or org-wide — CR-031) |
 | GET | `/api/wo/:id/history` · POST `/api/wo/refresh` | Audit trail · manual reconcile |
 
 `POST /internal/reconcile` (nightly cron) and `POST /internal/zoho-event`
@@ -282,6 +286,7 @@ list+generator page — CR-014); default landing is `/sku/industries`.
 | `/wo/reports` | `WorkOrderReportsPage` | SO–BOM status + shortfall/pending + item pipeline (WO/vendor filters), CSV export |
 | `/wo/settings` | `WorkOrderSettingsPage` | Warehouse map, alert recipients, thresholds, number prefixes |
 | `/reserve` | `ReservePage` | Superseded by `/wo` — kept one release for the Books custom button |
+| `/estimate` | `EstimatePage` | Print estimates from CRM Quotes (CR-032, no sidebar entry). Deal button (`?dealId=`) → checkbox list of the deal's quotes → one sheet per ticked quote (page-break between); Quote button (`?quoteId=`) → that sheet directly. Sheet ported from `estimate-prototype/` (specs/design/size rows parsed from line descriptions via `estimateParser.js`, flat fallback), A–F priced / A–D technical toggle, native print. Editable "General Terms & Conditions" last page (`estimateTerms.js` + `EstimateTerms.jsx`, per-browser localStorage). Logged-out deep links auto-login via Zoho OAuth (sessionStorage returnTo) |
 | `/admin/addons` | `AddonAdminPage` | Super-admin: per-org add-on entitlements + org delete |
 | (login) | `LoginPage` | Email+password or Zoho login |
 | `/connect` | `ZohoConnectPage` | Shown until Zoho is connected (app gate) |

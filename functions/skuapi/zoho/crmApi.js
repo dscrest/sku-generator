@@ -35,4 +35,20 @@ async function getDeal(catalyst, id) {
   return (data && data.data && data.data[0]) || null;
 }
 
-module.exports = { crmReauthNeeded, getDeal };
+// Full quote record — GET-one includes the Quoted_Items subform (product,
+// Quantity, List_Price, Total, per-line Description) plus quote-level Discount.
+async function getQuote(catalyst, id) {
+  const data = await crmRequest(catalyst, `Quotes/${encodeURIComponent(id)}`);
+  return (data && data.data && data.data[0]) || null;
+}
+
+// The related-records API requires an explicit fields param; these are just
+// enough for the estimate page's quote picker.
+const QUOTE_LIST_FIELDS = "Subject,Quote_Number,Grand_Total,Quote_Stage,Created_Time";
+
+async function getDealQuotes(catalyst, id) {
+  const data = await crmRequest(catalyst, `Deals/${encodeURIComponent(id)}/Quotes?fields=${QUOTE_LIST_FIELDS}`);
+  return (data && data.data) || [];
+}
+
+module.exports = { crmReauthNeeded, getDeal, getQuote, getDealQuotes };

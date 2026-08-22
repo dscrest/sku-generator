@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import GridFooter, { usePager } from '../components/GridFooter.jsx';
@@ -11,10 +11,20 @@ import { StatusChip, AccessNotice, Table, select } from '../components/woCommon.
  * own tables, so they cost nothing in Zoho API calls however many projects
  * they span.
  */
-const VIEWS = ['SO–BOM status', 'Shortfall / pending', 'Item pipeline'];
+const VIEWS = ['SO–BOM status', 'Shortfall / pending', 'Item pipeline', 'Reconciliation'];
 
 export default function WorkOrderReportsPage() {
-  const [view, setView] = useState(VIEWS[0]);
+  // ?view= keeps the active report across refreshes (CR-038).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [view, setView] = useState(VIEWS[Number(searchParams.get('view'))] || VIEWS[0]);
+  useEffect(() => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      const i = VIEWS.indexOf(view);
+      i > 0 ? p.set('view', String(i)) : p.delete('view');
+      return p;
+    }, { replace: true });
+  }, [view, setSearchParams]);
   const [rows, setRows] = useState(null);
   const [blocked, setBlocked] = useState(null);
   const [woFilter, setWoFilter] = useState('');
@@ -26,6 +36,7 @@ export default function WorkOrderReportsPage() {
     setRows(null);
     const url = view === VIEWS[0] ? '/api/wo/reports/so-bom'
       : view === VIEWS[1] ? '/api/wo/reports/shortfall'
+      : view === VIEWS[3] ? `/api/wo/reports/reconciliation?workOrderId=${woFilter}`
       : `/api/wo/reports/item-pipeline?workOrderId=${woFilter}&vendorId=${vendorFilter}`;
     axios.get(url)
       .then(({ data }) => setRows(data))
@@ -35,9 +46,9 @@ export default function WorkOrderReportsPage() {
       });
   }, [view, woFilter, vendorFilter]);
 
-  // WO / vendor filter options, fetched once when the pipeline view first opens.
+  // WO / vendor filter options, fetched once when a filterable view first opens.
   useEffect(() => {
-    if (view !== VIEWS[2] || filterOpts) return;
+    if ((view !== VIEWS[2] && view !== VIEWS[3]) || filterOpts) return;
     Promise.all([axios.get('/api/wo'), axios.get('/api/wo/vendors')])
       .then(([wos, vendors]) => setFilterOpts({ wos: wos.data, vendors: vendors.data }))
       .catch(() => setFilterOpts({ wos: [], vendors: [] }));
@@ -58,16 +69,18 @@ export default function WorkOrderReportsPage() {
             }}>{v}</button>
           ))}
         </div>
-        {view === VIEWS[2] && (
+        {(view === VIEWS[2] || view === VIEWS[3]) && (
           <>
             <select style={select} value={woFilter} onChange={e => setWoFilter(e.target.value)}>
               <option value="">All work orders</option>
               {(filterOpts?.wos || []).map(w => <option key={w.id} value={w.id}>{w.woNumber}</option>)}
             </select>
-            <select style={select} value={vendorFilter} onChange={e => setVendorFilter(e.target.value)}>
-              <option value="">All vendors</option>
-              {(filterOpts?.vendors || []).map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-            </select>
+            {view === VIEWS[2] && (
+              <select style={select} value={vendorFilter} onChange={e => setVendorFilter(e.target.value)}>
+                <option value="">All vendors</option>
+                {(filterOpts?.vendors || []).map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+            )}
           </>
         )}
         <div style={{ flex: 1 }} />
@@ -78,6 +91,7 @@ export default function WorkOrderReportsPage() {
         {!rows ? <Empty>Loading…</Empty> : !rows.length ? (
           <Empty>{view === VIEWS[0] ? 'No work orders yet.'
             : view === VIEWS[1] ? 'Nothing is short — every open work order is covered.'
+            : view === VIEWS[3] ? 'No work order lines to reconcile yet.'
             : 'No purchase request lines match.'}</Empty>
         ) : view === VIEWS[0] ? (
           <Table
@@ -104,6 +118,23 @@ export default function WorkOrderReportsPage() {
               ],
             }))}
           />
+        ) : view === VIEWS[3] ? (
+          <Table
+            head={['Work order', 'Status', 'Finished good', 'Item', 'SKU', 'Required', 'Reserved', 'Issued', 'Returned', 'Leftover']}
+            rightFrom={5}
+            rows={pageRows.map((r, i) => ({
+              key: `${r.workOrderId}-${r.itemId}-${i}`, onClick: () => navigate(`/wo/${r.workOrderId}`),
+              cells: [
+                <b style={{ color: 'var(--blue)' }}>{r.woNumber}</b>, <StatusChip status={r.status} />, r.fgName || '—',
+                <span>
+                  {r.name}
+                  {r.removedFromBom && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: '#b91c1c' }}>removed</span>}
+                </span>,
+                r.sku || '—', r.required, r.reserved, r.issued, r.returned,
+                r.leftover ? <span style={{ color: '#b45309', fontWeight: 700 }}>{r.leftover}</span> : '—',
+              ],
+            }))}
+          />
         ) : (
           <Table
             head={['Work order', 'Customer', 'Finished good', 'Raw material', 'Required', 'Available', 'On order', 'Short by', 'PO raised']}
@@ -126,9 +157,19 @@ export default function WorkOrderReportsPage() {
 }
 
 // Plain CSV from the rows already on screen — no server round trip.
+const CSV_LABELS = {
+  woNumber: 'Work order', salesOrderNumber: 'Sales order', customerName: 'Customer', status: 'Status',
+  items: 'Items', required: 'Required', reserved: 'Reserved', issued: 'Issued', ordered: 'On order',
+  shortItems: 'Short', rmName: 'Raw material', vendors: 'Vendors', requested: 'Requested',
+  noPo: 'On draft PR', onPoDraft: 'On draft PO', onPoOpen: 'On open PO', received: 'Received',
+  billed: 'Billed', fgName: 'Finished good', name: 'Item', sku: 'SKU', returned: 'Returned',
+  leftover: 'Leftover', removedFromBom: 'Removed from BOM', available: 'Available',
+  onOrder: 'On order', shortfallQty: 'Short by', noPoRaised: 'PO raised',
+};
 function download(view, rows) {
   const cols = Object.keys(rows[0]);
-  const csv = [cols.join(','), ...rows.map(r => cols.map(c => JSON.stringify(r[c] ?? '')).join(','))].join('\n');
+  const head = cols.map(c => CSV_LABELS[c] || c);
+  const csv = [head.join(','), ...rows.map(r => cols.map(c => JSON.stringify(r[c] ?? '')).join(','))].join('\n');
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
   const a = document.createElement('a');
   a.href = url;

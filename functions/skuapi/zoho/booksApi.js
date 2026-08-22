@@ -20,21 +20,26 @@ async function getStockAccountId(catalyst, accountName) {
 }
 const getFinishedGoodsAccountId = (catalyst) => getStockAccountId(catalyst, "finished goods");
 
-// api_name -> [option label] for item dropdown custom fields, cached per org.
-const _itemCfOptionsCache = new Map(); // orgId -> Map(api_name -> string[])
+// Item custom-field metadata per org: which api_names exist at all, plus
+// api_name -> [option label] for dropdown fields.
+const _itemCfOptionsCache = new Map(); // orgId -> { apiNames: Set, options: Map(api_name -> string[]) }
 async function getItemCfOptions(catalyst) {
   const orgId = await getOrgId(catalyst);
   if (_itemCfOptionsCache.has(orgId)) return _itemCfOptionsCache.get(orgId);
   const data = await apiRequest(catalyst, "GET", "/settings/fields?entity=item");
   const fields = data.fields || data.customfields || [];
-  const map = new Map();
+  const apiNames = new Set();
+  const options = new Map();
   for (const f of fields) {
-    if (f.api_name && Array.isArray(f.values) && f.values.length) {
-      map.set(f.api_name, f.values.map((v) => v.name).filter(Boolean));
+    if (!f.api_name) continue;
+    apiNames.add(f.api_name);
+    if (Array.isArray(f.values) && f.values.length) {
+      options.set(f.api_name, f.values.map((v) => v.name).filter(Boolean));
     }
   }
-  _itemCfOptionsCache.set(orgId, map);
-  return map;
+  const meta = { apiNames, options };
+  _itemCfOptionsCache.set(orgId, meta);
+  return meta;
 }
 
 // Books rejects a dropdown value that isn't byte-identical to an option, and options
@@ -43,16 +48,32 @@ async function getItemCfOptions(catalyst) {
 // keeps app data clean while absorbing Books' label quirks (typos, stray spaces).
 // Unmatched or ambiguous values pass through unchanged so Books surfaces a real error
 // rather than us silently sending the wrong option.
+// Fields whose api_name doesn't exist in the connected org are dropped (with a
+// warn), not sent — Books rejects the whole item over one unknown field, and
+// other clients' orgs won't have our defaults or every mapped property field.
 const _loose = (s) => String(s).toLowerCase().replace(/\s+/g, "");
 async function normalizeCustomFields(catalyst, customFields) {
   if (!customFields || !customFields.length) return customFields;
-  const options = await getItemCfOptions(catalyst);
-  return customFields.map((cf) => {
-    const opts = options.get(cf.api_name);
-    if (!opts || opts.includes(cf.value)) return cf; // non-dropdown, or already exact
-    const hit = opts.filter((o) => _loose(o) === _loose(cf.value));
-    return hit.length === 1 ? { ...cf, value: hit[0] } : cf;
-  });
+  let meta;
+  try {
+    meta = await getItemCfOptions(catalyst);
+  } catch (err) {
+    // Metadata fetch failed (e.g. missing scope) — don't fail the push over it.
+    console.warn(`custom-field metadata fetch failed, sending fields unfiltered: ${err.message}`);
+    return customFields;
+  }
+  const skipped = customFields.filter((cf) => !meta.apiNames.has(cf.api_name));
+  if (skipped.length) {
+    console.warn(`skipping custom fields not in Books org: ${skipped.map((cf) => cf.api_name).join(", ")}`);
+  }
+  return customFields
+    .filter((cf) => meta.apiNames.has(cf.api_name))
+    .map((cf) => {
+      const opts = meta.options.get(cf.api_name);
+      if (!opts || opts.includes(cf.value)) return cf; // non-dropdown, or already exact
+      const hit = opts.filter((o) => _loose(o) === _loose(cf.value));
+      return hit.length === 1 ? { ...cf, value: hit[0] } : cf;
+    });
 }
 
 // service: "books" (v3) | "inventory" (v1) — both APIs share auth, org param
@@ -82,7 +103,8 @@ async function apiRequest(catalyst, method, path, body, service = "books") {
 
 // §3 constants (field-mapping spec). Books custom-field *default values* only fire on
 // UI creation, not API create, so we push these explicitly. Values must equal the
-// dropdown option labels exactly ("In-House", not "In-house").
+// dropdown option labels exactly ("In-House", not "In-house"). Orgs that lack any
+// of these fields are fine: normalizeCustomFields drops unknown api_names.
 const ITEM_DEFAULT_CFS = [
   { api_name: "cf_item_type", value: "Finished Goods" },
   { api_name: "cf_item_criticality", value: "Critical" },
@@ -157,6 +179,12 @@ async function findItemByName(catalyst, name) {
   const data = await apiRequest(catalyst, "GET", `/items?search_text=${encodeURIComponent(name)}&per_page=200`);
   const wanted = String(name).trim().toLowerCase();
   return (data.items || []).find((i) => String(i.name || "").trim().toLowerCase() === wanted) || null;
+}
+
+// Typeahead search over the Books catalog — one page is plenty for a picker.
+async function searchItems(catalyst, q) {
+  const data = await apiRequest(catalyst, "GET", `/items?search_text=${encodeURIComponent(q)}&per_page=50`);
+  return data.items || [];
 }
 
 // Find an existing Books item by exact (case-insensitive) SKU — `search_text`
@@ -330,6 +358,7 @@ module.exports = {
   updateItem,
   getOrganizations,
   listItems,
+  searchItems,
   findItemByName,
   findItemBySku,
   createComponentItem,

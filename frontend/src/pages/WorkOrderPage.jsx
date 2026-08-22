@@ -3,8 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import MaterialsGrid, { Empty, Banner } from '../components/MaterialsGrid.jsx';
+import WoItemsTab from '../components/WoItemsTab.jsx';
 import Modal, { ModalFooter, ModalBtn } from '../components/Modal.jsx';
 import { StatusChip, ProcChip, AccessNotice, spaced, btn, thStyle, cell } from '../components/woCommon.jsx';
+import { fmtMoney, fmtDate } from '../format.js';
 
 /**
  * One work order, Zoho Books style (CR-018): compact list of work orders on
@@ -12,7 +14,7 @@ import { StatusChip, ProcChip, AccessNotice, spaced, btn, thStyle, cell } from '
  * ⋯) and per-order sub-tabs. BOM and Purchase live on their own sidebar
  * pages now — this page is the order itself.
  */
-const TABS = ['Details', 'Approvals', 'History'];
+const TABS = ['Details', 'Items', 'Approvals', 'History'];
 
 export default function WorkOrderPage() {
   const { id } = useParams();
@@ -25,18 +27,24 @@ export default function WorkOrderPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [printBom, setPrintBom] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [qcPrompt, setQcPrompt] = useState(null); // pending status awaiting QC answer
 
   function load() {
     axios.get(`/api/wo/${id}`)
-      .then(({ data }) => setWo(data))
+      .then(({ data }) => {
+        setWo(data);
+        // Keep the rail's status chip fresh without re-fetching the whole list
+        // (which server-side scans the org's purchase history).
+        setList(l => l && l.map(w => (String(w.id) === String(data.id) ? { ...w, status: data.status } : w)));
+      })
       .catch(err => {
         if (err.response?.status === 409 && err.response.data?.error === 'reauth_required') setBlocked('reauth');
         else if (err.response?.status === 403) setBlocked('disabled');
         else toast.error(err.response?.data?.error || 'Could not load the work order');
       });
-    axios.get('/api/wo').then(({ data }) => setList(data)).catch(() => {});
   }
   useEffect(() => { setWo(null); load(); /* eslint-disable-next-line */ }, [id]);
+  useEffect(() => { axios.get('/api/wo').then(({ data }) => setList(data)).catch(() => {}); }, []);
 
   if (blocked) return <AccessNotice kind={blocked} />;
 
@@ -58,17 +66,24 @@ export default function WorkOrderPage() {
     } finally { setBusy(false); }
   }
 
-  async function changeStatus(status) {
+  async function changeStatus(status, qcStatus) {
     // The QC gate is the one transition that needs an answer first.
-    let qcStatus;
-    if (status === 'Completed' && !wo.qcStatus) {
-      qcStatus = window.confirm('Did the quality check pass?\n\nOK = Passed · Cancel = Rejected (sends the job back to production)')
-        ? 'Passed' : 'Rejected';
+    if (status === 'Completed' && !wo.qcStatus && !qcStatus) {
+      setQcPrompt(status);
+      return;
     }
     setBusy(true);
     try {
       const { data } = await axios.post(`/api/wo/${id}/status`, { status, qcStatus });
       toast.success(`Moved to ${spaced(data.status)}`);
+      // Completion sweeps leftover material back to Main (CR-031) — surface
+      // the Zoho Transfer Orders it created.
+      if (data.transferOrders?.length) {
+        toast.success(
+          `Leftover material returned to Main: ${data.transferOrders.map(t => t.transferOrderNumber || t.txnNumber).join(', ')}`,
+          { duration: 8000 },
+        );
+      }
       load();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Could not change the status', { duration: 6000 });
@@ -102,11 +117,11 @@ export default function WorkOrderPage() {
         {!list ? <Empty>Loading…</Empty> : list.map(w => (
           <div
             key={w.id}
-            onClick={() => w.id !== id && navigate(`/wo/${w.id}`)}
+            onClick={() => String(w.id) !== String(id) && navigate(`/wo/${w.id}`)}
             style={{
               padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid var(--border)',
-              background: w.id === id ? 'var(--blue-light)' : 'transparent',
-              borderLeft: w.id === id ? '3px solid var(--blue)' : '3px solid transparent',
+              background: String(w.id) === String(id) ? 'var(--blue-light)' : 'transparent',
+              borderLeft: String(w.id) === String(id) ? '3px solid var(--blue)' : '3px solid transparent',
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -122,7 +137,7 @@ export default function WorkOrderPage() {
 
       {/* Right: the order */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {!wo || wo.id !== id ? <Empty>Loading work order…</Empty> : (
+        {!wo || String(wo.id) !== String(id) ? <Empty>Loading work order…</Empty> : (
           <>
             <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
@@ -195,11 +210,29 @@ export default function WorkOrderPage() {
 
             <div style={{ flex: 1, minHeight: 0 }}>
               {tab === 'Details' && <MaterialsGrid workOrderId={id} fgs={wo.fgs} onChanged={load} />}
+              {tab === 'Items' && <WoItemsTab workOrderId={id} fgs={wo.fgs} status={wo.status} onChanged={load} />}
               {tab === 'Approvals' && <ApprovalsTab workOrderId={id} wo={wo} onChanged={load} />}
               {tab === 'History' && <HistoryTab workOrderId={id} wo={wo} />}
             </div>
 
             {editing && <EditModal wo={wo} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); load(); }} />}
+
+            {qcPrompt && (
+              <Modal title="Quality check" onClose={() => setQcPrompt(null)} width={440}>
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                  Did the quality check pass? Rejecting sends the job back to production.
+                </div>
+                <ModalFooter>
+                  <ModalBtn onClick={() => setQcPrompt(null)}>Cancel</ModalBtn>
+                  <ModalBtn disabled={busy} onClick={() => { const s = qcPrompt; setQcPrompt(null); changeStatus(s, 'Rejected'); }}>
+                    Rejected
+                  </ModalBtn>
+                  <ModalBtn variant="primary" disabled={busy} onClick={() => { const s = qcPrompt; setQcPrompt(null); changeStatus(s, 'Passed'); }}>
+                    Passed
+                  </ModalBtn>
+                </ModalFooter>
+              </Modal>
+            )}
 
             {confirmDelete && (
               <Modal title={`Delete ${wo.woNumber}?`} onClose={() => setConfirmDelete(false)} width={440}>
@@ -285,7 +318,7 @@ function EditModal({ wo, onClose, onSaved }) {
   }
 
   return (
-    <Modal title={`Edit ${wo.woNumber}`} onClose={onClose} width={460}>
+    <Modal title={`Edit ${wo.woNumber}`} onClose={onClose} onSubmit={save} width={460}>
       <label style={{ ...label, marginTop: 0 }}>Project name</label>
       <input value={f.projectName} onChange={set('projectName')} style={field} />
       <label style={label}>Date</label>
@@ -346,7 +379,7 @@ function WoPrintSheet({ wo, lines }) {
       )}
 
       <div style={{ marginTop: 14, fontSize: 12 }}>
-        <b>Estimated cost:</b> {wo.estimatedCost} &nbsp;·&nbsp; <b>Actual cost:</b> {wo.actualCost}
+        <b>Estimated cost:</b> {fmtMoney(wo.estimatedCost)} &nbsp;·&nbsp; <b>Actual cost:</b> {fmtMoney(wo.actualCost)}
       </div>
       {wo.notes && <div style={{ marginTop: 8, fontSize: 12 }}><b>Notes:</b> {wo.notes}</div>}
     </div>
@@ -427,7 +460,7 @@ function HistoryTab({ workOrderId, wo }) {
                 <td style={cell}><StatusChip status={t.status} /></td>
                 <td style={{ ...cell, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{t.transferOrderNumber || '—'}</td>
                 <td style={{ ...cell, textAlign: 'right' }}>{t.lines.length}</td>
-                <td style={{ ...cell, textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>{t.confirmedAt || t.createdAt}</td>
+                <td style={{ ...cell, textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>{fmtDate(t.confirmedAt || t.createdAt)}</td>
               </tr>
             ))}
           </tbody>

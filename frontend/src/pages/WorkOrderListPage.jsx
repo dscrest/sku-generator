@@ -1,22 +1,35 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import Modal from '../components/Modal.jsx';
 import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
 import { Empty } from '../components/MaterialsGrid.jsx';
 import { StatusChip, ProcChip, AccessNotice } from '../components/woCommon.jsx';
+import { fmtDate } from '../format.js';
 
 /** Work order list + the "new work order from a sales order" flow. */
 export default function WorkOrderListPage() {
   const navigate = useNavigate();
   const [rows, setRows] = useState(null);
-  const [status, setStatus] = useState('');
-  const [customer, setCustomer] = useState('');
-  const [proc, setProc] = useState('');
-  const [q, setQ] = useState('');
+  // Filters live in the URL too, so refresh keeps them (CR-038).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [status, setStatus] = useState(searchParams.get('status') || '');
+  const [customer, setCustomer] = useState(searchParams.get('customer') || '');
+  const [proc, setProc] = useState(searchParams.get('proc') || '');
+  const [q, setQ] = useState(searchParams.get('q') || '');
   const [creating, setCreating] = useState(false);
   const [blocked, setBlocked] = useState(null);
+
+  useEffect(() => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      for (const [k, v] of [['status', status], ['customer', customer], ['proc', proc], ['q', q]]) {
+        v ? p.set(k, v) : p.delete(k);
+      }
+      return p;
+    }, { replace: true });
+  }, [status, customer, proc, q, setSearchParams]);
 
   function load() {
     axios.get('/api/wo')
@@ -45,6 +58,7 @@ export default function WorkOrderListPage() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 20px', flexWrap: 'wrap', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
         <input
           value={q} onChange={e => setQ(e.target.value)} placeholder="Search WO, SO, customer…"
+          aria-label="Search work orders"
           style={{ padding: '7px 11px', fontSize: 13, minWidth: 240, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)' }}
         />
         <FilterSelect label="statuses" value={status} onChange={setStatus} options={distinct(rows || [], 'status')} />
@@ -78,7 +92,7 @@ export default function WorkOrderListPage() {
                   style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
                 >
                   <td style={{ ...cell, fontWeight: 600, color: 'var(--blue)' }}>{r.woNumber}</td>
-                  <td style={{ ...cell, color: 'var(--text-muted)' }}>{r.woDate}</td>
+                  <td style={{ ...cell, color: 'var(--text-muted)' }}>{fmtDate(r.woDate)}</td>
                   <td style={cell}>{r.salesOrderNumber}</td>
                   <td style={cell}>{r.customerName}{r.projectName && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.projectName}</div>}</td>
                   <td style={cell}>{r.fgs.map(f => `${f.name} × ${f.qty}`).join(', ') || '—'}</td>

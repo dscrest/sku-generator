@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { Empty, Banner } from './MaterialsGrid.jsx';
 import Modal, { ModalFooter, ModalBtn } from './Modal.jsx';
 import { StatusChip, btn, select, thStyle, cell } from './woCommon.jsx';
+import { fmtMoney } from '../format.js';
 
 // The Purchase workflow of one work order: shortfall → purchase request →
 // vendor per line → confirm → draft POs in Zoho Books. Moved verbatim from
@@ -42,6 +43,7 @@ export default function PurchaseTab({ workOrderId, wo, onChanged }) {
   async function setLine(lineId, patch) {
     try {
       await axios.put(`/api/wo/pr-line/${lineId}`, patch);
+      toast.success('Line updated');
       onChanged();
     } catch (err) { toast.error(err.response?.data?.error || 'Could not update the line'); }
   }
@@ -164,11 +166,7 @@ export default function PurchaseTab({ workOrderId, wo, onChanged }) {
                   </td>
                   <td style={{ ...cell, textAlign: 'right' }}>
                     {l.poNumber ? <span style={{ fontFamily: 'var(--font-mono)' }}>{l.purchaseQty}</span> : (
-                      <input
-                        type="number" min="0" step="any" defaultValue={l.purchaseQty}
-                        onBlur={e => Number(e.target.value) !== l.purchaseQty && setLine(l.id, { purchaseQty: Number(e.target.value) })}
-                        style={{ width: 80, padding: '4px 6px', fontSize: 13, textAlign: 'right', fontFamily: 'var(--font-mono)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}
-                      />
+                      <QtyInput line={l} onCommit={qty => setLine(l.id, { purchaseQty: qty })} />
                     )}
                   </td>
                   <td style={{ ...cell, textAlign: 'right', fontSize: 12 }}>
@@ -199,6 +197,27 @@ export default function PurchaseTab({ workOrderId, wo, onChanged }) {
 
 // Master–detail split for one PO: narrow list of the WO's POs on the left,
 // live Books detail on the right (same pattern as the SKUs page, CR-014).
+// Controlled PR-line quantity: commits on blur or Enter, and an in-progress
+// edit is visible (amber border) instead of silently pending in the DOM.
+function QtyInput({ line, onCommit }) {
+  const [v, setV] = useState(String(line.purchaseQty));
+  useEffect(() => { setV(String(line.purchaseQty)); }, [line.purchaseQty]);
+  const dirty = Number(v) !== Number(line.purchaseQty);
+  return (
+    <input
+      type="number" min="0" step="any" value={v}
+      onChange={e => setV(e.target.value)}
+      onBlur={() => dirty && onCommit(Number(v) || 0)}
+      onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()}
+      title={dirty ? 'Press Enter or click away to save' : undefined}
+      style={{
+        width: 80, padding: '4px 6px', fontSize: 13, textAlign: 'right', fontFamily: 'var(--font-mono)',
+        border: `1px solid ${dirty ? '#f59e0b' : 'var(--border)'}`, borderRadius: 'var(--radius-sm)',
+      }}
+    />
+  );
+}
+
 export function PoSplit({ pos, selectedPo, onSelect, onClose, onChanged }) {
   const [detail, setDetail] = useState(null);
   const [err, setErr] = useState(null);
@@ -263,7 +282,7 @@ export function PoSplit({ pos, selectedPo, onSelect, onClose, onChanged }) {
     ['Vendor', detail?.vendorName],
     ['Date', detail?.date],
     ['Reference (SO)', detail?.referenceNumber || '—'],
-    ['Total', detail ? `₹${detail.total.toLocaleString('en-IN')}` : ''],
+    ['Total', detail ? fmtMoney(detail.total) : ''],
     ['Receive status', detail?.receivedStatus || '—'],
     ['Bill status', detail?.billedStatus || '—'],
   ];

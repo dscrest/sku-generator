@@ -7,7 +7,7 @@
  */
 const { zStr } = require("../store");
 const { byOrg, inList } = require("./store");
-const { buildGrid } = require("./grid");
+const { buildGridsBulk } = require("./grid");
 
 const n = (v) => Number(v) || 0;
 
@@ -50,13 +50,14 @@ async function soBom(catalyst, orgId, { status, salesOrderId } = {}) {
   const ids = inList(wos.map((w) => w.ROWID));
   const fgs = ids ? await byOrg(catalyst, orgId, "WorkOrderFG", `workOrderId IN (${ids})`) : [];
 
+  const pairs = wos.flatMap((wo) =>
+    fgs.filter((f) => String(f.workOrderId) === String(wo.ROWID)).map((fg) => ({ wo, fg })));
+  const grids = await buildGridsBulk(catalyst, orgId, pairs);
+
   const out = [];
   for (const wo of wos) {
     const rows = [];
-    for (const fg of fgs.filter((f) => String(f.workOrderId) === String(wo.ROWID))) {
-      const grid = await buildGrid(catalyst, orgId, wo, fg);
-      rows.push(...grid.rows);
-    }
+    pairs.forEach((p, i) => { if (p.wo === wo) rows.push(...grids[i].rows); });
     out.push({
       id: String(wo.ROWID),
       woNumber: wo.woNumber,
@@ -85,29 +86,31 @@ async function shortfall(catalyst, orgId) {
   const ids = inList(wos.map((w) => w.ROWID));
   const fgs = ids ? await byOrg(catalyst, orgId, "WorkOrderFG", `workOrderId IN (${ids})`) : [];
 
+  const pairs = wos.flatMap((wo) =>
+    fgs.filter((f) => String(f.workOrderId) === String(wo.ROWID)).map((fg) => ({ wo, fg })));
+  const grids = await buildGridsBulk(catalyst, orgId, pairs);
+
   const out = [];
-  for (const wo of wos) {
-    for (const fg of fgs.filter((f) => String(f.workOrderId) === String(wo.ROWID))) {
-      const grid = await buildGrid(catalyst, orgId, wo, fg);
-      for (const r of grid.rows.filter((x) => x.short)) {
-        out.push({
-          workOrderId: String(wo.ROWID),
-          woNumber: wo.woNumber,
-          salesOrderNumber: wo.salesOrderNumber,
-          customerName: wo.customerName,
-          bomImportedAt: wo.bomImportedAt || null,
-          fgName: fg.fgName,
-          rmItemId: r.itemId,
-          rmName: r.name,
-          required: r.bom,
-          available: r.reservable,
-          onOrder: r.po,
-          received: r.received,
-          shortfallQty: r.shortfallQty,
-          // The BRD's "ordered late" flag: still short and nothing on order.
-          noPoRaised: r.po === 0,
-        });
-      }
+  for (let i = 0; i < pairs.length; i++) {
+    const { wo, fg } = pairs[i];
+    for (const r of grids[i].rows.filter((x) => x.short)) {
+      out.push({
+        workOrderId: String(wo.ROWID),
+        woNumber: wo.woNumber,
+        salesOrderNumber: wo.salesOrderNumber,
+        customerName: wo.customerName,
+        bomImportedAt: wo.bomImportedAt || null,
+        fgName: fg.fgName,
+        rmItemId: r.itemId,
+        rmName: r.name,
+        required: r.bom,
+        available: r.reservable,
+        onOrder: r.po,
+        received: r.received,
+        shortfallQty: r.shortfallQty,
+        // The BRD's "ordered late" flag: still short and nothing on order.
+        noPoRaised: r.po === 0,
+      });
     }
   }
   return out.sort((a, b) => b.shortfallQty - a.shortfallQty);
@@ -157,6 +160,75 @@ async function itemPipeline(catalyst, orgId, { workOrderId, vendorId } = {}) {
   return pipelineRollup(lines);
 }
 
+/**
+ * Pure: merge a work order's frozen lines with its reservation balances into
+ * one reconciliation row per item (CR-031). `leftover` is what completion will
+ * (or did) send back to Main: everything reserved plus any over-issue. A line
+ * edited down to 0 while material was committed shows `removedFromBom`.
+ */
+function reconcileRows(lines, balances) {
+  const byKey = new Map();
+  const key = (fgId, itemId) => `${fgId}|${itemId}`;
+  for (const l of lines || []) {
+    byKey.set(key(String(l.workOrderFgId), String(l.rmItemId)), {
+      workOrderFgId: String(l.workOrderFgId), itemId: String(l.rmItemId),
+      name: l.rmName || String(l.rmItemId), sku: l.rmSku || null, uom: l.uom || null,
+      required: n(l.requiredQty), reserved: 0, issued: 0, returned: 0,
+    });
+  }
+  for (const b of balances || []) {
+    const k = key(String(b.workOrderFgId), String(b.componentItemId));
+    // Orphan balance (line hard-deleted before CR-031): still report the stock.
+    const row = byKey.get(k) || {
+      workOrderFgId: String(b.workOrderFgId), itemId: String(b.componentItemId),
+      name: String(b.componentItemId), sku: null, uom: null,
+      required: 0, reserved: 0, issued: 0, returned: 0,
+    };
+    row.reserved = n(b.reservedQty);
+    row.issued = n(b.issuedQty);
+    row.returned = n(b.returnedQty);
+    byKey.set(k, row);
+  }
+  return [...byKey.values()].map((r) => {
+    const issuedNet = r.issued - r.returned;
+    return {
+      ...r,
+      leftover: r.reserved + Math.max(0, issuedNet - r.required),
+      removedFromBom: r.required === 0 && (r.reserved + issuedNet > 0),
+    };
+  });
+}
+
+/**
+ * Reconciliation report: required vs reserved/issued/returned/leftover per
+ * item. With `workOrderId` → that work order only; without → every work order,
+ * for the org-wide inventory comparison. Local tables only, zero Zoho calls.
+ */
+async function reconciliation(catalyst, orgId, { workOrderId } = {}) {
+  const where = workOrderId ? `ROWID = ${zStr(String(workOrderId))}` : null;
+  const wos = await byOrg(catalyst, orgId, "WorkOrder", where, "CREATEDTIME DESC");
+  const ids = inList(wos.map((w) => w.ROWID));
+  if (!ids) return [];
+  const [fgs, lines, balances] = await Promise.all([
+    byOrg(catalyst, orgId, "WorkOrderFG", `workOrderId IN (${ids})`),
+    byOrg(catalyst, orgId, "WorkOrderLine", `workOrderId IN (${ids})`),
+    byOrg(catalyst, orgId, "ReservationLine", `workOrderId IN (${ids})`),
+  ]);
+  const fgName = new Map(fgs.map((f) => [String(f.ROWID), f.fgName]));
+  const out = [];
+  for (const wo of wos) {
+    const mine = (rows, k) => rows.filter((r) => String(r[k]) === String(wo.ROWID));
+    for (const r of reconcileRows(mine(lines, "workOrderId"), mine(balances, "workOrderId"))) {
+      out.push({
+        workOrderId: String(wo.ROWID), woNumber: wo.woNumber, status: wo.status,
+        salesOrderNumber: wo.salesOrderNumber, fgName: fgName.get(r.workOrderFgId) || null,
+        ...r,
+      });
+    }
+  }
+  return out;
+}
+
 // The work order's own History tab feed: material movements + BOM revisions +
 // approvals, newest first, already merged.
 async function history(catalyst, orgId, workOrderId) {
@@ -175,7 +247,7 @@ async function history(catalyst, orgId, workOrderId) {
   }));
 }
 
-module.exports = { rollUp, soBom, shortfall, history, pipelineRollup, itemPipeline };
+module.exports = { rollUp, soBom, shortfall, history, pipelineRollup, itemPipeline, reconcileRows, reconciliation };
 
 // ponytail self-check: `node functions/skuapi/workorder/reports.js --selftest`
 if (require.main === module && process.argv.includes("--selftest")) {
@@ -225,6 +297,28 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(shaft.billed, 1);
   assert.strictEqual(shaft.vendors, "Acme, Bolt Co");
   assert.strictEqual(pipe[1].noPo, 6);
+
+  // Reconciliation rows (CR-031).
+  const rec = reconcileRows(
+    [
+      { workOrderFgId: "f1", rmItemId: "11", rmName: "Shaft", rmSku: "SH-1", requiredQty: 10 },
+      { workOrderFgId: "f1", rmItemId: "22", rmName: "Seal", requiredQty: 0 },   // removed while committed
+      { workOrderFgId: "f1", rmItemId: "33", rmName: "Gasket", requiredQty: 4 }, // untouched
+    ],
+    [
+      { workOrderFgId: "f1", componentItemId: "11", reservedQty: 2, issuedQty: 8, returnedQty: 0 },
+      { workOrderFgId: "f1", componentItemId: "22", reservedQty: 1, issuedQty: 3, returnedQty: 1 },
+      { workOrderFgId: "f1", componentItemId: "99", reservedQty: 5, issuedQty: 0, returnedQty: 0 }, // orphan
+    ],
+  );
+  const byId = Object.fromEntries(rec.map((r) => [r.itemId, r]));
+  assert.strictEqual(rec.length, 4, "3 lines + 1 orphan balance");
+  assert.strictEqual(byId["11"].leftover, 2, "issued within requirement is consumed; only reserved comes back");
+  assert.strictEqual(byId["11"].removedFromBom, false);
+  assert.strictEqual(byId["22"].leftover, 3, "removed line: reserved 1 + (issued 3 − returned 1 − required 0)");
+  assert.strictEqual(byId["22"].removedFromBom, true);
+  assert.strictEqual(byId["33"].leftover, 0, "no material moved → nothing leftover");
+  assert.strictEqual(byId["99"].leftover, 5, "orphan balance still reports its stock");
 
   console.log("workorder/reports.js self-check passed");
 }
