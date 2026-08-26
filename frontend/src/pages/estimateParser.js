@@ -82,7 +82,7 @@ function parseDiscountPct(v) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function ddmmyyyy(iso) {
+export function ddmmyyyy(iso) {
   if (!iso) return "";
   const [y, m, d] = String(iso).slice(0, 10).split("-");
   return d && m && y ? `${d}-${m}-${y}` : "";

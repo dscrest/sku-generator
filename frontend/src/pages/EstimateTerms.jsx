@@ -16,8 +16,7 @@ const COMPANY = {
   lines: [
     'Plot No.B-10,Swastik Industrial Park,',
     'Kothiya Kunha Road,Kunha Patiya,Ta-Daskroi,',
-    'Ahmedabad, Gujarat',
-    'India',
+    'Ahmedabad, Gujarat, India',
     'M: 91-9512506161 ·E: kamal@marutivalves.com',
     'E: sales@msunvalve.com · sales@marutivalves.com',
   ],
@@ -45,14 +44,35 @@ export function HeadBand({ onLogoLoad }) {
   );
 }
 
-// ISO certificate strip pinned to the bottom of every printed sheet. Drop-in
-// image: until frontend/public/iso-certs.png exists, onError renders nothing
-// (zero height, pagination unaffected).
+// Shared column widths for a sheet's stacked main/filler/totals tables
+// (table-layout: fixed) — one source so the vertical rules line up exactly.
+export function Cols({ widths }) {
+  return (
+    <colgroup>
+      {widths.map((w, i) => <col key={i} style={w ? { width: w } : undefined} />)}
+    </colgroup>
+  );
+}
+
+// Single-row table stretched by the sheet's flex column (.est-fill-table is
+// flex:1): its one row takes all the leftover height, drawing only the
+// vertical column rules — the empty ruled space above the totals band.
+export function FillTable({ widths, className = 'est-grid' }) {
+  return (
+    <table className={`${className} est-fill-table`} aria-hidden="true">
+      <Cols widths={widths} />
+      <tbody><tr>{widths.map((_, i) => <td key={i} />)}</tr></tbody>
+    </table>
+  );
+}
+
+// Certificate strip pinned to the bottom of every printed sheet. If the image
+// fails to load, onError renders nothing (zero height, pagination unaffected).
 export function FootBand({ onLoad }) {
   const [ok, setOk] = useState(true);
   if (!ok) return null;
   return (
-    <img className="est-foot-band" src="iso-certs.png" alt=""
+    <img className="est-foot-band" src="MSUN-Footer_Certificates.png" alt=""
       onLoad={onLoad} onError={() => setOk(false)} />
   );
 }
@@ -117,6 +137,7 @@ export function TermsSheet({ terms, editing, onChange, defaults = DEFAULT_TERMS 
       <HeadBand />
       <div className="est-proposal-title" style={{ fontSize: 15 }}>General Terms &amp; Conditions</div>
       <table className="est-tc">
+        <Cols widths={['24%', null]} />
         <tbody>
           {terms.terms.map((t, i) => (
             <tr key={i}>
@@ -139,6 +160,9 @@ export function TermsSheet({ terms, editing, onChange, defaults = DEFAULT_TERMS 
           + Add term
         </button>
       )}
+      {/* Absorbs leftover page height so the bank table and footer strip sit
+          at the page bottom. */}
+      <FillTable widths={['24%', null]} className="est-tc" />
       <table className="est-tc est-tc-bank">
         <tbody>
           {terms.bank.map((r, i) => (

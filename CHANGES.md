@@ -7,6 +7,10 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 | CR | Date | Title | Status |
 |----|------|-------|--------|
+| CR-054 | 2026-08-26 | Estimate print: browser URL/date/title header-footer removed (`@page` margin 0, margins moved into sheet padding) + footer no longer spills to its own page — print geometry now matches the pagination measure pass | ✅ shipped |
+| CR-053 | 2026-08-26 | Estimate print: Revision No / Revision Date (toolbar fields, CR-050) now print in the sheet header below Offer Preparation Date when filled in | ✅ shipped |
+| CR-052 | 2026-08-26 | Estimate print: MSUN certificates strip as the page footer (fills the CR-050 ISO footer slot) + every sheet's table stretches to the footer — column rules run through the empty space, totals band at the page bottom | ✅ shipped |
+| CR-051 | 2026-08-26 | WO Activity tab → in/out movement ledger — each txn a card (↗ out blue / ↙ in green, route chip, TO number, item lines with qty); txn lines enriched with item name/sku/uom; audit events stay as slim rows in the same stream | ✅ shipped |
 | CR-050 | 2026-08-26 | MSUN estimate template pass — With Total default, header cleanup (no tagline, bigger centered logo, sales emails), client details from CRM Account/Contact in "To", Revision Date/No (screen-only), discount only on CalcSheet with per-page clubbed amounts, ISO footer slot, T&C bold/color; header band stays first-page-only (CR-041) | ✅ shipped |
 | CR-049 | 2026-08-26 | WO details page redesigned to the Claude Design mockup — KPI band + coverage bar, shortage/procurement banners, instant per-line Reserve/Issue/Release/Return, Materials·Items·Activity tabs (Approvals folded into header + banner) | ✅ shipped |
 | CR-048 | 2026-08-25 | By-item grid shows Work order / Status / PO number per line — already-requested/ordered lines stay visible (Requested / PO Raised / Received chips) instead of silently vanishing, making the duplicate-PO protection visible | ✅ shipped |
@@ -58,6 +62,80 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 | CR-001 | 2026-05-28 | SKU editing + Zoho Books value sync & import | ✅ shipped |
 
 ---
+
+## CR-052 — Estimate footer image + tables stretch to footer (2026-08-26) — ✅ shipped
+
+**Asked:** use the new `frontend/public/MSUN-Footer_Certificates.png` as the
+estimate's printed footer, and stretch every sheet's table down to it (no blank
+gap above the footer).
+
+**Shipped**
+- [EstimateTerms.jsx](frontend/src/pages/EstimateTerms.jsx) — `FootBand` `src`
+  swapped from the never-added `iso-certs.png` to
+  `MSUN-Footer_Certificates.png`; the onError render-nothing fallback stays.
+- [EstimatePage.jsx](frontend/src/pages/EstimatePage.jsx) — stretch-to-footer:
+  `.est-grow { flex: 1 }` on each sheet's main table plus an `est-fill` filler
+  row (`height: 100%`, side borders only) that absorbs the leftover page
+  height, so real rows keep natural height and only the vertical column rules
+  run through the empty space.
+  - Item pages: filler tbody between the last item and the `data-totals` band —
+    PAGE total sits at the page bottom, just above the footer (user's pick).
+  - CalcSheet: filler row before "Total Qty & Amount" — grand-total rows at the
+    bottom.
+  - TermsSheet: terms table grows; bank table + footer pushed to the bottom.
+- Pagination untouched: the budget already subtracts `.est-foot-band`
+  offsetHeight and remeasures on image load (CR-050), and the filler rows carry
+  no `data-item` so the measure pass ignores them.
+
+**Fixed (same-day follow-up)** — the first cut's filler row was broken: a
+flex-stretched multi-row table distributes extra height across *all* rows
+(percentage row heights can't resolve against a flex-stretched table), so the
+teal PAGE band ballooned on continuation pages and the CalcSheet came out
+wrong. Reworked + two more asks from the same review:
+- Stretch now lives in `FillTable` (EstimateTerms.jsx) — a dedicated
+  single-row table with `flex: 1` between the main table and a separate totals
+  table; its one row deterministically takes all the extra height. All three
+  tables are `table-layout: fixed` sharing a `Cols` colgroup so the vertical
+  rules align. Applied on item pages, CalcSheet, and TermsSheet; `data-totals`
+  moved to the totals table so the pagination budget still measures it.
+- Header band contents enlarged (no dead space): logo max-height 96→150px,
+  address block 13px.
+- Revision Date / Revision No moved from the easy-to-miss centered row into
+  the toolbar next to the Version select (still screen-only, localStorage
+  per quote).
+
+**Not done (and why)**
+- Nothing skipped; `.est-foot-band { margin-top: auto }` kept as the safety net
+  when the image fails to load.
+
+## CR-051 — WO Activity tab: in/out movement ledger (2026-08-26) — ✅ shipped
+
+**Asked:** the Activity tab's history should look like the job-work in/out
+ledger screenshot the user shared — each material movement as a card with a
+direction icon, document number, step/route chip, item lines with quantities
+and the date, instead of the flat one-line timeline from CR-049.
+
+**Shipped**
+- [txn.js](functions/skuapi/workorder/txn.js) — `listTxns` joins the WO's
+  `WorkOrderLine` rows once and enriches every txn line with
+  `name`/`sku`/`uom` (`{rmItemId, qty}` → `{rmItemId, qty, name, sku, uom}`;
+  items later removed from the BOM fall back to the id on the frontend). One
+  extra query, no schema change.
+- [WorkOrderPage.jsx](frontend/src/pages/WorkOrderPage.jsx) — `ActivityTab`
+  rewritten as the ledger: movements render as `TxnCard`s — circular ↗/↙
+  direction icon and 3px colored left edge (out = reserve/issue, blue; in =
+  release/return, green), uppercase verb + mono txn number + warehouse-route
+  chip (`Main → Reserve` etc., derived from type), Transfer Order line, item
+  rows (name · sku, dotted leader, bold qty + uom), notes, date top-right;
+  Draft/Cancelled cards render muted with a status chip. Audit-trail events
+  stay in the same newest-first stream as slim dot rows between cards.
+
+**Not done (and why)**
+- "by user" line (in the reference screenshot) — `MaterialTxn.confirmedBy`
+  stores a raw Catalyst userId, not a name; add when a userId → email map
+  exists.
+- Filter tabs above the list — WO histories are short; add if they grow to
+  hundreds of txns.
 
 ## CR-050 — MSUN estimate template pass (2026-08-26) — ✅ shipped
 

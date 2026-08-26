@@ -402,7 +402,7 @@ function WoPrintSheet({ wo, lines }) {
   );
 }
 
-// ---- Activity (CR-050) -----------------------------------------------------
+// ---- Activity (CR-051) -----------------------------------------------------
 // In/out movement ledger: every material transaction is a card — direction
 // icon (↗ out of stock, ↙ back in), colored edge, txn number, warehouse route,
 // item lines with quantities. Audit-trail events stay in the same newest-first

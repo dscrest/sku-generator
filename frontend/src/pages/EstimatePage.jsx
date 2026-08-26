@@ -2,8 +2,8 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { readDealId, readParam } from '../components/CrmInfoCard';
-import { buildEstimate, computeTotals } from './estimateParser';
-import { TermsSheet, HeadBand, FootBand } from './EstimateTerms.jsx';
+import { buildEstimate, computeTotals, ddmmyyyy } from './estimateParser';
+import { TermsSheet, HeadBand, FootBand, Cols, FillTable } from './EstimateTerms.jsx';
 import { loadTerms, saveTerms, DEFAULT_TERMS, EXPORT_TERMS } from './estimateTerms.js';
 
 // Estimate ("Techno Commercial Proposal") print page. Two CRM entry points:
@@ -35,9 +35,10 @@ const CSS = `
 .est-toolbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 8px;
   padding: 10px 16px; background: var(--bg-card); border-bottom: 1px solid var(--border); }
 .est-toolbar .est-spacer { flex: 1; }
-.est-toolbar button, .est-toolbar select { font: inherit; font-size: 13px; padding: 7px 14px; border-radius: var(--radius-md);
+.est-toolbar button, .est-toolbar select, .est-toolbar input { font: inherit; font-size: 13px; padding: 7px 14px; border-radius: var(--radius-md);
   border: 1px solid var(--border-mid); background: var(--bg-secondary); color: var(--text-primary); cursor: pointer; }
 .est-toolbar button:hover { background: var(--bg); }
+.est-toolbar input { font-size: 12px; padding: 6px 8px; }
 .est-toolbar button.est-active { background: #0F7576; border-color: #0F7576; color: #fff; }
 .est-toolbar .est-lbl { font-size: 12px; color: var(--text-secondary); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .est-sheet { background: #fff; width: 210mm; max-width: 100%; margin: 18px auto; padding: 12mm 10mm;
@@ -56,16 +57,17 @@ const CSS = `
   background: #EAF2F1; border-left: 6px solid #0F7576; border-radius: 8px;
   padding: 12px 16px; margin-bottom: 8px; }
 .est-head-band > div:first-child { flex: 1; display: flex; justify-content: center; }
-.est-head-addr { text-align: right; color: #444; line-height: 1.5; }
+.est-head-addr { text-align: right; color: #444; line-height: 1.5; font-size: 13px; }
 .est-head-addr b { color: #111; }
 .est-head-co { font-weight: 800; color: #111; }
-.est-logo { display: block; max-height: 96px; max-width: 100%; margin: 0 auto; }
+.est-logo { display: block; max-height: 150px; max-width: 100%; margin: 0 auto; }
 /* Header band prints on the first page only; continuation sheets omit it.
    ponytail: budget uses full chrome for every page, so continuation pages
    under-fill by ~1 band height — safe (never overflows). */
 .est-print-area .est-sheet:not(:first-child) .est-head-band { display: none; }
-/* ISO certificate strip pinned to the sheet bottom (sheet is a flex column).
-   The image is a drop-in: absent frontend/public/iso-certs.png renders nothing. */
+/* Certificate strip pinned to the sheet bottom (sheet is a flex column).
+   margin-top:auto is the safety net when the image fails to load and no
+   est-grow table fills the sheet. */
 .est-foot-band { margin-top: auto; width: 100%; }
 .est-proposal-title { text-align: center; font-weight: 800; color: #0F7576; text-transform: uppercase;
   letter-spacing: 1.2px; margin: 4px 0 8px; font-size: 14px; }
@@ -92,8 +94,17 @@ const CSS = `
 .est-tc { margin-top: 10px; }
 .est-tc td { border: 1px solid #D8E5E4; padding: 4px 7px; vertical-align: top; }
 .est-tc .est-tc-lbl { font-weight: 700; text-decoration: underline; width: 24%; background: #EFF5F4; }
-.est-tc-bank td { width: 25%; }
+.est-tc-bank td { width: 25%; text-align: center; }
 .est-tc-bank .est-tc-lbl { text-decoration: none; }
+/* Stretch-to-footer. A flex-stretched multi-row table distributes extra
+   height across ALL its rows (percentage row heights can't resolve), so the
+   stretch lives in a dedicated single-row filler table between the main table
+   and a separate totals table — its one row deterministically takes all the
+   extra. table-layout:fixed + a shared colgroup keeps the three tables'
+   columns (and so the vertical rules) aligned. */
+.est-grid, .est-tc { table-layout: fixed; }
+.est-fill-table { flex: 1; margin: 0; }
+.est-fill-table td { border-top: 0; border-bottom: 0; }
 .est-editing [contenteditable] { outline: 1px dashed #e8501e; outline-offset: 1px; min-width: 20px;
   display: inline-block; }
 .est-editing [contenteditable]:focus { outline-style: solid; background: #fff7f3; }
@@ -108,10 +119,14 @@ const CSS = `
   body * { visibility: hidden; }
   .est-print-area, .est-print-area * { visibility: visible; }
   .est-print-area { position: absolute; left: 0; top: 0; width: 100%; }
-  .est-sheet { width: auto; margin: 0; padding: 0; box-shadow: none; min-height: 272mm;
+  /* Zero @page margin removes the browser's own URL/date header-footer; the
+     sheet keeps its screen padding instead, so print geometry is identical to
+     the pagination measure pass. 296mm (not 297) leaves rounding headroom so
+     the pinned footer never spills a page. */
+  .est-sheet { width: 210mm; margin: 0; padding: 12mm 10mm; box-shadow: none; min-height: 296mm;
     break-after: page; page-break-after: always; }
   .est-sheet:last-child { break-after: auto; page-break-after: auto; }
-  @page { size: A4; margin: 12mm; }
+  @page { size: A4; margin: 0; }
 }
 `;
 
@@ -136,6 +151,13 @@ function SheetChrome({ h, title, onLogoLoad }) {
             <td style={{ width: '42%' }}>
               <div><span className="est-hdr-lbl">Our Offer No :</span> <span className="est-offer-no">{h.offerNo}</span></div>
               <div style={{ marginTop: 4 }}><span className="est-hdr-lbl">Offer Preparation Date :</span> <b>{h.date}</b></div>
+              {(h.revNo || h.revDate) && (
+                <div style={{ marginTop: 4 }}>
+                  {h.revNo && <><span className="est-hdr-lbl">Revision No :</span> <b>{h.revNo}</b></>}
+                  {h.revNo && h.revDate && ' '}
+                  {h.revDate && <><span className="est-hdr-lbl">Revision Date :</span> <b>{ddmmyyyy(h.revDate)}</b></>}
+                </div>
+              )}
             </td>
           </tr>
         </tbody>
@@ -152,20 +174,24 @@ function SheetChrome({ h, title, onLogoLoad }) {
 function EstimateSheet({ estimate, items, priced, pageNo, onLogoLoad }) {
   const h = estimate.header;
   const totals = computeTotals(items, null);
+  const widths = priced
+    ? ['6%', '40%', '12%', '9%', '16%', '17%']
+    : ['6%', '60%', '12%', '9%'];
 
   return (
     <div className="est-sheet">
       <SheetChrome h={h} title="Techno Commercial Proposal" onLogoLoad={onLogoLoad} />
 
-      <table className="est-grid">
+      <table className="est-grid" style={{ marginBottom: 0 }}>
+        <Cols widths={widths} />
         <thead>
           <tr>
-            <th style={{ width: '6%' }}>SR. NO</th>
-            <th style={{ width: priced ? '40%' : '60%' }}>DESCRIPTION OF GOODS</th>
-            <th style={{ width: '12%' }}>SIZE (INCH)</th>
-            <th style={{ width: '9%' }}>QTY (NOS)</th>
-            {priced && <th style={{ width: '16%' }}>LIST PRICE (PER PCS)</th>}
-            {priced && <th style={{ width: '17%' }}>TOTAL AMOUNT</th>}
+            <th>SR. NO</th>
+            <th>DESCRIPTION OF GOODS</th>
+            <th>SIZE (INCH)</th>
+            <th>QTY (NOS)</th>
+            {priced && <th>LIST PRICE (PER PCS)</th>}
+            {priced && <th>TOTAL AMOUNT</th>}
           </tr>
         </thead>
         {/* One tbody per item — the pagination measure pass reads their
@@ -189,7 +215,11 @@ function EstimateSheet({ estimate, items, priced, pageNo, onLogoLoad }) {
             )}
           </tbody>
         ))}
-        <tbody data-totals>
+      </table>
+      <FillTable widths={widths} />
+      <table className="est-grid" data-totals style={{ marginTop: 0 }}>
+        <Cols widths={widths} />
+        <tbody>
           {priced ? (
             <tr className="est-t-band">
               <td />
@@ -226,16 +256,18 @@ function CalcSheet({ estimates, pages, priced, pageNo }) {
     grand.disc += t.disc; grand.net += t.net;
   }
   const bold = { color: '#111', fontWeight: 800 };
+  const widths = priced ? ['14%', null, '14%', '20%'] : ['14%', null, '14%'];
   return (
     <div className="est-sheet">
       <SheetChrome h={estimates[0].header} title="CALCULATION FOR OFFER" />
-      <table className="est-grid">
+      <table className="est-grid" style={{ marginBottom: 0 }}>
+        <Cols widths={widths} />
         <thead>
           <tr>
-            <th style={{ width: '14%' }}>PAG NO.</th>
+            <th>PAG NO.</th>
             <th>DESCRIPTION OF GOOD</th>
-            <th style={{ width: '14%' }}>TOTAL QTY</th>
-            {priced && <th style={{ width: '20%' }}>TOTAL AMOUNT</th>}
+            <th>TOTAL QTY</th>
+            {priced && <th>TOTAL AMOUNT</th>}
           </tr>
         </thead>
         <tbody>
@@ -260,6 +292,12 @@ function CalcSheet({ estimates, pages, priced, pageNo }) {
               </tr>
             );
           }))}
+        </tbody>
+      </table>
+      <FillTable widths={widths} />
+      <table className="est-grid" style={{ marginTop: 0 }}>
+        <Cols widths={widths} />
+        <tbody>
           <tr>
             <td colSpan={2} className="est-t-lbl" style={{ textAlign: 'right' }}>Total Qty &amp; Amount</td>
             <td className="est-ctr" style={bold}>{grand.totalQty}</td>
@@ -297,8 +335,8 @@ function CalcSheet({ estimates, pages, priced, pageNo }) {
 // items. Page numbers run continuously across all selected quotes.
 
 const MM = 96 / 25.4; // CSS px per mm
-const PAGE_PX = (297 - 24) * MM; // A4 content height inside the 12mm @page margins
-const SLACK_PX = 16; // screen sheet is ~4mm wider than print; absorb wrap drift
+const PAGE_PX = (297 - 24) * MM; // A4 height inside the sheet's 12mm vertical padding
+const SLACK_PX = 16; // print geometry matches screen; slack absorbs wrap/rounding drift
 
 function EstimatePages({ estimates, priced, version }) {
   const [pages, setPages] = useState(null);
@@ -410,18 +448,12 @@ function ItemRows({ item, priced }) {
   return rows;
 }
 
-// Revision metadata for a quote — screen-only (est-noprint, never printed),
-// persisted per quote in this browser's localStorage.
-function RevFields({ quoteId, label }) {
-  const key = 'estimateRev:' + quoteId;
-  const [v, setV] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(key)) || {}; } catch { return {}; }
-  });
-  const set = (patch) => {
-    const n = { ...v, ...patch };
-    setV(n);
-    localStorage.setItem(key, JSON.stringify(n));
-  };
+// Revision metadata for a quote — edited in the toolbar, printed in the
+// SheetChrome header when set. State lives in EstimatePage (persisted per
+// quote in this browser's localStorage) so the printed sheets re-render live.
+function RevFields({ value, onChange, label }) {
+  const v = value || {};
+  const set = (patch) => onChange({ ...v, ...patch });
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
       {label && <b style={{ fontSize: 12 }}>{label}</b>}
@@ -444,6 +476,7 @@ export default function EstimatePage() {
   const [checked, setChecked] = useState(new Set());
   const [priced, setPriced] = useState(true);
   const [version, setVersion] = useState('with-total');
+  const [revs, setRevs] = useState({}); // quoteId → { revNo, revDate }
   const [terms, setTermsState] = useState(() => loadTerms(false));
   const [exportTerms, setExportTermsState] = useState(() => loadTerms(true));
   const [editTerms, setEditTerms] = useState(false);
@@ -456,10 +489,19 @@ export default function EstimatePage() {
     saveTerms(t, isExport);
   };
 
+  const setRev = (quoteId, v) => {
+    setRevs((m) => ({ ...m, [quoteId]: v }));
+    localStorage.setItem('estimateRev:' + quoteId, JSON.stringify(v));
+  };
+
   // Trading lists every CRM line as its own row; re-parse when toggled.
+  // Revision no/date merge into the header so SheetChrome prints them.
   const estimates = useMemo(
-    () => rawQuotes.map((q) => buildEstimate(q, { merge: version !== 'trading' })),
-    [rawQuotes, version],
+    () => rawQuotes.map((q) => {
+      const e = buildEstimate(q, { merge: version !== 'trading' });
+      return { ...e, header: { ...e.header, ...revs[q.id] } };
+    }),
+    [rawQuotes, version, revs],
   );
 
   // The T&C sheet is the last page — scroll to it when editing starts so the
@@ -496,7 +538,11 @@ export default function EstimatePage() {
     setState({ status: 'loadingQuote', quotes });
     Promise.all(ids.map((id) => axios.get('/api/crm/quote/' + encodeURIComponent(id))))
       .then((rs) => {
-        setRawQuotes(rs.map((r) => r.data));
+        const qs = rs.map((r) => r.data);
+        setRawQuotes(qs);
+        setRevs(Object.fromEntries(qs.map((q) => {
+          try { return [q.id, JSON.parse(localStorage.getItem('estimateRev:' + q.id)) || {}]; } catch { return [q.id, {}]; }
+        })));
         setState({ status: 'sheet', quotes });
       })
       .catch(fail);
@@ -552,12 +598,6 @@ export default function EstimatePage() {
     );
   else body = (
     <>
-      <div className="est-noprint" style={{ display: 'flex', flexWrap: 'wrap', gap: 20, justifyContent: 'center', padding: '10px 16px' }}>
-        {rawQuotes.map((q) => (
-          <RevFields key={q.id} quoteId={q.id}
-            label={rawQuotes.length > 1 ? (q.Quote_No || q.Quote_Number || q.id) : ''} />
-        ))}
-      </div>
       <div className="est-print-area">
         <EstimatePages estimates={estimates} priced={priced} version={version} />
         <TermsSheet terms={activeTerms} defaults={isExport ? EXPORT_TERMS : DEFAULT_TERMS}
@@ -581,6 +621,10 @@ export default function EstimatePage() {
           <select value={version} onChange={(e) => setVersion(e.target.value)}>
             {TEMPLATE_VERSIONS.map((v) => <option key={v.key} value={v.key}>{v.label}</option>)}
           </select>
+          {rawQuotes.map((q) => (
+            <RevFields key={q.id} value={revs[q.id]} onChange={(v) => setRev(q.id, v)}
+              label={rawQuotes.length > 1 ? (q.Quote_No || q.Quote_Number || q.id) : ''} />
+          ))}
           <span className="est-spacer" />
           <button className={editTerms ? 'est-active' : ''} onClick={toggleEditTerms}>✎ Edit T&C</button>
           <button onClick={() => window.print()}>🖨 Print / Save PDF</button>

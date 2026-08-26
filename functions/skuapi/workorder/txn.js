@@ -401,7 +401,7 @@ async function txnLines(catalyst, orgId, txns) {
 }
 
 // History for the work order's Activity tab. Lines carry the item name/sku/uom
-// from the WO's BOM lines so the movement cards can name what moved (CR-050);
+// from the WO's BOM lines so the movement cards can name what moved (CR-051);
 // an item since removed from the BOM falls back to its id on the frontend.
 async function listTxns(catalyst, orgId, workOrderId) {
   const txns = await byOrg(

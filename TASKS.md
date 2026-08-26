@@ -16,6 +16,11 @@ Last updated: 2026-08-26.
 
 ## In progress
 
+### CR-051 — WO Activity in/out movement ledger (branch `feat/zoho-field-mapping`)
+- [x] `txn.js` `listTxns` — txn lines enriched with `name`/`sku`/`uom` from the WO's `WorkOrderLine` rows (one extra query)
+- [x] `WorkOrderPage.jsx` `ActivityTab` — movement cards (↗ out / ↙ in, colored edge, route chip, TO number, item rows with qty); audit events as slim rows in the same stream
+- [ ] Verify on deploy: reserve/issue show blue ↗ cards with item names + qty, release/return green ↙, Draft/Cancelled muted, audit rows interleaved chronologically
+
 ### CR-049 — WO details page redesign, Claude Design mockup (branch `feat/zoho-field-mapping`)
 - [x] `MaterialsGrid.jsx` rewritten — KPI band + coverage bar, shortage/procurement banners, instant per-line Reserve/Issue/Release/Return (+ inline Return qty row), "Reserve everything available"; confirm bar / qty inputs / column picker removed
 - [x] `WorkOrderPage.jsx` — mockup header (one action row), tabs → Materials·Items·Activity, invoice-gate banner page-level, Activity timeline merges movements + audit trail
@@ -307,6 +312,9 @@ Reference + setup procedure: [WORKORDER.md](WORKORDER.md).
 
 ## Done (recent — full detail in CHANGES.md)
 
+- [x] CR-054 Estimate print: no browser URL/date header-footer (`@page` margin 0 + sheet padding); footer stays on its page — print matches measured layout (2026-08-26)
+- [x] CR-053 Estimate print: toolbar Revision No/Date print in the sheet header below Offer Preparation Date when set (2026-08-26)
+- [x] CR-052 Estimate print: MSUN certificates footer image + tables stretch to the footer on every sheet (2026-08-26)
 - [x] CR-050 MSUN estimate template pass — With Total default, header cleanup + every page, CRM Account/Contact "To" details, Revision fields, discount only on CalcSheet w/ clubbed page amounts, ISO footer slot, T&C bold/color (2026-08-26)
 - [x] CR-045 PO GST picks inter/intra-state (IGST vs CGST+SGST) by org-vs-vendor GSTIN state code; fixes code 3032 (2026-08-25)
 
