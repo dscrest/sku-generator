@@ -16,21 +16,24 @@ const {
 const { getUserById } = require("../session");
 const { updateCompositeItem, listCompositeItems, createCompositeItem } = require("../zoho/inventoryApi");
 const {
-  SETTING_KEYS, settings, setSetting, nextNumber, logActivity, byOrg, inList,
+  SETTING_KEYS, settings, setSetting, nextNumber, logActivity, byOrg, inList, creatableSalesOrders, requiredLevelsMet,
 } = require("../workorder/store");
 const bom = require("../workorder/bom");
 const { buildGrid, buildGridsBulk } = require("../workorder/grid");
 const txn = require("../workorder/txn");
 const purchase = require("../workorder/purchase");
 const reports = require("../workorder/reports");
-const { warehouseOptions, reconcileOrg } = require("../workorder/sync");
+const { warehouseOptions, reconcileOrg, syncItem } = require("../workorder/sync");
 
 const router = express.Router();
 const n = (v) => Number(v) || 0;
 
 // Status lifecycle (BRD §6.1.2). Cancelled is reachable from anywhere open.
+// Draft/PendingApproval do NOT list "Approved": the only path to Approved is the
+// /approve sign-off flow, so the manual status dropdown can't skip approvals.
 const FLOW = {
-  Draft: ["Approved", "Cancelled"],
+  Draft: ["Cancelled"],
+  PendingApproval: ["Cancelled"],
   Approved: ["MaterialAllocationPending", "Cancelled"],
   MaterialAllocationPending: ["ReadyForProduction", "Cancelled"],
   ReadyForProduction: ["InProgress", "Cancelled"],
@@ -97,15 +100,26 @@ router.put("/settings", ok(async (req, res) => {
 // ---- Zoho pickers (the only live reads outside a refresh) ------------------
 
 router.get("/sales-orders", ok(async (req, res) => {
-  const sos = await listSalesOrders(req.catalyst, req.query.q);
-  res.json(sos.map((s) => ({
+  // Confirmed SOs only (the only ones eligible for a work order), and drop any
+  // that already have a work order so an SO is never offered twice. The
+  // confirmed-only gate lives in creatableSalesOrders (order_status "open") —
+  // Zoho's salesorders filter_by can't express it: Status.confirmed is rejected
+  // (code 2) and Status.Confirmed matches nothing.
+  const sos = (await listSalesOrders(req.catalyst, req.query.q)).map((s) => ({
     id: String(s.salesorder_id),
     number: s.salesorder_number,
     date: s.date,
     customerId: String(s.customer_id || ""),
     customerName: s.customer_name,
     status: s.status,
-  })));
+    orderStatus: s.order_status,
+  }));
+  const soIds = inList(sos.map((s) => s.id));
+  const taken = soIds
+    ? new Set((await byOrg(req.catalyst, req.orgId, "WorkOrder", `salesOrderId IN (${soIds})`))
+        .map((w) => String(w.salesOrderId)))
+    : new Set();
+  res.json(creatableSalesOrders(sos, taken));
 }));
 
 router.get("/so/:soId", ok(async (req, res) => {
@@ -323,7 +337,39 @@ router.get("/purchase/shortfall-by-item", ok(async (req, res) => {
         .filter((l) => !l.zohoPoId)
         .map((l) => ({ ...l, prNumber: prNo.get(String(l.purchaseRequestId)) }))
     : [];
-  res.json(purchase.shortfallByItem(purchase.applyDraftCoverage(tagged, draftLines)));
+
+  // Already-requested/ordered lines stay visible with status + PO number
+  // (CR-048) so a buyer sees what's on order instead of the row vanishing.
+  // Two PurchaseRequestLine queries on purpose: draft coverage is keyed by
+  // draft-PR id org-wide, ordered lines by open-WO id — merging would change
+  // the coverage semantics.
+  const woById = new Map(open.map((w) => [String(w.ROWID), w]));
+  const woOf = (l) => woById.get(String(l.workOrderId)) || {};
+  const poLines = openIds
+    ? (await byOrg(req.catalyst, req.orgId, "PurchaseRequestLine", `workOrderId IN (${openIds})`))
+        .filter((l) => l.zohoPoId && String(l.poStatus) !== "cancelled")
+    : [];
+  const orderedEntries = [
+    ...poLines.map((l) => {
+      const qty = Number(l.purchaseQty) || 0;
+      const received = Number(l.receivedQty) || 0;
+      return {
+        rmItemId: l.rmItemId, rmName: l.rmName,
+        workOrderId: l.workOrderId, woNumber: woOf(l).woNumber, salesOrderNumber: woOf(l).salesOrderNumber,
+        qty,
+        status: received >= qty ? "Fulfilled" : received > 0 ? "PartiallyReceived" : "PORaised",
+        poNumber: l.zohoPoNumber || "",
+      };
+    }),
+    ...draftLines.map((l) => ({
+      rmItemId: l.rmItemId, rmName: l.rmName,
+      workOrderId: l.workOrderId, woNumber: woOf(l).woNumber, salesOrderNumber: woOf(l).salesOrderNumber,
+      qty: Number(l.purchaseQty) || 0,
+      status: "Requested",
+      poNumber: l.prNumber || "",
+    })),
+  ];
+  res.json(purchase.shortfallByItem(purchase.applyDraftCoverage(tagged, draftLines), orderedEntries));
 }));
 
 // One-step item-wise raise (CR-023): selected items + one vendor → consolidated
@@ -911,11 +957,16 @@ router.post("/:id/approve", ok(async (req, res) => {
   if (![1, 2].includes(level)) { const e = new Error("Approval level must be 1 or 2"); e.status = 400; throw e; }
   if (!["Approved", "Rejected"].includes(status)) { const e = new Error("Status must be Approved or Rejected"); e.status = 400; throw e; }
 
+  // Level 2 is required only when an L2 approver is configured (else L1 is enough).
+  const values = await settings(req.catalyst, req.orgId);
+  const l2Required = Boolean(String(values.approverL2Email || "").trim());
+
   const existing = await byOrg(
     req.catalyst, req.orgId, "Approval",
     `entityType = 'WorkOrder' AND entityId = ${zStr(String(wo.ROWID))}`,
   );
   if (level === 2) {
+    if (!l2Required) { const e = new Error("A second-level approver is not configured — first-level approval is sufficient"); e.status = 409; throw e; }
     const l1 = existing.find((a) => n(a.approvalLevel) === 1 && a.status === "Approved");
     if (!l1) { const e = new Error("Level 1 must approve before level 2"); e.status = 409; throw e; }
   }
@@ -932,21 +983,25 @@ router.post("/:id/approve", ok(async (req, res) => {
 
   await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, `approval.l${level}.${status}`, req.userId, null);
 
-  // Once both sign-offs are in, advance the lifecycle so the status chip reflects
-  // the approval instead of sitting at Draft (FLOW: Draft -> Approved).
+  // Advance the lifecycle so the chip reflects the approval: Approved once every
+  // required level has signed off; PendingApproval after the first level when a
+  // second level is still required.
   let woStatus = String(wo.status);
-  if (status === "Approved" && woStatus === "Draft") {
+  if (status === "Approved" && ["Draft", "PendingApproval"].includes(woStatus)) {
     const approvedLevels = new Set(
       existing.filter((a) => a.status === "Approved" && n(a.approvalLevel) !== level).map((a) => n(a.approvalLevel)),
     );
     approvedLevels.add(level);
-    if (approvedLevels.has(1) && approvedLevels.has(2)) {
-      await req.catalyst.datastore().table("WorkOrder").updateRow({ ROWID: String(wo.ROWID), status: "Approved" });
-      await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.status", req.userId, { from: "Draft", to: "Approved" });
-      woStatus = "Approved";
+    const next = requiredLevelsMet(approvedLevels, l2Required)
+      ? "Approved"
+      : (l2Required && approvedLevels.has(1) ? "PendingApproval" : woStatus);
+    if (next !== woStatus) {
+      await req.catalyst.datastore().table("WorkOrder").updateRow({ ROWID: String(wo.ROWID), status: next });
+      await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.status", req.userId, { from: woStatus, to: next });
+      woStatus = next;
     }
   }
-  res.json({ ok: true, level, status, woStatus });
+  res.json({ ok: true, level, status, woStatus, l2Required });
 }));
 
 /**
@@ -955,21 +1010,37 @@ router.post("/:id/approve", ok(async (req, res) => {
  */
 router.get("/:id/invoice-gate", ok(async (req, res) => {
   const wo = await loadWo(req);
+  const values = await settings(req.catalyst, req.orgId);
+  const l2Required = Boolean(String(values.approverL2Email || "").trim());
   const approvals = await byOrg(
     req.catalyst, req.orgId, "Approval", `entityType = 'WorkOrder' AND entityId = ${zStr(String(wo.ROWID))}`,
   );
   const approved = [1, 2].filter((lv) => approvals.some((a) => n(a.approvalLevel) === lv && a.status === "Approved"));
+  const needed = l2Required ? [1, 2] : [1];
+  const missing = needed.filter((l) => !approved.includes(l));
   res.json({
-    allowed: approved.length === 2,
+    allowed: missing.length === 0,
     approvedLevels: approved,
-    blockedReason: approved.length === 2 ? null : `Awaiting level ${[1, 2].filter((l) => !approved.includes(l)).join(" and ")} approval`,
+    requiredLevels: needed,
+    l2Required,
+    blockedReason: missing.length === 0 ? null : `Awaiting level ${missing.join(" and ")} approval`,
   });
 }));
 
 // ---- manual refresh -------------------------------------------------------
 
 router.post("/refresh", ok(async (req, res) => {
-  res.json({ ok: true, ...(await reconcileOrg(req.catalyst, req.orgId)) });
+  // ?full=1 sweeps the whole catalog (incl. items on no open WO) so a Zoho
+  // adjustment / opening stock reflects; default stays bounded to open WOs.
+  const full = req.query.full === "1" || req.query.full === "true";
+  res.json({ ok: true, ...(await reconcileOrg(req.catalyst, req.orgId, { full })) });
+}));
+
+// Instant per-item stock sync (static path — keep above /:id). Reflects a Zoho
+// inventory adjustment / opening stock for one item immediately.
+router.post("/items/:itemId/sync-stock", ok(async (req, res) => {
+  if (!idOk(req.params.itemId)) { const e = new Error("Invalid item id"); e.status = 400; throw e; }
+  res.json({ ok: true, ...(await syncItem(req.catalyst, req.orgId, req.params.itemId)) });
 }));
 
 module.exports = router;

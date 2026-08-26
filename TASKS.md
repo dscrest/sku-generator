@@ -10,11 +10,36 @@ Related docs: [CHANGES.md](CHANGES.md) (change requests + shipped log),
 [SCHEMA.md](SCHEMA.md) (DB), [ARCHITECTURE.md](ARCHITECTURE.md) (system),
 [ZOHO_AUTH.md](ZOHO_AUTH.md) (OAuth setup).
 
-Last updated: 2026-08-21.
+Last updated: 2026-08-26.
 
 ---
 
 ## In progress
+
+### CR-049 — WO details page redesign, Claude Design mockup (branch `feat/zoho-field-mapping`)
+- [x] `MaterialsGrid.jsx` rewritten — KPI band + coverage bar, shortage/procurement banners, instant per-line Reserve/Issue/Release/Return (+ inline Return qty row), "Reserve everything available"; confirm bar / qty inputs / column picker removed
+- [x] `WorkOrderPage.jsx` — mockup header (one action row), tabs → Materials·Items·Activity, invoice-gate banner page-level, Activity timeline merges movements + audit trail
+- [ ] Verify on deploy: KPI totals match the grid, per-row actions post txns and refresh, Release/dereserve works, Return caps at issued, short banner → Purchase request page, Approve/Reject still gate invoicing, Activity shows both movement and audit events
+
+### CR-048 — By-item grid: WO/Status/PO columns, ordered lines visible (branch `feat/zoho-field-mapping`)
+- [x] `purchase.js` `shortfallByItem(lines, orderedLines)` — ordered/requested lines join the per-item buckets with per-line `status`/`poNumber`; `totalQty` pending-only, `orderedQty` separate; selftest asserts
+- [x] `workorder.js` shortfall-by-item route fetches open-WO PR lines on a PO + maps draft lines → ordered entries (Requested / PO Raised / Partially received / Received)
+- [x] `WorkOrderPurchasePage.jsx` — 6-column grid, ProcChip sub-rows, pending-only selection/raise
+- [ ] Verify on deploy: raised item stays in By item with "PO Raised" + PO number; checkbox disabled when nothing pending; draft-PR line shows "Requested" with the PR number; raising a mixed item only orders the pending WO lines
+
+### CR-047 — Purchase Requests grid fix + tab-line button (branch `feat/zoho-field-mapping`)
+- [x] `store.js` `inList` drops blank ids (fixes the ZCQL `ROWID IN ('')` 500 behind the empty Requests/Orders grids) + selftest asserts
+- [x] `WorkOrderPurchasePage.jsx` — "Raise request for…" dropdown removed; list-load failures toast instead of silently emptying the grid
+- [x] `MaterialsGrid.jsx` — shortage bar folded into the action tab line (short pill + Request purchase)
+- [ ] Verify on deploy: Requests shows all 8 PRs (incl. today's Draft PR-0003 and the "— consolidated" rows) with status chips; Orders loads; short WO shows pill + button on the tab line
+
+### CR-042 — TO serial/batch + number fallback, SO-picker gating, dynamic approval, instant stock sync (branch `feat/zoho-field-mapping`)
+- [x] `zoho/inventoryApi.js` — `pickSerialsBatches` (pure, self-checked) attaches first-available serials / FIFO batches to each transfer line; friendly shortage error replaces code 2205
+- [x] `createTransferOrder` retries with `transfer_order_number` (numberHint = txn number) only on code 6; `txn.js` `friendlyTransferError` rewords raw Zoho errors
+- [x] `GET /sales-orders` — confirmed-only via `creatableSalesOrders` on `order_status === "open"` (Books' API never returns status "confirmed"; Zoho's SO filter_by rejects/ignores Confirmed, so no server filter) and drops SOs already on a WO (self-checked)
+- [x] Dynamic approval — 2nd level only when `approverL2Email` set; new `PendingApproval` status after L1; `FLOW.Draft` no longer offers Approved (dropdown can't skip); `requiredLevelsMet` self-checked; invoice gate + WO page reflect configured levels
+- [x] Instant sync — `reconcileOrg({ full })`, `POST /api/wo/refresh?full=1`, `POST /api/wo/items/:itemId/sync-stock` (`syncItem`), "Sync all" button on the materials grid
+- [ ] Verify on deploy: confirm a reserve/issue on a serial-tracked item posts a TO with serials (check Catalyst logs for the exact serial/batch payload shape); org with TO auto-numbering off gets a numbered TO, not code 6; SO picker shows only confirmed, WO-less SOs; with only an L1 approver the WO approves on L1, with L2 set it sits at Pending Approval until L2; adjust stock in Zoho → "Sync all" reflects it
 
 ### CR-035 — App-wide improvement pass (review findings, 4 phases)
 - [x] Phase 1 quick wins: `--bg-page` token, QC gate modal (Esc = do nothing), ⌘↵ create shortcut, debounced SKU preview, labeled CSV headers, helpdesk mailto, loading-vs-empty states, PR-line save toast
@@ -42,6 +67,9 @@ Last updated: 2026-08-21.
 - [ ] CRM console: Deal button `/app/#/estimate?dealId=${Deal.Id}`, Quote button `/app/#/estimate?quoteId=${Quotes.Quote Id}`
 - [ ] Verify on deploy: deal link → checkbox list → tick 2 → two sheets, page break, no trailing blank page; quote link → direct sheet; template toggle flips all sheets; discount row present/absent; flat fallback on plain-text line; logged-out deep link auto-logs-in and returns to the estimate; cancelled OAuth → login page (no loop); pre-CRM-scope token → Connect CRM prompt
 - [ ] Pin the quote-line description convention with real quotes, then tighten the parser
+- [x] CR-039: Version pick list functional — Standard / With Total / Export / All Item - Trading; CalcSheet only on With Total; Trading skips grouping (`buildEstimate({ merge: false })`)
+- [x] CR-039: Export-version T&C — export preset shipped (`EXPORT_TERMS`)
+- [x] CR-040: Duties & Taxes added to Export (B); one-time cache reset (`TERMS_VERSION`) so all types show A/B; amount columns centered (`.est-num`)
 
 ### CR-031 — WO item editability + completion auto-return + reconciliation (branch `feat/zoho-field-mapping`)
 - [x] `zoho/booksApi.js` — `searchItems` typeahead helper
@@ -278,6 +306,13 @@ Reference + setup procedure: [WORKORDER.md](WORKORDER.md).
 ---
 
 ## Done (recent — full detail in CHANGES.md)
+
+- [x] CR-050 MSUN estimate template pass — With Total default, header cleanup + every page, CRM Account/Contact "To" details, Revision fields, discount only on CalcSheet w/ clubbed page amounts, ISO footer slot, T&C bold/color (2026-08-26)
+- [x] CR-045 PO GST picks inter/intra-state (IGST vs CGST+SGST) by org-vs-vendor GSTIN state code; fixes code 3032 (2026-08-25)
+
+- [x] CR-043 Estimate "Our Offer No" = CRM Quote No (MSUN custom `Quote_No`, then `Quote_Number`), no Subject fallback; `Quote_No` added to picker fields (2026-08-25)
+- [x] CR-041 Estimate header band (logo + address) prints on the first page only (2026-08-25)
+- [x] CR-040 Estimate T&C: A/B on all types (Duties & Taxes on Export + one-time cache reset) + centered amount columns (2026-08-25)
 
 - [x] CR-017 Nav: Order Management submenu (Work Orders/Reports), Settings moved to account menu (2026-07-28)
 - [x] CR-016 PO detail view in Purchase tab: edit/remove lines, issue/cancel, delete with shortfall reset (2026-07-27)

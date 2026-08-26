@@ -42,13 +42,25 @@ async function getQuote(catalyst, id) {
   return (data && data.data && data.data[0]) || null;
 }
 
+// Account/Contact records backing the quote's lookups — the estimate's "To"
+// section picks billing address / phone / GSTIN / mobile out of the raw record.
+async function getAccount(catalyst, id) {
+  const data = await crmRequest(catalyst, `Accounts/${encodeURIComponent(id)}`);
+  return (data && data.data && data.data[0]) || null;
+}
+
+async function getContact(catalyst, id) {
+  const data = await crmRequest(catalyst, `Contacts/${encodeURIComponent(id)}`);
+  return (data && data.data && data.data[0]) || null;
+}
+
 // The related-records API requires an explicit fields param; these are just
 // enough for the estimate page's quote picker.
-const QUOTE_LIST_FIELDS = "Subject,Quote_Number,Grand_Total,Quote_Stage,Created_Time";
+const QUOTE_LIST_FIELDS = "Subject,Quote_No,Quote_Number,Grand_Total,Quote_Stage,Created_Time";
 
 async function getDealQuotes(catalyst, id) {
   const data = await crmRequest(catalyst, `Deals/${encodeURIComponent(id)}/Quotes?fields=${QUOTE_LIST_FIELDS}`);
   return (data && data.data) || [];
 }
 
-module.exports = { crmReauthNeeded, getDeal, getQuote, getDealQuotes };
+module.exports = { crmReauthNeeded, getDeal, getQuote, getDealQuotes, getAccount, getContact };

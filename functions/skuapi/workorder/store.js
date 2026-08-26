@@ -152,13 +152,38 @@ async function byOrg(catalyst, orgId, table, where, order) {
 }
 
 // ZCQL has no IN-with-empty-list; this keeps callers from building `IN ()`.
+// Empty/null values are dropped too: callers pass ROWID lists, and a blank id
+// (e.g. a consolidated PR's workOrderId "") makes ZCQL reject the whole query
+// with "Invalid input value for BIGINT column 'ROWID'".
 function inList(values) {
-  return values.length ? values.map((v) => zStr(String(v))).join(",") : null;
+  const vals = values.filter((v) => v !== "" && v != null);
+  return vals.length ? vals.map((v) => zStr(String(v))).join(",") : null;
+}
+
+// Sales orders a new work order can be raised against: confirmed only, and not
+// already linked to a work order. `takenSoIds` is a Set of salesOrderId strings
+// already on a WorkOrder. Books' API reports a confirmed SO as order_status
+// "open" (the UI label "Confirmed" never appears in the status field — verified
+// against the MSUN org, where header status can also be invoiced/overdue while
+// order_status stays "open"); some editions do return status "confirmed", so
+// both are accepted. Pure so it can be self-checked.
+function creatableSalesOrders(sos, takenSoIds) {
+  return (sos || []).filter((s) => {
+    const confirmed = String(s.orderStatus).toLowerCase() === "open"
+      || String(s.status).toLowerCase() === "confirmed";
+    return confirmed && !takenSoIds.has(String(s.id));
+  });
+}
+
+// Two-level sign-off is dynamic: level 2 is required only when an L2 approver is
+// configured. Level 1 alone suffices otherwise. Pure so it can be self-checked.
+function requiredLevelsMet(approvedLevels, l2Required) {
+  return approvedLevels.has(1) && (!l2Required || approvedLevels.has(2));
 }
 
 module.exports = {
   DEFAULTS, WAREHOUSE_KEYS, SETTING_KEYS, settings, setSetting, warehouses, routeFor,
-  nextNumber, logActivity, byOrg, inList,
+  nextNumber, logActivity, byOrg, inList, creatableSalesOrders, requiredLevelsMet,
 };
 
 // ponytail self-check: `node functions/skuapi/workorder/store.js --selftest`
@@ -168,6 +193,8 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(inList([]), null, "empty list must not produce IN ()");
   assert.strictEqual(inList(["1", "2"]), "'1','2'");
   assert.strictEqual(inList(["o'brien"]), "'o''brien'", "quotes are escaped");
+  assert.strictEqual(inList(["", "1"]), "'1'", "blank ids are dropped — ZCQL rejects '' for ROWID");
+  assert.strictEqual(inList(["", null, undefined]), null, "all-blank list must not produce IN ()");
 
   // Fake catalyst: settings merge, memoisation, and the warehouse gate.
   const fake = (rows) => {
@@ -221,6 +248,29 @@ if (require.main === module && process.argv.includes("--selftest")) {
     });
     assert.strictEqual(await nextNumber(numFake(null), "o", "WorkOrder", "woNumber", "WO-"), "WO-0001");
     assert.strictEqual(await nextNumber(numFake({ woNumber: "WO-0009" }), "o", "WorkOrder", "woNumber", "WO-"), "WO-0010");
+
+    // Creatable SOs: confirmed only (order_status "open", or literal status
+    // "confirmed" in editions that report it), and not already on a work order.
+    const soList = [
+      { id: "1", status: "open", orderStatus: "open" },            // confirmed (MSUN shape)
+      { id: "2", status: "draft", orderStatus: "draft" },          // not confirmed
+      { id: "3", status: "open", orderStatus: "open" },            // taken by a WO
+      { id: "4", status: "draft", orderStatus: "pending_approval" }, // not confirmed
+      { id: "5", status: "invoiced", orderStatus: "open" },        // confirmed + invoiced
+      { id: "6", status: "confirmed" },                            // literal-status edition
+    ];
+    assert.deepStrictEqual(
+      creatableSalesOrders(soList, new Set(["3"])).map((s) => s.id),
+      ["1", "5", "6"],
+      "keeps confirmed SOs, drops drafts/pending and SO 3 (already has a WO)",
+    );
+    assert.deepStrictEqual(creatableSalesOrders([], new Set()), []);
+
+    // Dynamic approval: L1 alone suffices unless an L2 approver is configured.
+    assert.strictEqual(requiredLevelsMet(new Set([1]), false), true, "L1 enough when no L2 approver");
+    assert.strictEqual(requiredLevelsMet(new Set([1]), true), false, "L1 not enough when L2 required");
+    assert.strictEqual(requiredLevelsMet(new Set([1, 2]), true), true, "both satisfy L2-required");
+    assert.strictEqual(requiredLevelsMet(new Set([2]), false), false, "L1 is always required");
 
     console.log("workorder/store.js self-check passed");
   })().catch((err) => { console.error(err); process.exit(1); });

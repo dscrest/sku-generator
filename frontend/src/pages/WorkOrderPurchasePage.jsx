@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import PurchaseTab, { PoSplit } from '../components/PurchaseTab.jsx';
 import GridFooter, { usePager } from '../components/GridFooter.jsx';
 import { Empty } from '../components/MaterialsGrid.jsx';
-import { StatusChip, AccessNotice, Table, btn, select } from '../components/woCommon.jsx';
+import { StatusChip, ProcChip, AccessNotice, Table, btn, select } from '../components/woCommon.jsx';
 import { fmtMoney, fmtDate } from '../format.js';
 
 /**
@@ -39,9 +39,13 @@ export default function WorkOrderPurchasePage() {
         else toast.error(err.response?.data?.error || 'Could not load work orders');
       });
   }
-  const loadPrs = () => axios.get('/api/wo/purchase-requests').then(({ data }) => setPrs(data)).catch(() => setPrs([]));
+  // A swallowed failure here shows "No purchase requests yet." over real data
+  // (a silent 500 hid every request for two weeks, CR-047) — surface the error.
+  const loadPrs = () => axios.get('/api/wo/purchase-requests').then(({ data }) => setPrs(data))
+    .catch(err => { setPrs([]); toast.error(err.response?.data?.error || 'Could not load purchase requests'); });
   // Every PO in the Books org (CR-020), not just the ones raised from here.
-  const loadPos = () => axios.get('/api/wo/purchase-orders').then(({ data }) => setPos(data)).catch(() => setPos([]));
+  const loadPos = () => axios.get('/api/wo/purchase-orders').then(({ data }) => setPos(data))
+    .catch(err => { setPos([]); toast.error(err.response?.data?.error || 'Could not load purchase orders'); });
 
   useEffect(loadWos, []);
   useEffect(() => {
@@ -101,8 +105,6 @@ export default function WorkOrderPurchasePage() {
     );
   }
 
-  const openWos = (wos || []).filter(w => !['Closed', 'Cancelled'].includes(w.status));
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
@@ -121,11 +123,6 @@ export default function WorkOrderPurchasePage() {
             {statuses.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         )}
-        <div style={{ flex: 1 }} />
-        <select style={select} value="" onChange={e => e.target.value && setSelected(e.target.value)}>
-          <option value="">Raise request for…</option>
-          {openWos.map(w => <option key={w.id} value={w.id}>{w.woNumber} · {w.customerName}</option>)}
-        </select>
       </div>
 
       {view === 'By item' ? (
@@ -209,10 +206,11 @@ function ByItemView({ onRaised }) {
   }, []);
 
   const { pageRows, pager } = usePager(items || []);
-  const chosen = (items || []).filter(i => checked[i.rmItemId]);
+  const pending = (items || []).filter(i => i.totalQty > 0);
+  const chosen = pending.filter(i => checked[i.rmItemId]);
   const orderQty = i => { const v = qty[i.rmItemId]; return v === undefined || v === '' ? i.totalQty : Number(v) || 0; };
   const totalUnits = chosen.reduce((s, i) => s + orderQty(i), 0);
-  const allOn = (items || []).length > 0 && (items || []).every(i => checked[i.rmItemId]);
+  const allOn = pending.length > 0 && pending.every(i => checked[i.rmItemId]);
 
   async function raise() {
     if (!vendorId) return toast.error('Pick a vendor');
@@ -222,7 +220,10 @@ function ByItemView({ onRaised }) {
     try {
       const { data } = await axios.post('/api/wo/purchase/raise', {
         vendorId, vendorName: vendor?.name || '',
-        items: chosen.map(i => ({ rmItemId: i.rmItemId, rmName: i.rmName, qty: orderQty(i), breakdown: i.breakdown })),
+        items: chosen.map(i => ({
+          rmItemId: i.rmItemId, rmName: i.rmName, qty: orderQty(i),
+          breakdown: (i.breakdown || []).filter(b => b.status === 'Pending'),
+        })),
       });
       toast.success(`${data.prNumber} raised · PO ${data.poNumber}`);
       setChecked({}); setQty({}); setVendorId('');
@@ -244,11 +245,13 @@ function ByItemView({ onRaised }) {
             <tr>
               <th style={{ ...th, width: 34 }}>
                 <input type="checkbox" checked={allOn}
-                  onChange={e => setChecked(e.target.checked ? Object.fromEntries(items.map(i => [i.rmItemId, true])) : {})} />
+                  onChange={e => setChecked(e.target.checked ? Object.fromEntries(pending.map(i => [i.rmItemId, true])) : {})} />
               </th>
               <th style={th}>Item</th>
+              <th style={th}>Work order</th>
               <th style={{ ...th, textAlign: 'right' }}>Order qty</th>
-              <th style={th}>Needed by</th>
+              <th style={th}>Status</th>
+              <th style={th}>PO number</th>
             </tr>
           </thead>
           <tbody>
@@ -286,36 +289,45 @@ function ByItemView({ onRaised }) {
 
 function RowGroup({ item, checked, qty, open, onCheck, onQty, onToggle }) {
   const bd = item.breakdown || [];
+  const pendingCount = bd.filter(b => b.status === 'Pending').length;
+  const onPoCount = bd.length - pendingCount;
+  const poNumbers = [...new Set(bd.map(b => b.poNumber).filter(Boolean))].join(', ');
+  const canOrder = item.totalQty > 0;
   return (
     <>
       <tr className="list-row" style={{ borderBottom: '1px solid var(--border)' }}>
-        <td style={td}><input type="checkbox" checked={checked} onChange={e => onCheck(e.target.checked)} /></td>
+        <td style={td}><input type="checkbox" checked={checked} disabled={!canOrder} onChange={e => onCheck(e.target.checked)} /></td>
         <td style={{ ...td, fontWeight: 600 }}>{item.rmName || item.rmItemId}</td>
-        <td style={{ ...td, textAlign: 'right' }}>
-          <input type="number" min="0" step="any" value={qty ?? item.totalQty}
-            onChange={e => onQty(e.target.value)}
-            style={{ width: 80, padding: '4px 6px', fontSize: 13, textAlign: 'right', fontFamily: 'var(--font-mono)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }} />
-        </td>
         <td style={td}>
           <button onClick={onToggle} style={{ ...btn, padding: '3px 8px', fontSize: 12 }}>
             {bd.length} work order{bd.length > 1 ? 's' : ''} {open ? '▴' : '▾'}
           </button>
         </td>
+        <td style={{ ...td, textAlign: 'right' }}>
+          {canOrder ? (
+            <input type="number" min="0" step="any" value={qty ?? item.totalQty}
+              onChange={e => onQty(e.target.value)}
+              style={{ width: 80, padding: '4px 6px', fontSize: 13, textAlign: 'right', fontFamily: 'var(--font-mono)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }} />
+          ) : '—'}
+        </td>
+        <td style={{ ...td, fontSize: 12, color: 'var(--text-secondary)' }}>
+          {[pendingCount && `${pendingCount} pending`, onPoCount && `${onPoCount} on PO`].filter(Boolean).join(' · ')}
+        </td>
+        <td style={{ ...td, fontSize: 12 }}>{poNumbers || '—'}</td>
       </tr>
-      {open && (
-        <tr style={{ background: 'var(--bg-page)' }}>
-          <td />
-          <td colSpan={3} style={{ padding: '6px 12px 10px' }}>
-            {bd.map((b, idx) => (
-              <span key={idx} style={{ display: 'inline-flex', gap: 6, marginRight: 14, fontSize: 12, color: 'var(--text-secondary)' }}>
-                <b style={{ color: 'var(--blue)' }}>{b.woNumber || '—'}</b>
-                {b.salesOrderNumber ? <span style={{ color: 'var(--text-muted)' }}>SO {b.salesOrderNumber}</span> : null}
-                <span style={{ fontFamily: 'var(--font-mono)' }}>× {b.qty}</span>
-              </span>
-            ))}
+      {open && bd.map((b, idx) => (
+        <tr key={idx} style={{ background: 'var(--bg-page)', borderBottom: '1px solid var(--border)' }}>
+          <td style={td} />
+          <td style={td} />
+          <td style={{ ...td, fontSize: 12 }}>
+            <b style={{ color: 'var(--blue)' }}>{b.woNumber || '—'}</b>
+            {b.salesOrderNumber ? <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>SO {b.salesOrderNumber}</span> : null}
           </td>
+          <td style={{ ...td, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12 }}>{b.qty}</td>
+          <td style={td}><ProcChip status={b.status} /></td>
+          <td style={{ ...td, fontSize: 12 }}>{b.poNumber || '—'}</td>
         </tr>
-      )}
+      ))}
     </>
   );
 }

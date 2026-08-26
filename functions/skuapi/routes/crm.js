@@ -1,6 +1,6 @@
 "use strict";
 const express = require("express");
-const { getDeal, getQuote, getDealQuotes } = require("../zoho/crmApi");
+const { getDeal, getQuote, getDealQuotes, getAccount, getContact } = require("../zoho/crmApi");
 
 const router = express.Router();
 
@@ -28,12 +28,18 @@ router.get("/deal/:id/quotes", async (req, res, next) => {
   }
 });
 
-// Full quote (with Quoted_Items) for the estimate sheet.
+// Full quote (with Quoted_Items) for the estimate sheet, plus the raw Account
+// and Contact records behind its lookups (underscore keys so they can't
+// collide with CRM quote fields). A broken lookup never kills the quote.
 router.get("/quote/:id", async (req, res, next) => {
   try {
     const quote = await getQuote(req.catalyst, req.params.id);
     if (!quote) return res.status(404).json({ error: "not_found" });
-    res.json(quote);
+    const [account, contact] = await Promise.all([
+      quote.Account_Name?.id ? getAccount(req.catalyst, quote.Account_Name.id).catch(() => null) : null,
+      quote.Contact_Name?.id ? getContact(req.catalyst, quote.Contact_Name.id).catch(() => null) : null,
+    ]);
+    res.json({ ...quote, _account: account, _contact: contact });
   } catch (err) {
     if (err.reauth) return res.status(409).json({ error: "reauth_required" });
     next(err);

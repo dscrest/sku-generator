@@ -20,6 +20,83 @@ async function getStockAccountId(catalyst, accountName) {
 }
 const getFinishedGoodsAccountId = (catalyst) => getStockAccountId(catalyst, "finished goods");
 
+// GST tax id by percentage, resolved per Books org and cached. In the India GST
+// edition every transaction *line* needs its own tax (else Books rejects the whole
+// doc with 110802 "Specify either a Tax or Tax Exemption or Reverse Charge" — the
+// header tax dropdown does not back-fill lines). We look up the org's tax whose
+// percentage matches and apply its id to items and PO lines.
+// Returns null when the org has no such tax (e.g. a non-GST edition) so callers
+// simply omit tax_id and keep working — only India GST orgs need it.
+// ponytail: prefers a plain GST "tax" over a "tax_group"; if an org only groups
+// its GST, drop the tax_type filter.
+// Pure: choose the right GST tax row for a transaction from a Books
+// /settings/taxes list already filtered to the target percentage. India GST
+// splits by place of supply — inter-state uses a single IGST tax, intra-state
+// uses the CGST+SGST *group*. Sending the wrong one is rejected (3032 IGST on
+// intrastate / 3033 CGST-SGST on interstate), so pick per direction.
+function pickGstTax(taxes, interState) {
+  const single = (re) => taxes.find((t) => t.tax_type !== "tax_group" && re.test(t.tax_name || ""));
+  if (interState) {
+    return single(/igst/i) || single(/gst/i) || taxes.find((t) => t.tax_type !== "tax_group") || taxes[0] || null;
+  }
+  // Intra-state: the CGST+SGST group; fall back to a non-IGST single GST tax,
+  // then anything at the rate.
+  return taxes.find((t) => t.tax_type === "tax_group")
+    || taxes.find((t) => t.tax_type !== "tax_group" && !/igst/i.test(t.tax_name || "") && /gst/i.test(t.tax_name || ""))
+    || taxes.find((t) => t.tax_type !== "tax_group")
+    || taxes[0] || null;
+}
+
+const _taxIdCache = new Map(); // `${orgId}:${pct}:${dir}` -> tax_id | null
+async function getGstTaxId(catalyst, percentage, { interState = false } = {}) {
+  const orgId = await getOrgId(catalyst);
+  const key = `${orgId}:${percentage}:${interState ? "inter" : "intra"}`;
+  if (_taxIdCache.has(key)) return _taxIdCache.get(key);
+  let id = null;
+  try {
+    const data = await apiRequest(catalyst, "GET", "/settings/taxes");
+    const taxes = (data.taxes || []).filter((t) => Number(t.tax_percentage) === Number(percentage));
+    const hit = pickGstTax(taxes, interState);
+    id = hit ? String(hit.tax_id) : null;
+  } catch (err) {
+    // Missing scope or non-GST org — don't fail the push over tax lookup.
+    console.warn(`GST tax lookup failed, sending without line tax: ${err.message}`);
+  }
+  _taxIdCache.set(key, id);
+  return id;
+}
+// Default tax for item create — a single GST tax (Books auto-bifurcates an
+// item's default tax by place of supply on transactions). 110802 fix.
+const getDefaultTaxId = (catalyst) => getGstTaxId(catalyst, 18, { interState: true });
+
+// GST state code = first two digits of the GSTIN. Used to tell inter- from
+// intra-state so POs carry the correct GST (see createPurchaseOrder).
+const _orgStateCache = new Map(); // orgId -> stateCode | null
+async function getOrgGstStateCode(catalyst) {
+  const orgId = await getOrgId(catalyst);
+  if (_orgStateCache.has(orgId)) return _orgStateCache.get(orgId);
+  let code = null;
+  try {
+    const data = await apiRequest(catalyst, "GET", `/organizations/${orgId}`);
+    const gstin = (data.organization && (data.organization.gst_no || data.organization.gstin)) || "";
+    code = gstin ? String(gstin).slice(0, 2) : null;
+  } catch (err) {
+    console.warn(`Org GST state lookup failed: ${err.message}`);
+  }
+  _orgStateCache.set(orgId, code);
+  return code;
+}
+async function getContactGstStateCode(catalyst, contactId) {
+  try {
+    const data = await apiRequest(catalyst, "GET", `/contacts/${contactId}`);
+    const gstin = (data.contact && data.contact.gst_no) || "";
+    return gstin ? String(gstin).slice(0, 2) : null;
+  } catch (err) {
+    console.warn(`Contact GST state lookup failed: ${err.message}`);
+    return null;
+  }
+}
+
 // Item custom-field metadata per org: which api_names exist at all, plus
 // api_name -> [option label] for dropdown fields.
 const _itemCfOptionsCache = new Map(); // orgId -> { apiNames: Set, options: Map(api_name -> string[]) }
@@ -128,6 +205,9 @@ const buildItemCfs = (catalyst, customFields) =>
 async function createItem(catalyst, name, sku, description, customFields) {
   const inventoryAccountId = await getFinishedGoodsAccountId(catalyst);
   const cfs = await buildItemCfs(catalyst, customFields);
+  // Default tax so India-GST orgs get a line-level tax on every transaction built
+  // from this item (null on non-GST orgs → field omitted). See getGstTaxId.
+  const taxId = await getDefaultTaxId(catalyst);
   const data = await apiRequest(catalyst, "POST", "/items", {
     name,
     sku,
@@ -137,6 +217,7 @@ async function createItem(catalyst, name, sku, description, customFields) {
     product_type: "goods",
     unit: "pcs",
     is_taxable: true,
+    tax_id: taxId || undefined,
     track_serial_number: true,
     inventory_valuation_method: "fifo",
     inventory_account_id: inventoryAccountId || undefined,
@@ -242,9 +323,12 @@ async function getSalesOrder(catalyst, soId) {
   return data.salesorder;
 }
 
+// The 50 most recent SOs (optionally number-searched). Confirmed-only gating is
+// done by the caller on the status field — Zoho's salesorders filter_by enum
+// silently matches nothing for Status.Confirmed, so it can't be used here.
 async function listSalesOrders(catalyst, q) {
-  const filter = q ? `&salesorder_number_contains=${encodeURIComponent(q)}` : "";
-  const data = await apiRequest(catalyst, "GET", `/salesorders?per_page=50&sort_column=date&sort_order=D${filter}`);
+  const search = q ? `&salesorder_number_contains=${encodeURIComponent(q)}` : "";
+  const data = await apiRequest(catalyst, "GET", `/salesorders?per_page=50&sort_column=date&sort_order=D${search}`);
   return data.salesorders || [];
 }
 
@@ -300,6 +384,17 @@ async function listVendors(catalyst) {
  * lines: [{ rmItemId, qty, rate?, description? }]
  */
 async function createPurchaseOrder(catalyst, { vendorId, date, referenceNumber, warehouseId, lines, notes }) {
+  // India GST edition rejects a line without its own tax (110802); the header tax
+  // does not back-fill lines. It also rejects the wrong GST direction — IGST on an
+  // intrastate PO (3032) or CGST+SGST on an interstate one (3033) — so pick by the
+  // vendor's state vs the org's. Unknown (missing GSTIN) → intra, the common
+  // local-vendor case and the reported failure.
+  const [orgState, vendorState] = await Promise.all([
+    getOrgGstStateCode(catalyst),
+    getContactGstStateCode(catalyst, vendorId),
+  ]);
+  const interState = !!(orgState && vendorState && orgState !== vendorState);
+  const taxId = await getGstTaxId(catalyst, 18, { interState });
   const data = await apiRequest(catalyst, "POST", "/purchaseorders", {
     vendor_id: String(vendorId),
     date,
@@ -320,6 +415,7 @@ async function createPurchaseOrder(catalyst, { vendorId, date, referenceNumber, 
       rate: l.rate === undefined || l.rate === null ? undefined : Number(l.rate),
       description: l.description || undefined,
       location_id: warehouseId ? String(warehouseId) : undefined,
+      tax_id: taxId || undefined,
     })),
   });
   return data.purchaseorder;
@@ -375,4 +471,23 @@ module.exports = {
   updatePurchaseOrder,
   deletePurchaseOrder,
   setPurchaseOrderStatus,
+  pickGstTax,
 };
+
+// ponytail self-check: `node functions/skuapi/zoho/booksApi.js --selftest`
+if (require.main === module && process.argv.includes("--selftest")) {
+  const assert = require("assert");
+  const taxes = [
+    { tax_id: "1", tax_name: "IGST18", tax_type: "tax", tax_percentage: 18 },
+    { tax_id: "2", tax_name: "GST18", tax_type: "tax_group", tax_percentage: 18 },
+  ];
+  // Intra-state → the CGST+SGST group (fixes IGST-on-intrastate, code 3032).
+  assert.strictEqual(pickGstTax(taxes, false).tax_id, "2");
+  // Inter-state → the single IGST tax.
+  assert.strictEqual(pickGstTax(taxes, true).tax_id, "1");
+  // Only IGST configured → intra still returns something (never null when a rate
+  // matches) so the line always carries a tax (avoids 110802).
+  assert.strictEqual(pickGstTax([taxes[0]], false).tax_id, "1");
+  assert.strictEqual(pickGstTax([], false), null);
+  console.log("zoho/booksApi.js self-check passed");
+}

@@ -123,21 +123,46 @@ function collapseLines(lines) {
  * the shortfall of every open WO, each tagged with `woId` / `woNumber` /
  * `salesOrderNumber`; draft-PR coverage is expected to be applied by the caller
  * (via applyDraftCoverage) before grouping. Zero-qty lines are dropped.
+ *
+ * `orderedLines` (CR-048) are already-requested/ordered PR lines pre-shaped by
+ * the caller with `status` + `poNumber`; they join the same per-item buckets so
+ * raised lines stay visible (with their PO) instead of silently vanishing.
+ * `totalQty` stays pending-only; ordered qty accumulates in `orderedQty`.
  */
-function shortfallByItem(lines) {
+function shortfallByItem(lines, orderedLines = []) {
   const byItem = new Map();
+  const bucket = (rmItemId, rmName) => {
+    const key = String(rmItemId);
+    let cur = byItem.get(key);
+    if (!cur) { cur = { rmItemId: key, rmName: rmName || "", totalQty: 0, orderedQty: 0, breakdown: [] }; byItem.set(key, cur); }
+    return cur;
+  };
   for (const l of lines || []) {
     const qty = n(l.purchaseQty);
     if (qty <= 0) continue;
-    const key = String(l.rmItemId);
-    let cur = byItem.get(key);
-    if (!cur) { cur = { rmItemId: key, rmName: l.rmName || "", totalQty: 0, breakdown: [] }; byItem.set(key, cur); }
+    const cur = bucket(l.rmItemId, l.rmName);
     cur.totalQty += qty;
     cur.breakdown.push({
       workOrderId: l.woId ? String(l.woId) : "",
       woNumber: l.woNumber || "",
       salesOrderNumber: l.salesOrderNumber || "",
       qty,
+      status: "Pending",
+      poNumber: "",
+    });
+  }
+  for (const l of orderedLines || []) {
+    const qty = n(l.qty);
+    if (qty <= 0) continue;
+    const cur = bucket(l.rmItemId, l.rmName);
+    cur.orderedQty += qty;
+    cur.breakdown.push({
+      workOrderId: l.workOrderId ? String(l.workOrderId) : "",
+      woNumber: l.woNumber || "",
+      salesOrderNumber: l.salesOrderNumber || "",
+      qty,
+      status: l.status || "Requested",
+      poNumber: l.poNumber || "",
     });
   }
   return [...byItem.values()];
@@ -422,6 +447,9 @@ function poPutBody(po, kept) {
       rate: li.rate,
       description: li.description || undefined,
       location_id: li.location_id ? String(li.location_id) : undefined,
+      // Books PUT clears any line field not echoed; a GST line without tax_id fails
+      // with 110802, so carry the fetched line's tax through the edit.
+      tax_id: li.tax_id ? String(li.tax_id) : undefined,
     });
   }
   const removedItemIds = new Set([...allItemIds].filter((id) => !keptItemIds.has(id)));
@@ -937,6 +965,26 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(bolt.totalQty, 40, "15 + 25 summed across WOs");
   assert.strictEqual(bolt.breakdown.length, 2, "both WOs kept in the breakdown");
   assert.strictEqual(bolt.breakdown[1].woNumber, "WO-0007");
+  assert.strictEqual(bolt.breakdown[0].status, "Pending", "shortfall lines are pending");
+
+  // Ordered lines join the same buckets (CR-048): raised lines stay visible,
+  // totalQty stays pending-only, fully-ordered items survive with totalQty 0.
+  const mixed = shortfallByItem(
+    [{ rmItemId: "11", rmName: "Bolt", purchaseQty: 15, woId: "W6", woNumber: "WO-0006" }],
+    [
+      { rmItemId: "11", rmName: "Bolt", qty: 25, workOrderId: "W7", woNumber: "WO-0007", status: "PORaised", poNumber: "PO-00042" },
+      { rmItemId: "44", rmName: "Flange", qty: 6, workOrderId: "W7", woNumber: "WO-0007", status: "Fulfilled", poNumber: "PO-00040" },
+    ],
+  );
+  assert.strictEqual(mixed.length, 2, "ordered-only item still gets a row");
+  const mixedBolt = mixed.find((i) => i.rmItemId === "11");
+  assert.strictEqual(mixedBolt.totalQty, 15, "totalQty counts pending only");
+  assert.strictEqual(mixedBolt.orderedQty, 25, "ordered qty accumulated separately");
+  assert.strictEqual(mixedBolt.breakdown.length, 2, "pending + ordered in one breakdown");
+  assert.strictEqual(mixedBolt.breakdown[1].poNumber, "PO-00042");
+  const flange = mixed.find((i) => i.rmItemId === "44");
+  assert.strictEqual(flange.totalQty, 0, "fully ordered → nothing to raise");
+  assert.strictEqual(flange.breakdown[0].status, "Fulfilled");
 
   // Procurement status (CR-023): each state from a WO's PR lines.
   assert.strictEqual(procurementStatus([]), null, "nothing requested → no chip");

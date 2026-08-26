@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>MSUN Techno-Commercial Sales Order PDF Generator</title>
+    <script src="https://js.zohostatic.com/zohofinance/v1/zf_sdk.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+        crossorigin="anonymous"></script>
+
+    <style id="printStyles" media="all" type="text/css">
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+        /* Loader Styles */
+        .loader-wrapper {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: white;
+            z-index: 9999;
+            display: grid;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .loader {
+            width: 100px;
+            height: 15px;
+            -webkit-mask: radial-gradient(circle closest-side, #000 94%, #0000) left/20% 100%;
+            background: linear-gradient(#0F7576 0 0) left/0% 100% no-repeat #ddd;
+            animation: l17 2s infinite steps(6, start);
+        }
+
+        @keyframes l17 {
+            100% { background-size: 120% 100% }
+        }
+
+        /* Document Layout & Typography */
+        * { 
+            box-sizing: border-box; 
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+        
+       body { 
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
+            font-size: 9.5px; 
+            color: #222222; 
+            background: #ffffff; 
+            margin: 0; 
+            padding: 0; 
+            -webkit-font-smoothing: antialiased;
+        }
+        
+        #pdfContent {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-size: 9.5px;
+            padding: 16px 16px 80px 16px !important;
+            margin: 0 !important;
+            background-color: #ffffff;
+            max-width: 100% !important;
+            width: 100% !important;
+            color: #222222;
+            position: relative;
+        }
+
+        /* Fixed Non-Scrollable Footer Bar */
+        .sticky-footer-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            background-color: #ffffff;
+            border-top: 1px solid #D8E5E4;
+            padding: 12px 24px;
+            z-index: 9998;
+            box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.05);
+        }
+
+        .document-box { background: #ffffff; width: 100%; }
+        
+        /* Header Box Section with Left Teal Accent Bar */
+        .company-header-box {
+            background-color: #EAF2F1 !important;
+            border-left: 6px solid #0F7576;
+            border-radius: 8px;
+            padding: 14px 18px;
+            margin-bottom: 20px;
+            page-break-inside: avoid;
+        }
+
+        .company-header-table { width: 100%; border-collapse: collapse; }
+        .brand-m { color: #0F7576; font-size: 26px; font-weight: 900; line-height: 1; letter-spacing: -0.5px; }
+        .brand-sun { color: #E8741E; font-size: 26px; font-weight: 900; line-height: 1; letter-spacing: -0.5px; }
+        .company-subbrand { font-size: 10px; font-weight: 800; color: #0F7576; margin-top: 2px; letter-spacing: 0.8px; }
+        .company-tagline { font-size: 8.5px; font-weight: 500; color: #666666; margin-top: 8px; }
+
+        .header-logo-cell { width: 45%; vertical-align: top; }
+        .header-details-cell { width: 55%; vertical-align: top; }
+        .company-address-block {
+            font-size: 8.9px;
+            font-weight: 400;
+            color: #444444;
+            line-height: 1.45;
+            text-align: right;
+        }
+        .company-address-block strong { color: #111111; font-weight: 700; }
+
+        /* Document Title Section */
+        .title-meta-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 18px;
+            page-break-inside: avoid;
+        }
+
+        .doc-title-main { 
+            font-size: 24px; 
+            font-weight: 800; 
+            color: #0F7576; 
+            letter-spacing: 0.8px;
+            line-height: 1; 
+            margin-bottom: 4px;
+        }
+        .doc-subtitle { 
+            font-size: 9px; 
+            font-weight: 600; 
+            color: #7C8B8A; 
+            text-transform: uppercase; 
+            letter-spacing: 1.4px;
+        }
+
+        /* Top Right Offer Box */
+        .offer-table-card {
+            border: 1px solid #D8E5E4;
+            border-radius: 8px;
+            overflow: hidden;
+            border-collapse: separate;
+            border-spacing: 0;
+            width: 250px;
+            margin-left: auto;
+        }
+        .offer-table-card td {
+            padding: 6px 12px;
+            font-size: 9px;
+            border-bottom: 1px solid #D8E5E4;
+        }
+        .offer-table-card tr:last-child td {
+            border-bottom: none;
+        }
+        .offer-label {
+            background-color: #EFF5F4 !important;
+            color: #555555;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+            width: 42%;
+            border-right: 1px solid #D8E5E4;
+        }
+        .offer-val {
+            background-color: #ffffff;
+            color: #111111;
+            font-weight: 700;
+            text-align: right;
+            width: 58%;
+        }
+
+        /* Side-by-side Cards Layout */
+        .cards-container-table {
+            display: flex;
+            align-items: stretch;
+            gap: 8px;
+            width: 100%;
+            margin-bottom: 16px;
+            page-break-inside: avoid;
+        }
+
+        .card-wrapper {
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 0;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #ffffff;
+        }
+
+        .card-header-bar-light {
+            background-color: #EFF5F4 !important;
+            color: #0F7576;
+            font-size: 9.5px;
+            font-weight: 700;
+            padding: 7px 12px;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            border: 1px solid #D8E5E4;
+            border-bottom: none;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+        }
+
+        .card-body-content {
+            flex: 1;
+            padding: 12px;
+            font-size: 9.2px;
+            font-weight: 400;
+            line-height: 1.55;
+            color: #333333;
+            border: 1px solid #D8E5E4;
+            border-top: none;
+            border-bottom-left-radius: 8px;
+            border-bottom-right-radius: 8px;
+        }
+        .card-body-content strong {
+            font-weight: 700;
+            color: #111111;
+        }
+
+        /* Item Table Wrapper */
+		.card-box-table {
+            margin-bottom: 12px;
+            background: #ffffff;
+        }
+
+        .item-table td {
+            box-decoration-break: clone;
+            -webkit-box-decoration-break: clone;
+        }
+
+        .item-table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            table-layout: fixed;
+        }
+        
+        .item-table thead {
+            display: table-header-group;
+        }
+
+        .item-table tr {
+            page-break-inside: auto !important;
+        }
+
+        .item-table th { 
+            background-color: #0F7576 !important; 
+            color: #ffffff !important; 
+            font-weight: 700; 
+            padding: 8px; 
+            border: none; 
+            font-size: 9px; 
+            text-align: left; 
+            text-transform: uppercase; 
+            letter-spacing: 0.8px;
+        }
+        .item-table th.text-center { text-align: center; }
+        .item-table th.text-right { text-align: right; }
+        .item-table th { border-top-left-radius: 0; }
+        .item-table th:first-child { border-top-left-radius: 8px; }
+        .item-table th:last-child { border-top-right-radius: 8px; }
+        .item-table td:first-child {
+            border-top-left-radius: 8px;
+            border-bottom-left-radius: 8px;
+        }
+        .item-table td:last-child {
+            border-top-right-radius: 8px;
+            border-bottom-right-radius: 8px;
+        }
+
+        .item-table td { 
+            border-left: 1px solid #D8E5E4;
+            border-right: 1px solid #D8E5E4;
+            border-top: none;
+            border-bottom: none;
+            padding: 6px 8px; 
+            font-size: 9px; 
+            font-weight: 400; 
+            vertical-align: top; 
+            color: #222222; 
+        }
+        
+        .item-table tr.item-row td {
+            border-top: 1px solid #D8E5E4;
+            padding-top: 8px;
+            padding-bottom: 4px;
+        }
+
+        .item-table tr.desc-line-row td {
+            padding-top: 1px;
+            padding-bottom: 1px;
+        }
+
+		.item-table tr.last-row td {
+            border-bottom: 1px solid #D8E5E4 !important;
+            padding-bottom: 8px;
+        }
+
+        .col-sr { width: 5%; text-align: center; }
+        .col-desc { width: auto; word-wrap: break-word; }
+        .col-size { width: 10%; text-align: center; }
+        .col-qty { width: 7%; text-align: center; }
+        .col-price { width: 13%; text-align: right; }
+        .col-discount { width: 12%; text-align: right; }
+        .col-amount { width: 15%; text-align: right; }
+
+        .text-center { text-align: center; }
+        .text-right { text-align: right; }
+
+        .desc-text-line {
+            color: #666666;
+            font-size: 8.5px;
+            font-weight: 400;
+            line-height: 1.4;
+            display: block;
+        }
+        
+        /* Totals Block */
+        .totals-card {
+            border: 1px solid #D8E5E4;
+            border-radius: 8px;
+            overflow: hidden;
+            width: 46%;
+            margin-left: auto;
+            margin-bottom: 20px;
+            background: #ffffff;
+            page-break-inside: avoid;
+        }
+        .totals-table { width: 100%; border-collapse: collapse; }
+        .totals-table td { padding: 8px 12px; font-size: 9px; border-bottom: 1px solid #D8E5E4; }
+        .totals-label-cell { 
+            background-color: #EFF5F4 !important; 
+            color: #555555; 
+            font-weight: 600; 
+            text-align: left; 
+            width: 67.39%; 
+            border-right: 1px solid #D8E5E4; 
+        }
+        .totals-val-cell { 
+            background-color: #ffffff; 
+            color: #111111; 
+            font-weight: 700; 
+            text-align: right; 
+            width: 32.61%; 
+        }
+        .totals-grand-row td { 
+            background-color: #0F7576 !important; 
+            color: #ffffff !important; 
+            border: none !important; 
+            padding: 10px 12px;
+        }
+        .totals-grand-row .totals-label-cell { 
+            background-color: #0F7576 !important; 
+            color: #ffffff !important; 
+            font-weight: 700; 
+            font-size: 10px; 
+            border-right: none; 
+        }
+        .totals-grand-row .totals-val-cell { 
+            background-color: #0F7576 !important; 
+            color: #ffffff !important; 
+            font-weight: 800; 
+            font-size: 10px; 
+            text-align: right; 
+        }
+
+        /* Unboxed Section Titles */
+        .section-title-plain {
+            color: #0F7576;
+            font-size: 10px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            margin-top: 22px;
+            margin-bottom: 8px;
+            page-break-after: avoid;
+        }
+
+        /* Terms & Conditions Card */
+        .terms-card-box {
+            border: 1px solid #D8E5E4;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 20px;
+            background: #ffffff;
+            page-break-inside: avoid;
+        }
+        .terms-table-exact { width: 100%; border-collapse: collapse; }
+        .terms-table-exact td { 
+            padding: 8px 12px; 
+            font-size: 9px; 
+            vertical-align: top; 
+            border-bottom: 1px solid #D8E5E4; 
+            line-height: 1.45; 
+        }
+        .terms-table-exact tr:last-child td { border-bottom: none; }
+        .terms-exact-label { 
+            background-color: #EFF5F4 !important; 
+            color: #555555; 
+            font-weight: 700; 
+            width: 22%; 
+            border-right: 1px solid #D8E5E4; 
+            white-space: nowrap; 
+        }
+        .terms-exact-val { 
+            background-color: #ffffff; 
+            color: #222222; 
+            font-weight: 400; 
+        }
+
+        /* Customer Notes & Terms & Conditions */
+        .notes-block {
+            margin-bottom: 16px;
+            page-break-inside: avoid;
+        }
+        .notes-label {
+            color: #0F7576;
+            font-size: 10px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            margin-bottom: 8px;
+        }
+        .notes-box {
+            padding: 10px 0;
+            font-size: 9px;
+            font-weight: 400;
+            line-height: 1.5;
+            color: #333333;
+            background: #ffffff;
+            min-height: 20px;
+        }
+        /* Bank Details Card */
+        .bank-card-box {
+            border: 1px solid #D8E5E4;
+            border-radius: 8px;
+            padding: 4px 12px;
+            margin-bottom: 30px;
+            background: #ffffff;
+            page-break-inside: avoid;
+        }
+        .bank-table-exact { width: 100%; border-collapse: collapse; }
+        .bank-table-exact td { 
+            padding: 8px 6px; 
+            font-size: 9px; 
+            vertical-align: middle; 
+            border-bottom: 1px dotted #D8E5E4; 
+        }
+        .bank-table-exact tr:last-child td { border-bottom: none; }
+        .bank-lbl { color: #666666; font-weight: 500; width: 18%; }
+        .bank-val { color: #111111; font-weight: 700; width: 32%; }
+
+        /* Signatures Exact */
+        .signature-exact-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 40px 0;
+            margin-top: 30px;
+            margin-bottom: 25px;
+            page-break-inside: avoid;
+        }
+        .sig-col {
+            width: 50%;
+            vertical-align: top;
+            text-align: center;
+        }
+        .sig-line {
+            border-top: 2px solid #111111;
+            margin-bottom: 8px;
+        }
+        .sig-title {
+            font-size: 9.5px;
+            font-weight: 800;
+            color: #111111;
+        }
+        .sig-sub {
+            font-size: 8.5px;
+            color: #666666;
+            font-weight: 500;
+            margin-top: 2px;
+        }
+
+        /* Expanded A4 Page Bottom Margin to reserve a completely safe footer zone */
+        @page {
+            size: A4;
+            margin: 10mm 10mm 10mm 10mm;
+        }
+
+        /* Repeating Page Footer for Print/PDF */
+        .repeat-page-footer {
+            display: none;
+        }
+
+        @media print {
+            @page {
+                size: A4;
+                margin: 10mm 10mm 10mm 10mm;
+            }
+
+            body { 
+                background: #ffffff; 
+                padding: 0; 
+            }
+            
+            .App-footer, .loader-wrapper, .sticky-footer-bar { 
+                display: none !important; 
+            }
+            
+            #pdfContent { 
+                padding: 0 !important; 
+                max-width: 100%; 
+            }
+
+            .card-wrapper {
+                overflow: visible !important;
+            }
+
+            /* Reserves blank space at table bottom so content doesn't overlap footer */
+            .pdf-page-table tfoot tr td {
+                height: 35px;
+            }
+
+            /* Fixed position anchors footer to physical page bottom on ALL pages */
+            .repeat-page-footer {
+                display: block !important;
+                position: fixed !important;
+                bottom: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                width: 100% !important;
+                background-color: #ffffff !important;
+                padding-top: 6px;
+                padding-bottom: 4px;
+                border-top: 1px solid #0F7576;
+                font-family: 'Inter', sans-serif;
+                z-index: 9999;
+            }
+
+            .page-fill-spacer {
+                display: none !important;
+            }
+
+            .repeat-footer-table {
+                width: 100%;
+                border-collapse: collapse;
+            }
+            
+            .repeat-footer-company {
+                color: #0F7576;
+                font-size: 8px;
+                font-weight: 800;
+                letter-spacing: 0.5px;
+                text-transform: uppercase;
+                text-align: left;
+                width: 32%;
+                vertical-align: middle;
+            }
+            
+            .repeat-footer-cert {
+                color: #555555;
+                font-size: 7.5px;
+                font-weight: 500;
+                letter-spacing: 0.2px;
+                text-align: center;
+                width: 44%;
+                vertical-align: middle;
+            }
+            
+            .repeat-footer-web {
+                color: #0F7576;
+                font-size: 7.5px;
+                font-weight: 700;
+                letter-spacing: 0.4px;
+                text-align: right;
+                width: 24%;
+                vertical-align: middle;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <iframe id="ifPrintDetail" name="ifPrintDetail" style="display:none;"></iframe>
+    
+    <div id="loaderWrapper" class="loader-wrapper">
+        <div class="loader"></div>
+    </div>
+
+    <div id="pdfContent" style="display: none"></div>
+
+    <script>
+        let ApiRootEndpoint = "";
+        let OrganizationId = "";
+        let ConnectionName = "zb_msun";
+        let ModuleName = "salesorder";
+        let ModuleId = "";
+        let objModule = {};
+        let OrganizationModule = {};
+        let contactModule = {};
+
+        const eZFModuleForDetail = {
+            organizations: { modulename: "organizations" },
+            salesorders: { modulename: "salesorders" },
+            contacts: { modulename: "contacts" }
+        };
+
+        function showLoader() {
+            document.getElementById("loaderWrapper").style.display = "grid";
+        }
+
+        function hideLoader() {
+            document.getElementById("loaderWrapper").style.display = "none";
+        }
+
+        window.onload = async function () {
+            showLoader();
+            if (window.ZFAPPS) {
+                try {
+                    await window.ZFAPPS.extension.init();
+                    window.ZFAPPS.invoke("RESIZE", {
+                        height: "630px",
+                        width: "1000px",
+                    });
+
+                    if (ModuleName) {
+                        const [organizationData] = await Promise.all([
+                            ZFAPPS.get("organization"),
+                        ]);
+
+                        if (organizationData && organizationData.organization) {
+                            ApiRootEndpoint = organizationData.organization.api_root_endpoint || "https://www.zohoapis.com";
+                            OrganizationId = organizationData.organization.organization_id;
+                            OrganizationModule = organizationData.organization;
+
+                           const resultOrgData = await GetOrganizationDetail(OrganizationId);
+                            if (resultOrgData.success) {
+                                OrganizationModule = resultOrgData.data;
+                                console.log("SO widget — Org fetch OK -> logo_url:", OrganizationModule.logo_url, "| name:", OrganizationModule.name);
+                            } else {
+                                console.error("SO widget — Organization fetch failed:", resultOrgData.error);
+                            }
+
+                            const [ModuleData] = await Promise.all([
+                                ZFAPPS.get(ModuleName),
+                            ]);
+
+                            if (ModuleData && ModuleData.salesorder) {
+                                ModuleId = ModuleData.salesorder.salesorder_id || ModuleData.salesorder.entity_id;
+                            }
+
+                            if (ModuleId) {
+                                const resultModuleData = await GetDetail(eZFModuleForDetail.salesorders.modulename, ModuleId);
+                                if (resultModuleData.success) {
+                                    objModule = resultModuleData.data;
+                                    
+                                    if (objModule.customer_id) {
+                                        const resultContactData = await GetDetail(eZFModuleForDetail.contacts.modulename, objModule.customer_id);
+                                        if (resultContactData.success) {
+                                            contactModule = resultContactData.data;
+                                        }
+                                    }
+                                } else {
+                                    objModule = ModuleData.salesorder;
+                                }
+
+                                await generatePDF(objModule);
+                            } else {
+                                alert(ModuleName + " Record ID Not Found.");
+                            }
+                        } else {
+                            alert("Organization Data Not Found.");
+                        }
+                    }
+                } catch (error) {
+                    console.error("Error initializing widget:", error);
+                    alert("Widget init error: " + (error && error.message ? error.message : error));
+                }
+                hideLoader();
+            }
+        };
+
+        async function GetDetail(moduleName, id) {
+            try {
+                let endpoint = `${getApiOrigin()}/books/v3/${moduleName}/${id}?organization_id=${OrganizationId}`;
+                let res = await window.ZFAPPS.request({
+                    url: endpoint,
+                    method: "GET",
+                    connection_link_name: ConnectionName
+                });
+                
+                let body = typeof res.data.body === "string" ? JSON.parse(res.data.body) : res.data.body;
+                let key = moduleName.slice(0, -1);
+                if (moduleName === "contacts") key = "contact";
+                if (moduleName === "salesorders") key = "salesorder";
+
+                if (body && (body[key] || body.code === 0)) {
+                    return { success: true, data: body[key] || body };
+                }
+                return { success: false, error: body.message || "Failed to fetch data" };
+            } catch (err) {
+                return { success: false, error: err.message || err };
+            }
+        }
+
+        // Fallback text logo markup — used both when no logo is uploaded and when a
+        // logo_url is present but fails to load (e.g. broken/expired link in print).
+        const FALLBACK_LOGO_HTML = '<div><span class="brand-m">M</span><span class="brand-sun">SUN</span></div>';
+
+        // Called from the <img onerror> handler — kept as a real global function
+        // rather than inlining FALLBACK_LOGO_HTML's own double-quoted HTML into the
+        // onerror="..." attribute string, which breaks HTML parsing (the nested
+        // double quotes close the attribute early and dump the remainder as text).
+        function useFallbackLogo(imgEl) {
+            if (imgEl && imgEl.parentNode) {
+                imgEl.parentNode.innerHTML = FALLBACK_LOGO_HTML;
+            }
+        }
+
+        function getApiOrigin() {
+            try {
+                return new URL(ApiRootEndpoint).origin;
+            } catch (e) {
+                return ApiRootEndpoint;
+            }
+        }
+
+        // Fetches the organization record directly by ID. Returns logo_url plus
+        // tax_settings.tax_reg_no (default org GSTIN), neither of which is present
+        // on the ZFAPPS.get("organization") payload.
+        async function GetOrganizationDetail(id) {
+            try {
+                let endpoint = `${getApiOrigin()}/books/v3/organizations/${id}?organization_id=${id}`;
+                let res = await window.ZFAPPS.request({
+                    url: endpoint,
+                    method: "GET",
+                    connection_link_name: ConnectionName
+                });
+                let body = typeof res.data.body === "string" ? JSON.parse(res.data.body) : res.data.body;
+                if (body && body.organization) {
+                    return { success: true, data: body.organization };
+                }
+                return { success: false, error: (body && body.message) || "Failed to fetch organization detail" };
+            } catch (err) {
+                return { success: false, error: err.message || err };
+            }
+        }
+
+        // Fetches the org's locations/branches list and returns the one matching the
+        // SO's selected Location field (inv.location_id / inv.branch_id), since each
+        // location can have its own address, phone, email and GSTIN distinct from the
+        // organization's default. Returns success:false when no location is attached,
+        // so callers fall back to the org-level details.
+        async function GetLocationDetail(locationId) {
+            if (!locationId) return { success: false, error: "No location_id on record" };
+            try {
+                let endpoint = `${getApiOrigin()}/books/v3/locations?is_hierarchical_response=true&organization_id=${OrganizationId}`;
+                let res = await window.ZFAPPS.request({
+                    url: endpoint,
+                    method: "GET",
+                    connection_link_name: ConnectionName
+                });
+                let body = typeof res.data.body === "string" ? JSON.parse(res.data.body) : res.data.body;
+
+                var locations = (body && (body.locations || body.location_list)) || [];
+                var match = locations.find(function(l) {
+                    return String(l.location_id) === String(locationId);
+                });
+                if (match) return { success: true, data: match };
+                return { success: false, error: "Location ID not found in list" };
+            } catch (err) {
+                return { success: false, error: err.message || err };
+            }
+        }
+
+        function getOrganizationDetails(inv, locationData) {
+            inv = inv || {};
+            var org = OrganizationModule || {};
+            var loc = locationData || {};
+
+            var name = org.name || org.organization_name || org.company_name || "MSUN VALVE PRIVATE LIMITED";
+
+            var addrObj = (loc.address && typeof loc.address === 'object') ? loc.address :
+                          ((org.address && typeof org.address === 'object') ? org.address : {});
+            var street1 = addrObj.street_address1 || loc.street_address1 || org.street_address1 || "";
+            var street2 = addrObj.street_address2 || loc.street_address2 || org.street_address2 || "";
+            var city = addrObj.city || loc.city || org.city || "";
+            var state = addrObj.state || loc.state || org.state || "";
+            var zip = addrObj.zip || loc.zip || org.zip || "";
+            var country = addrObj.country || loc.country || org.country || "";
+
+            var cityStateZip = [city, state].filter(Boolean).join(", ");
+            if (zip) cityStateZip = cityStateZip ? (cityStateZip + " \u2013 " + zip) : zip;
+            var addressLines = [street1, street2, cityStateZip, country].filter(Boolean);
+
+            var addressHTML = street1
+                ? addressLines.join("<br>")
+                : "Plot No. B-10, Swastik Industrial Park, Kothiya Kunha Road,<br>Kunha Patiya, Ta-Daskroi, Ahmedabad \u2013 382433, Gujarat, India";
+
+            var phone = loc.phone || org.phone || org.mobile || addrObj.phone || "+91 95125 06161";
+            var email = loc.email || org.email || org.org_email || "sales@msunvalve.com";
+            var gstin = loc.gst_no || loc.gst_reg_no || inv.gst_no || inv.company_gst_no || (org.tax_settings && org.tax_settings.tax_reg_no) || "24AAQCM4066R1ZN";
+            var pan = inv.pan_no || inv.company_pan_no || org.pan_no || "AAQCM4066R";
+
+            // Logo is org-level only in Zoho Books (locations don't carry their own
+            // logo), so it always comes from OrganizationModule regardless of branch.
+            var logoUrl = (org.logo_url && org.logo_url.trim() !== "") ? org.logo_url : "";
+
+            return { name: name, addressHTML: addressHTML, phone: phone, email: email, gstin: gstin, pan: pan, logoUrl: logoUrl };
+        }
+
+        function GetCFValue(customFields, key, fallback) {
+            fallback = fallback !== undefined ? fallback : "";
+            if (!customFields) return fallback;
+            if (!Array.isArray(customFields)) {
+                return customFields[key] !== undefined && customFields[key] !== null ? customFields[key] : fallback;
+            }
+            var cf = customFields.find(function (c) {
+                return c.api_name === key || c.label === key || c.placeholder === key;
+            });
+            return cf && cf.value !== undefined && cf.value !== null && cf.value !== "" ? cf.value : fallback;
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return '';
+            var parts = dateStr.split(/[-/.]/);
+            if (parts.length === 3 && parts[0].length === 4) {
+                return parts[2].padStart(2, '0') + '-' + parts[1].padStart(2, '0') + '-' + parts[0];
+            }
+            return dateStr;
+        }
+
+        function formatAmount(val) {
+            if (val === undefined || val === null || val === "") return "0.00";
+            var num = parseFloat(val);
+            return isNaN(num) ? "0.00" : num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function PrintData() {
+            var content = document.getElementById("pdfContent").cloneNode(true);
+            var htmlToPrint = content.innerHTML;
+            const styleTag = document.getElementById("printStyles");
+            const printStyles = styleTag ? styleTag.outerHTML : '';
+            const iframe = document.getElementById('ifPrintDetail');
+
+            const fullHTML = `
+                <html>
+                    <head>${printStyles}</head>
+                    <body>${htmlToPrint}</body>
+                </html>
+            `;
+
+            iframe.onload = () => {
+                iframe.contentWindow.focus();
+                iframe.contentWindow.print();
+            };
+            iframe.srcdoc = fullHTML;
+        }
+
+        function closeModal() {
+            if (window.ZFAPPS && window.ZFAPPS.closeModal) {
+                window.ZFAPPS.closeModal();
+            }
+        }
+
+        async function generatePDF(inv) {
+            const pdfContent = document.getElementById("pdfContent");
+            pdfContent.style.display = "block";
+
+            var locationId = inv.location_id || inv.branch_id || (inv.location && inv.location.location_id) || "";
+            var locationResult = await GetLocationDetail(locationId);
+            var orgDetails = getOrganizationDetails(inv, locationResult.success ? locationResult.data : null);
+            var logoBlockHTML = orgDetails.logoUrl
+                ? `<div style="display: flex; align-items: center; justify-content: flex-start; min-height: 60px;"><img src="${orgDetails.logoUrl}" alt="${orgDetails.name || 'Company Logo'}" style="max-height:72px; max-width:260px; object-fit:contain; display:block;" onerror="useFallbackLogo(this)"></div>`
+                : `<div style="display: flex; align-items: center; justify-content: flex-start; min-height: 60px;">${FALLBACK_LOGO_HTML}</div>`;
+            var subbrandHTML = `<div class="company-tagline">Knife Edge Gate · Butterfly · Ball & Industrial Valves</div>`;
+
+            var items = inv.line_items || inv.items || [];
+            var currency = inv.currency_code ? inv.currency_code : (inv.currency_symbol ? inv.currency_symbol : "");
+            var currencySymbol = inv.currency_symbol ? inv.currency_symbol : currency;
+
+            var hasDiscount = items.some(function(item) {
+                return item.discount !== undefined && item.discount !== null && parseFloat(item.discount) !== 0;
+            });
+
+            var getCF = function(key, fallback) {
+                if (inv[key] !== undefined && inv[key] !== null && inv[key] !== "") return inv[key];
+                return GetCFValue(inv.custom_fields, key, fallback);
+            };
+
+            var lineItemsHTML = "";
+            if (items.length > 0) {
+                var itemGroups = {};
+                items.forEach(function(item) {
+                    var itemName = item.name ? item.name : (item.item_name ? item.item_name : "Item");
+                    if (!itemGroups[itemName]) {
+                        itemGroups[itemName] = {
+                            description: item.description,
+                            subItems: []
+                        };
+                    }
+                    itemGroups[itemName].subItems.push(item);
+                });
+
+                var groupIdx = 1;
+                var totalGroups = Object.keys(itemGroups).length;
+
+                Object.keys(itemGroups).forEach(function(itemName) {
+                    var group = itemGroups[itemName];
+                    var subItems = group.subItems;
+                    var isLastGroup = (groupIdx === totalGroups);
+
+                    var descLines = [];
+                    if (group.description) {
+                        descLines = group.description.split("\n").map(l => l.trim()).filter(l => l !== "");
+                    }
+
+                    var maxRows = Math.max(1, descLines.length, subItems.length);
+
+                    for (var r = 0; r < maxRows; r++) {
+                        var isFirstRow = (r === 0);
+                        var isAbsoluteLast = isLastGroup && (r === maxRows - 1);
+                        
+                        var leftContent = "";
+                        if (isFirstRow) {
+                            leftContent = `<strong style="font-weight:700; color:#111111;">${itemName}</strong>`;
+                        } else if (descLines[r - 1]) {
+                            leftContent = `<span class="desc-text-line">${descLines[r - 1]}</span>`;
+                        }
+
+                        var subItem = subItems[r];
+                        var size = subItem && (subItem.cf_size ? subItem.cf_size : GetCFValue(subItem.item_custom_fields, "cf_size", "-")) || "";
+                        var qty = subItem ? (subItem.quantity ? subItem.quantity : "1") : "";
+                        var price = subItem ? formatAmount(subItem.rate ? subItem.rate : subItem.price) : "";
+                        var amount = subItem ? formatAmount(subItem.item_total ? subItem.item_total : (subItem.quantity * subItem.rate)) : "";
+
+                        var discountDisplay = "-";
+                        if (subItem && subItem.discount !== undefined && subItem.discount !== null && parseFloat(subItem.discount) !== 0) {
+                            if (subItem.discount_type === "entity_level" || subItem.discount_type === "percentage" || (typeof subItem.discount === "string" && subItem.discount.indexOf("%") !== -1)) {
+                                var discPct = parseFloat(subItem.discount);
+                                discountDisplay = discPct + "%";
+                            } else {
+                                discountDisplay = currency + " " + formatAmount(subItem.discount);
+                            }
+                        }
+
+                        var rowClass = (isFirstRow ? 'item-row' : 'desc-line-row') + (isAbsoluteLast ? ' last-row' : '');
+
+                        lineItemsHTML += `
+                            <tr class="${rowClass}">
+                                <td class="col-sr">${isFirstRow ? groupIdx : ''}</td>
+                                <td class="col-desc">${leftContent}</td>
+                                <td class="col-size text-center">${size}</td>
+                                <td class="col-qty text-center">${qty}</td>
+                                <td class="col-price text-right">${price}</td>
+                                ${hasDiscount ? `<td class="col-discount text-right">${subItem ? discountDisplay : ''}</td>` : ''}
+                                <td class="col-amount text-right">${amount}</td>
+                            </tr>
+                        `;
+                    }
+
+                    groupIdx++;
+                });
+				
+			}else {
+                lineItemsHTML = `
+                    <tr class="item-row last-row">
+                        <td colspan="${hasDiscount ? 7 : 6}" class="text-center">No items listed</td>
+                    </tr>
+                `;
+            }
+
+            var customerAddr = "";
+            if (inv.billing_address) {
+                var b = inv.billing_address;
+                customerAddr = [b.address, b.street2, [b.city, b.state, b.zip].filter(Boolean).join(" "), b.country].filter(Boolean).join("<br>");
+                if (b.phone) customerAddr += "<br><strong>Phone:</strong> " + b.phone;
+            } else if (inv.customer_name) {
+                customerAddr = inv.customer_name;
+            }
+            if (inv.email) {
+                customerAddr += (customerAddr ? "<br>" : "") + "<strong>Email:</strong> " + inv.email;
+            }
+
+            // Fetch GSTIN & PAN from Customer Master (contactModule) or Sales Order payload (inv)
+            var customerGstin = (contactModule && (contactModule.gst_no || contactModule.gst_reg_no || contactModule.tax_reg_no || contactModule.gstin || GetCFValue(contactModule.custom_fields, "cf_gstin", ""))) ||
+                                inv.gst_no || inv.customer_gst_no || inv.gst_reg_no || inv.tax_reg_no || "";
+
+            var customerPan = (contactModule && (contactModule.pan_no || contactModule.pan_number || contactModule.pan || GetCFValue(contactModule.custom_fields, "cf_pan", ""))) ||
+                              inv.pan_no || inv.customer_pan_no || inv.pan_number || "";
+
+            var customerTaxLines = [];
+            if (customerGstin) customerTaxLines.push("<strong>GSTIN:</strong> " + customerGstin);
+            if (customerPan) customerTaxLines.push("<strong>PAN:</strong> " + customerPan);
+            var customerTaxHTML = customerTaxLines.length > 0 ? "<br>" + customerTaxLines.join("<br>") : "";
+
+            var shippingAddr = "";
+            if (inv.shipping_address) {
+                var s = inv.shipping_address;
+                shippingAddr = [s.address, s.street2, [s.city, s.state, s.zip].filter(Boolean).join(" "), s.country].filter(Boolean).join("<br>");
+                if (s.phone) shippingAddr += "<br><strong>Phone:</strong> " + s.phone;
+            }
+
+            // Build Packing & Forwarding row if value exists (checks custom field or standard shipping_charge)
+            var rawPf = getCF('cf_packing_forwarding', '');
+            var pfVal = (rawPf && rawPf.toString().trim() !== "") 
+                ? rawPf 
+                : ((inv.shipping_charge !== undefined && inv.shipping_charge !== null && parseFloat(inv.shipping_charge) > 0)
+                    ? currency + " " + formatAmount(inv.shipping_charge)
+                    : "");
+
+            var packingForwardingRowHTML = (pfVal && pfVal.toString().trim() !== "") ? `
+                <tr>
+                    <td class="totals-label-cell">Packing & Forwarding</td>
+                    <td class="totals-val-cell">${pfVal}</td>
+                </tr>
+            ` : "";
+
+            // Build tax rows if available in salesorder record
+            var taxRowsHTML = "";
+            if (inv.taxes && Array.isArray(inv.taxes) && inv.taxes.length > 0) {
+                inv.taxes.forEach(function(tax) {
+                    taxRowsHTML += `
+                        <tr>
+                            <td class="totals-label-cell">${tax.tax_name}</td>
+                            <td class="totals-val-cell">${currency} ${formatAmount(tax.tax_amount)}</td>
+                        </tr>
+                    `;
+                });
+            }
+
+            // Adjustment row — render separately from round off when a saved value exists.
+            var adjustmentValue = inv.adjustment !== undefined ? inv.adjustment :
+                               (inv.adjustment_value !== undefined ? inv.adjustment_value :
+                               (inv.adjustment_amount !== undefined ? inv.adjustment_amount : 0));
+
+            var adjustmentRowHTML = "";
+            if (adjustmentValue !== undefined && adjustmentValue !== null && adjustmentValue !== "" && parseFloat(adjustmentValue) !== 0) {
+                var adjustmentLabel = inv.adjustment_description ? inv.adjustment_description : "Adjustment";
+                var adjustmentSign = parseFloat(adjustmentValue) < 0 ? "-" : "";
+                adjustmentRowHTML = `
+                    <tr>
+                        <td class="totals-label-cell">${adjustmentLabel}</td>
+                        <td class="totals-val-cell">${adjustmentSign}${currency} ${formatAmount(Math.abs(parseFloat(adjustmentValue)))}</td>
+                    </tr>
+                `;
+            }
+
+            // Round-off row — only render the true round-off amount, never mixed with adjustment.
+            var roundOffValue = inv.roundoff_value !== undefined ? inv.roundoff_value :
+                               (inv.round_off_value !== undefined ? inv.round_off_value :
+                               (inv.round_off !== undefined ? inv.round_off : 
+                               (inv.rounding_off !== undefined ? inv.rounding_off : 
+                               (inv.rounding_adjustment !== undefined ? inv.rounding_adjustment : null))));
+
+            var roundOffNumber = parseFloat(roundOffValue);
+            var hasExplicitRoundOff = roundOffValue !== undefined && roundOffValue !== null && roundOffValue !== "" && !isNaN(roundOffNumber);
+
+            // Fallback: derive round off from total vs (sub_total + taxes) only when
+            // there is no explicit round-off field present in the payload.
+            if (!hasExplicitRoundOff && inv.total !== undefined && inv.sub_total !== undefined) {
+                var taxTotal = 0;
+                if (inv.taxes && Array.isArray(inv.taxes)) {
+                    inv.taxes.forEach(function(t) { taxTotal += parseFloat(t.tax_amount || 0); });
+                }
+                var derived = parseFloat(inv.total) - parseFloat(inv.sub_total) - taxTotal;
+                if (Math.abs(derived) >= 0.005 && Math.abs(derived) < 1) {
+                    roundOffValue = derived;
+                    roundOffNumber = parseFloat(derived);
+                    hasExplicitRoundOff = true;
+                }
+            }
+            
+            var roundingRowHTML = "";
+            if (hasExplicitRoundOff && roundOffNumber !== 0) {
+                var roundOffSign = roundOffNumber < 0 ? "-" : "";
+                roundingRowHTML = `
+                    <tr>
+                        <td class="totals-label-cell">Round Off</td>
+                        <td class="totals-val-cell">${roundOffSign}${currency} ${formatAmount(Math.abs(roundOffNumber))}</td>
+                    </tr>
+                `;
+            }
+
+            var notesHTML = (inv.notes && inv.notes.trim() !== "") ? `
+                    <div class="notes-block">
+                        <div class="notes-label">Customer Notes</div>
+                        <div class="notes-box">${inv.notes}</div>
+                    </div>
+           ` : "";
+
+           var termsHTML = (inv.terms && inv.terms.trim() !== "") ? `
+                    <div class="notes-block">
+                        <div class="notes-label">Terms & Conditions</div>
+                        <div class="notes-box">${inv.terms}</div>
+                    </div>
+           ` : "";
+
+           pdfContent.innerHTML = `
+                    <table class="pdf-page-table" style="width:100%; border-collapse:collapse;">
+                        <colgroup><col></colgroup>
+                        <tfoot>
+                            <tr><td>
+                                <div class="repeat-page-footer">
+                                    <table class="repeat-footer-table">
+                                        <tr>
+                                            <td class="repeat-footer-company">${orgDetails.name ? orgDetails.name : 'MSUN VALVE PVT. LTD.'}</td>
+                                            <td class="repeat-footer-cert">An ISO 9001 Certified Company &nbsp;·&nbsp; IAS &nbsp;·&nbsp; IAF &nbsp;·&nbsp; D&amp;B</td>
+                                            <td class="repeat-footer-web">www.msunvalve.com</td>
+                                        </tr>
+                                    </table>
+                                </div>
+                            </td></tr>
+                        </tfoot>
+                        <tbody>
+                        <tr><td class="pdf-body-cell">
+                            <div class="document-box" id="pdfBodyContent">
+                <div class="document-body-group"><div class="document-body-row"><div class="document-body-cell">
+                    <!-- HEADER BOX WITH LEFT TEAL BAR -->
+                    <div class="company-header-box">
+                        <table class="company-header-table">
+                            <tr>
+                                <td class="header-logo-cell">
+                                    ${logoBlockHTML}
+                                    ${subbrandHTML}
+                                </td>
+                                <td class="header-details-cell">
+                                    <div class="company-address-block">
+                                        <strong>${orgDetails.name}</strong><br>
+                                        ${orgDetails.addressHTML}<br>
+                                        M: ${orgDetails.phone} ·E: ${orgDetails.email}<br>
+                                        <strong>GSTIN:</strong> ${orgDetails.gstin}<br><strong>PAN:</strong> ${orgDetails.pan}
+                                    </div>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <!-- TITLE + OFFER METADATA ROW -->
+                    <table class="title-meta-table">
+                        <tr>
+                            <td style="vertical-align: bottom;">
+                                <div class="doc-title-main">SALES ORDER</div>
+                                <div class="doc-subtitle">CONFIRMED ORDER</div>
+                            </td>
+                            <td style="vertical-align: top; text-align: right;">
+                                <table class="offer-table-card">
+                                    <tr>
+                                        <td class="offer-label">SO Number</td>
+                                        <td class="offer-val">${inv.salesorder_number ? inv.salesorder_number : ''}</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="offer-label">SO Date</td>
+                                        <td class="offer-val">${formatDate(inv.date ? inv.date : inv.date_formatted)}</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="offer-label">Shipment Date</td>
+                                        <td class="offer-val">${formatDate(inv.shipment_date ? inv.shipment_date : inv.shipment_date_formatted)}</td>
+                                    </tr>
+                                </table>
+                            </td>
+                        </tr>
+                    </table>
+
+                   <!-- THREE-PART CARDS: BILL TO, SHIP TO & ORDER REFERENCE -->
+                    <div class="cards-container-table">
+                        <div class="card-wrapper">
+                            <div class="card-header-bar-light">BILL TO</div>
+                            <div class="card-body-content">
+                                <div style="font-size: 10px; font-weight: 700; color: #111111; margin-bottom: 2px;">
+                                    ${inv.customer_name ? inv.customer_name : ''}
+                                </div>
+                                ${customerAddr}${customerTaxHTML}
+                            </div>
+                        </div>
+                        <div class="card-wrapper">
+                            <div class="card-header-bar-light">SHIP TO</div>
+                            <div class="card-body-content">
+                                <div style="font-size: 10px; font-weight: 700; color: #111111; margin-bottom: 2px;">
+                                    ${inv.shipping_address && inv.shipping_address.attention ? inv.shipping_address.attention : (inv.customer_name ? inv.customer_name : '')}
+                                </div>
+                                ${shippingAddr ? shippingAddr : customerAddr}
+                            </div>
+                        </div>
+                        <div class="card-wrapper">
+                            <div class="card-header-bar-light">ORDER REFERENCE</div>
+                            <div class="card-body-content" style="padding: 0;">
+                                <table style="width: 100%; height: 100%; border-collapse: collapse; font-size: 9.2px;">
+                                    <tr>
+                                        <td style="padding: 4px 12px; color: #555555; width: 45%; border-bottom: 1px solid #D8E5E4;">Ref</td>
+                                        <td style="padding: 4px 12px; font-weight: 700; color: #111111; text-align: right; width: 55%; border-bottom: 1px solid #D8E5E4;">${inv.reference_number ? inv.reference_number : getCF('cf_enquiry_ref', '')}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 4px 12px; color: #555555; border-bottom: 1px solid #D8E5E4;">Salesperson</td>
+                                        <td style="padding: 4px 12px; font-weight: 700; color: #111111; text-align: right; border-bottom: 1px solid #D8E5E4;">${inv.salesperson_name ? inv.salesperson_name : getCF('cf_prepared_by', '')}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 4px 12px; color: #555555; border-bottom: 1px solid #D8E5E4;">Currency</td>
+                                        <td style="padding: 4px 12px; font-weight: 700; color: #111111; text-align: right; border-bottom: 1px solid #D8E5E4;">${currency}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 4px 12px; color: #555555; border-bottom: 1px solid #D8E5E4;">Incoterms</td>
+                                        <td style="padding: 4px 12px; font-weight: 700; color: #111111; text-align: right; border-bottom: 1px solid #D8E5E4;">${getCF('cf_inco_terms', getCF('cf_incoterms', ''))}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 4px 12px; color: #555555; border-bottom: 1px solid #D8E5E4;">AD Code No</td>
+                                        <td style="padding: 4px 12px; font-weight: 700; color: #111111; text-align: right; border-bottom: 1px solid #D8E5E4;">${inv.ad_code_no ? inv.ad_code_no : getCF('cf_ad_code_no', getCF('cf_ad_code', ''))}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 4px 12px; color: #555555;">LC No</td>
+                                        <td style="padding: 4px 12px; font-weight: 700; color: #111111; text-align: right;">${inv.lc_no ? inv.lc_no : getCF('cf_lc_no', getCF('cf_lc_number', ''))}</td>
+                                    </tr>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ITEM TABLE CARD -->
+                    <div class="card-box-table">
+                        <table class="item-table">
+    <thead>
+        <tr>
+            <th class="col-sr text-center">SR.</th>
+            <th class="col-desc">DESCRIPTION OF GOODS</th>
+            <th class="col-size text-center">SIZE</th>
+            <th class="col-qty text-center">QTY</th>
+            <th class="col-price text-center">UNIT PRICE (${currency})</th>
+            ${hasDiscount ? '<th class="col-discount text-center">DISCOUNT</th>' : ''}
+            <th class="col-amount text-center">AMOUNT (${currency})</th>
+        </tr>
+    </thead>
+                            <tbody>
+                                ${lineItemsHTML}
+                            </tbody>
+                        </table>
+                    </div>
+
+                   <!-- TOTALS CARD EXACT DESIGN -->
+                    <div class="totals-card">
+                        <table class="totals-table">
+                            <tr>
+                                <td class="totals-label-cell">Sub Total</td>
+                                <td class="totals-val-cell">${currency} ${formatAmount(inv.sub_total ? inv.sub_total : 0)}</td>
+                            </tr>
+                            ${packingForwardingRowHTML}
+                            ${taxRowsHTML}
+                            ${adjustmentRowHTML}
+                            ${roundingRowHTML}
+                            <tr class="totals-grand-row">
+                                <td class="totals-label-cell">Total</td>
+                                <td class="totals-val-cell">${currency} ${formatAmount(inv.total ? inv.total : 0)}</td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <!-- CUSTOMER NOTES & TERMS & CONDITIONS -->
+                    ${notesHTML}
+                    ${termsHTML}
+
+                    <!-- BANK DETAILS SECTION (grouped) -->
+                    <div style="page-break-inside: avoid;">
+                    <div class="section-title-plain">BANK DETAILS</div>
+
+                    <!-- BANK DETAILS CARD WITH DOTTED BORDERS -->
+                    <div class="bank-card-box">
+                        <table class="bank-table-exact">
+                            <tr>
+                                <td class="bank-lbl">Account Name</td>
+                                <td class="bank-val">${getCF('cf_bank_account_name', 'MSUN VALVE PVT. LTD.')}</td>
+                                <td class="bank-lbl">Bank</td>
+                                <td class="bank-val">${getCF('cf_bank_name', 'HDFC Bank Limited')}</td>
+                            </tr>
+                            <tr>
+                                <td class="bank-lbl">Account No.</td>
+                                <td class="bank-val">${getCF('cf_bank_account_no', '50200076743945')}</td>
+                                <td class="bank-lbl">Branch</td>
+                                <td class="bank-val">${getCF('cf_bank_branch', 'Sardarnagar (A\'bad)')}</td>
+                            </tr>
+                            <tr>
+                                <td class="bank-lbl">IFSC Code</td>
+                                <td class="bank-val">${getCF('cf_ifsc_code', 'HDFC0000889')}</td>
+                                <td class="bank-lbl">Account Type</td>
+                                <td class="bank-val">${getCF('cf_account_type', 'Current')}</td>
+                            </tr>
+                        </table>
+                    </div>
+                    </div>
+					<br>
+                    <br>
+                    <!-- SIGNATURES EXACT -->
+                    <table class="signature-exact-table">
+                        <tr>
+                            <td class="sig-col">
+                                <div class="sig-line"></div>
+                                
+                                <div class="sig-title">Customer Acceptance</div>
+                                <div class="sig-sub">Signature & company stamp</div>
+                            </td>
+                            <td class="sig-col">
+                                <div class="sig-line"></div>
+                                <div class="sig-title">For ${orgDetails.name ? orgDetails.name : 'MSUN VALVE PVT. LTD.'}</div>
+                                <div class="sig-sub">Authorised Signatory</div>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <div class="page-fill-spacer" id="pdfPageFillSpacer"></div>
+                    </div>
+
+                    </div></div></div>
+                        </td></tr>
+                        </tbody>
+                    </table>
+            </div>
+            `;
+        }
+    </script>
+
+    <!-- Fixed Non-Scrollable Action Bar -->
+    <div class="sticky-footer-bar">
+        <div class="App-footer text-end m-0">
+            <button onclick="PrintData()" class="btn btn-primary btn-sm px-4 fw-bold me-2" style="background-color: #0F7576; border-color: #0F7576;">Print</button>
+            <button type="button" onclick="closeModal()" class="btn btn-light btn-sm px-4 fw-bold border">Cancel</button>
+        </div>
+    </div>
+
+</body>
+</html>

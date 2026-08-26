@@ -211,7 +211,7 @@ The BRD's BOM header — one per Work Order, linked to a confirmed Sales Order.
 | `salesOrderId` / `salesOrderNumber` | string | Zoho SO link |
 | `customerId` / `customerName` | string | Denormalised from the SO so lists cost no API |
 | `projectName` | string? | BRD's "Project \| SO \| WO" reference |
-| `status` | string | `Draft` → `Approved` → `MaterialAllocationPending` → `ReadyForProduction` → `InProgress` → `QualityCheck` → `Completed` → `Closed`; `Cancelled` terminal |
+| `status` | string | `Draft` → `PendingApproval` (only when a 2nd-level approver is configured) → `Approved` → `MaterialAllocationPending` → `ReadyForProduction` → `InProgress` → `QualityCheck` → `Completed` → `Closed`; `Cancelled` terminal. Only the approval flow reaches `Approved` (the manual status dropdown cannot) |
 | `qcStatus` | string? | `Passed` \| `Rejected` — required before `Completed` |
 | `revision` | number | Current BOM revision, starts 0 |
 | `bomImportedAt` | datetime? | Drives the shortfall alert (BOM import + `shortfallAlertDays`) |

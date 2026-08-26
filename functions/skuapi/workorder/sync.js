@@ -82,27 +82,33 @@ async function writeStock(catalyst, orgId, item, source) {
  * One org's nightly reconcile. Returns a count of everything touched so the
  * cron log shows the call cost at a glance.
  */
-async function reconcileOrg(catalyst, orgId) {
-  const { itemIds, fgItemIds } = await workingSet(catalyst, orgId);
+// full: sweep the whole catalog instead of just open work orders' items — the
+// "Sync all stock" path so a Zoho adjustment / opening stock on any item lands
+// immediately, even when the item is on no open WO. full skips the PO/composite
+// refresh (it only needs stock), so it stays a stock-only pull.
+async function reconcileOrg(catalyst, orgId, { full = false } = {}) {
+  const ws = full ? { itemIds: [], fgItemIds: [] } : await workingSet(catalyst, orgId);
   const result = { items: 0, purchaseOrders: 0, compositeItems: 0 };
-  if (!itemIds.length) return result;
+  if (!full && !ws.itemIds.length) return result;
 
   // Bulk /items sweep first (200 per call), then a per-item detail call only
   // where the bulk payload is ambiguous: Locations-enabled orgs report
   // stock_on_hand 0 there with no per-location breakdown — only the item
   // detail carries locations[]. Everything the bulk row answers costs zero
   // extra calls and zero rate-limit sleeps.
-  const wanted = new Set(itemIds.map(String));
+  const wanted = full ? null : new Set(ws.itemIds.map(String));
   let bulk = new Map();
   try {
     bulk = new Map(
       (await listItemsWithStock(catalyst))
-        .filter((i) => wanted.has(String(i.item_id)))
+        .filter((i) => !wanted || wanted.has(String(i.item_id)))
         .map((i) => [String(i.item_id), i]),
     );
   } catch (err) {
     console.error("bulk stock list failed, falling back to per-item:", err && err.message);
   }
+  const itemIds = full ? [...bulk.keys()] : ws.itemIds;
+  const fgItemIds = ws.fgItemIds;
   for (const itemId of itemIds) {
     const b = bulk.get(String(itemId));
     const trustworthy = b && (n(b.stock_on_hand) > 0 || (b.warehouses || []).length || (b.locations || []).length);
@@ -118,6 +124,8 @@ async function reconcileOrg(catalyst, orgId) {
       console.error(`item ${itemId} stock refresh failed:`, err && err.message);
     }
   }
+
+  if (full) return result; // stock-only pull — skip PO/composite refresh
 
   const po = await refreshPurchaseOrders(catalyst, orgId);
   result.purchaseOrders = po.purchaseOrders;
@@ -233,6 +241,17 @@ async function handleZohoEvent(catalyst, orgId, type, body) {
   return { handled: false, type: kind };
 }
 
+/**
+ * Instant "Sync now" for one item: pull its current stock straight from Zoho and
+ * write it through, so a Zoho inventory adjustment / opening stock reflects in the
+ * app immediately instead of waiting for the nightly reconcile.
+ */
+async function syncItem(catalyst, orgId, itemId) {
+  const item = await getItemStock(catalyst, itemId);
+  await writeStock(catalyst, orgId, item, "manual");
+  return { itemId: String(itemId), stockOnHand: n(item.stock_on_hand) };
+}
+
 /** Warehouse list for the settings screen (the one place that needs it live). */
 async function warehouseOptions(catalyst) {
   const { listWarehouses } = require("../zoho/inventoryApi");
@@ -246,5 +265,5 @@ async function warehouseOptions(catalyst) {
 
 module.exports = {
   OPEN_WO, workingSet, writeStock, reconcileOrg, reconcileAllOrgs, tokenForOrg,
-  handleZohoEvent, warehouseOptions, warehouses,
+  handleZohoEvent, warehouseOptions, warehouses, syncItem,
 };

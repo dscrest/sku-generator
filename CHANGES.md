@@ -7,6 +7,18 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 | CR | Date | Title | Status |
 |----|------|-------|--------|
+| CR-050 | 2026-08-26 | MSUN estimate template pass — With Total default, header cleanup (no tagline, bigger centered logo, sales emails), client details from CRM Account/Contact in "To", Revision Date/No (screen-only), discount only on CalcSheet with per-page clubbed amounts, ISO footer slot, T&C bold/color; header band stays first-page-only (CR-041) | ✅ shipped |
+| CR-049 | 2026-08-26 | WO details page redesigned to the Claude Design mockup — KPI band + coverage bar, shortage/procurement banners, instant per-line Reserve/Issue/Release/Return, Materials·Items·Activity tabs (Approvals folded into header + banner) | ✅ shipped |
+| CR-048 | 2026-08-25 | By-item grid shows Work order / Status / PO number per line — already-requested/ordered lines stay visible (Requested / PO Raised / Received chips) instead of silently vanishing, making the duplicate-PO protection visible | ✅ shipped |
+| CR-047 | 2026-08-25 | Requests/Orders grids fix (blank workOrderId broke the ZCQL `IN`, silent 500 → "No purchase requests yet."); Request purchase + short-item pill moved onto the materials action tab line; "Raise request for…" dropdown removed | ✅ shipped |
+| CR-046 | 2026-08-25 | Fix SO picker: drop Zoho `filter_by` (code 2 / matches nothing) and gate confirmed on `order_status === "open"` — Books' API never returns status "confirmed" (UI label only) | ✅ shipped |
+| CR-045 | 2026-08-25 | PO GST picks inter- vs intra-state (IGST vs CGST+SGST) by vendor state — fixes "IGST cannot be applied… intrastate" (3032) | ✅ shipped |
+| CR-044 | 2026-08-25 | Books 110802 fix — set a line-level GST tax on new items and on PO create/edit (India GST edition rejects lines without their own tax) | ✅ shipped |
+| CR-043 | 2026-08-25 | Estimate "Our Offer No" = CRM Quote No (MSUN custom `Quote_No`, then `Quote_Number`); dropped the Subject/id fallback | ✅ shipped |
+| CR-042 | 2026-08-25 | Transfer Orders carry serial/batch numbers + fall back to a number when Zoho auto-numbering is off; WO picker shows only confirmed, WO-less SOs; approval 2nd level only when configured (Pending after 1st); instant "Sync all" stock pull | ✅ shipped |
+| CR-041 | 2026-08-25 | Estimate header band (logo + address) prints on the first page only; continuation/calc/terms pages omit it | ✅ shipped |
+| CR-040 | 2026-08-25 | Estimate T&C: Duties & Taxes on Export too, one-time cache reset so all types show A/B; amount columns centered | ✅ shipped |
+| CR-039 | 2026-08-22 | Estimate print versions made functional — renamed Standard / With Total / Export / All Item - Trading; totals page only on With Total; Trading skips same-name grouping | ✅ shipped |
 | CR-038 | 2026-08-22 | Improvement pass, phase 4: UX & consistency — house-grid compliance on the SKU list, bulk push to Books, stale-sync badge (`SKUItem.lastPushedAt`), URL deep-links for selection/filters, ConfirmModal deletes, modal Enter-to-submit, controlled PR qty + qty-clear guards, shared en-IN formatters, a11y basics | ✅ shipped |
 | CR-037 | 2026-08-21 | Improvement pass, phase 3: frontend perf — WO page patches the rail instead of re-fetching the list, purchase lists load lazily per tab and refresh only what's on screen, memoized MaterialsGrid rows, route-level code splitting (main bundle 546→325 kB) | ✅ shipped |
 | CR-036 | 2026-08-21 | Improvement pass, phase 2: backend perf — `buildGridsBulk` kills the reports N+1 (~6 queries total), per-request Zoho token memo, WO detail's proc-status scan scoped to the one WO, bulk/parallel Zoho loops (stock reconcile, PO refresh, txn lines, stock self-heal) | ✅ shipped |
@@ -46,6 +58,400 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 | CR-001 | 2026-05-28 | SKU editing + Zoho Books value sync & import | ✅ shipped |
 
 ---
+
+## CR-050 — MSUN estimate template pass (2026-08-26) — ✅ shipped
+
+**Asked (12-item MSUN list):** With Total as the default template; header logo
+transparent/bigger/centered with the tagline removed and sales emails added;
+"To" section filled from the Zoho CRM Account/Contact behind the quote
+(address, phone/email, GSTIN, contact | mobile); Revision Date/No fields on
+screen but never printed; discount removed from item pages (page totals only);
+"With Print" page-total clubbing = the With Total CalcSheet showing one amount
+per page instead of per item; MSUN header on every page; ISO certificate strip
+at the page bottom; T&C editor with bold + text color.
+
+**Shipped:**
+- Default version `with-total` ([EstimatePage.jsx](frontend/src/pages/EstimatePage.jsx)).
+- Header band: tagline deleted, logo `max-height` 64→96px and centered in a
+  flex-fill cell, `E: sales@msunvalve.com · sales@marutivalves.com` added to
+  the address block ([EstimateTerms.jsx](frontend/src/pages/EstimateTerms.jsx)).
+  Band stays first-page-only (CR-041) — an all-pages variant shipped briefly
+  and was reverted on user feedback the same day.
+- `GET /api/crm/quote/:id` now embeds the raw Account/Contact records behind
+  the quote's lookups as `_account`/`_contact` (`getAccount`/`getContact` in
+  [crmApi.js](functions/skuapi/zoho/crmApi.js), `.catch(() => null)` in
+  [routes/crm.js](functions/skuapi/routes/crm.js) so a broken lookup never
+  kills the sheet). Scope `ZohoCRM.modules.READ` already covers both — no
+  re-auth. [estimateParser.js](frontend/src/pages/estimateParser.js) maps
+  billing address / phone / email / GSTIN / contact mobile into `header.to`
+  (GSTIN + account-email field names are best-guess, flagged `ponytail:` —
+  correct in that one block after inspecting a real `_account`).
+- Revision Date (native date input) + Revision No per quote, `est-noprint`,
+  persisted at `localStorage["estimateRev:<quoteId>"]`.
+- Item pages: TOTAL-A and DISC rows deleted; the PAGE band shows the **gross**
+  page amount. Discount/net appear only on the CalcSheet, whose amount column
+  is now one rowSpan cell per page (items still listed separately).
+- ISO strip: `FootBand` pinned to each sheet's bottom via `margin-top: auto`,
+  drop-in `frontend/public/iso-certs.png` (absent file → renders nothing);
+  measure pass subtracts its height and re-measures once per loaded image.
+- T&C editing: `contentEditable` saves innerHTML (rendered via
+  `dangerouslySetInnerHTML`), edit bar gained Bold + 4 color swatches
+  (`document.execCommand`; swatches over a native color input because the
+  picker steals the selection). `TERMS_VERSION` bumped for a one-time reset.
+  Self-XSS only — terms never leave the browser's localStorage.
+
+**Checks:** `estimateParser.test.js` grew a `_account`/`_contact` → `to` case
+(+ fallback asserts); parser & terms self-checks pass; frontend builds.
+
+**Not done (and why):**
+- Header/ISO images — user hasn't shared them yet; drop-in files
+  (`msun_Invoicelogo_FINAL_LOGO.Png` overwrite, `iso-certs.png`) need no code.
+- CRM GSTIN/email field names unverified — one mapping block to correct.
+- Revision fields server-side — localStorage per user decision.
+
+---
+
+## CR-049 — WO details page redesign (Claude Design mockup) (2026-08-26) — ✅ shipped
+
+**Asked:** redesign the Work Order details page taking the design pattern from
+the claude.ai/design prototype (`Work Orders & Purchase Requests.dc.html`)
+while keeping the app's current theme. User chose the full restructure
+(mockup tab layout + instant per-row actions) over a visual-only restyle.
+
+**Shipped**
+- [MaterialsGrid.jsx](frontend/src/components/MaterialsGrid.jsx) — rewritten
+  as the mockup's Materials view: KPI band (Required / Reserved / Issued /
+  Short-to-buy, per selected FG) with an overall coverage gradient bar; amber
+  shortage banner ("N items short — request purchase") and blue procurement
+  banner (`procStatus` prop) replacing the toolbar warning buttons; filter
+  chips All / Short / To reserve / Covered; instant per-line actions —
+  `Reserve {reservable}` / `Issue {reserved}` / `Release` (dereserve) /
+  `Return` (inline row with qty, Issue → Main only — the backend's fixed
+  return route) — each a single-line confirmed `POST /txn`; "Reserve
+  everything available" posts one txn for every reservable line in view.
+  Removed: action-mode segmented toolbar, per-row qty + MAX inputs, checkbox
+  bulk-fill, pinned confirm bar, optional-column picker (`COLS`/localStorage),
+  per-line CoverageBar. `Empty`/`Banner` exports unchanged (8 importers).
+- [WorkOrderPage.jsx](frontend/src/pages/WorkOrderPage.jsx) — header goes
+  mockup-style: 20px title + status/proc chips, subtitle `SO · customer ·
+  project · date · Rev`, muted finished-goods line, all actions on one row
+  (Edit · Approve · ⋯ · ✕). Tabs `Details/Items/Approvals/History` →
+  `Materials/Items/Activity`. Approvals tab removed: approve/reject stay in
+  the header, the invoice gate shows as a warn banner under the header
+  (`/invoice-gate` fetched page-level). Activity = single newest-first
+  timeline merging material movements (`wo.transactions`) and the audit trail
+  (`/history`), replacing the two-table History tab.
+- [woCommon.jsx](frontend/src/components/woCommon.jsx) — `PROC_LABEL`
+  exported (procurement banner text).
+
+**Not done (and why)**
+- Return-to-Reserve-warehouse select (in the mockup) — the backend's return
+  route is fixed Issue → Main (`routeFor` in txn.js); not worth a route param
+  until someone asks.
+- Partial reserve/issue quantities — instant buttons act on the line's full
+  cap; partial amounts survive only on Return. Add per-line qty inputs back if
+  partial moves turn out to matter.
+- Per-level approval cards (L1/L2 approver, email, timestamp) — approval
+  events still appear in Activity; the header button covers the action.
+
+## CR-048 — By-item grid: WO/Status/PO columns, ordered lines stay visible (2026-08-25) — ✅ shipped
+
+**Asked:** (1) the By-item grid should show Item, Work Order, Qty, Status and
+PO Number (if raised); (2) keep the cross-WO consolidation (one row per item,
+total qty for raising); (3) make the duplicate-PO story visible — a buyer could
+not tell whether a PO was already raised because raised lines simply vanished
+from the shortfall.
+
+**Why lines vanished (by design, but invisibly):** the shortfall math already
+nets out on-order qty and draft-PR coverage, so nothing can be ordered twice —
+but the row disappearing looks identical to the need disappearing.
+
+**Shipped**
+- [purchase.js](functions/skuapi/workorder/purchase.js) — `shortfallByItem`
+  takes a second `orderedLines` param; ordered/requested lines join the same
+  per-item buckets with `status` + `poNumber` on every breakdown entry
+  (`Pending` for shortfall lines). `totalQty` stays pending-only; ordered qty
+  accumulates in `orderedQty`; fully-ordered items survive with `totalQty: 0`.
+  Selftest asserts added.
+- [workorder.js](functions/skuapi/routes/workorder.js) — the
+  `shortfall-by-item` route also fetches PR lines on a PO for open WOs
+  (`zohoPoId` set, not cancelled) and maps them plus the existing draft lines to
+  ordered entries: per-line status `Requested` / `PORaised` /
+  `PartiallyReceived` / `Fulfilled` (from `receivedQty` vs `purchaseQty`),
+  `poNumber` = Books PO number (PR number for draft lines). Draft coverage
+  math untouched.
+- [WorkOrderPurchasePage.jsx](frontend/src/pages/WorkOrderPurchasePage.jsx) —
+  six columns (checkbox / Item / Work order / Order qty / Status / PO number).
+  Group row: expander in the WO column, qty input only when something is
+  pending, "N pending · M on PO" summary, distinct PO numbers. Expanded
+  breakdown renders proper sub-rows aligned to the columns with a `ProcChip`
+  per line. Only pending lines are selectable/sent to raise; select-all skips
+  fully-ordered items.
+
+**Not done (and why)**
+- No flat/grouped toggle — the expanded sub-rows *are* the flat per-WO view.
+- No transactional idempotency on raise (two concurrent raises of the same
+  item could still double-order); the coverage read stays non-transactional —
+  revisit only if it ever happens in practice.
+
+## CR-047 — Purchase Requests grid fix + button on the action tab line (2026-08-25) — ✅ shipped
+
+**Reported:** (1) a raised purchase request never appears in the Purchase page's
+Requests view; (2) the "Request purchase" button and short-item warning should
+sit on the Reserve / De-reserve / Issue / Return tab line, not in a separate
+bar; (3) the "Raise request for…" WO dropdown should go — requests belong in
+the usual grid with proper status.
+
+**Root cause (verified live against the Catalyst datastore):** consolidated PRs
+raised from the By-item view store `workOrderId: ""`. `listAllPRs` fed every
+distinct `workOrderId` into `WorkOrder ROWID IN (...)`, and `inList`
+([store.js](functions/skuapi/workorder/store.js)) guarded empty *arrays* but not
+empty *strings* — `ROWID IN ('')` makes ZCQL reject the whole query ("Invalid
+input value for BIGINT column 'ROWID'"), the endpoint 500s, and the frontend's
+silent `.catch(() => setPrs([]))` rendered "No purchase requests yet." Broken
+since the first consolidated PR (2026-08-13). The same pattern in `listAllPOs`
+broke the Orders grid's PR/WO stamping.
+
+**Shipped**
+- [store.js](functions/skuapi/workorder/store.js) — `inList` drops `""`/null
+  values (one guard fixes `listAllPRs`, `listAllPOs`, and every future caller);
+  selftest asserts added.
+- [WorkOrderPurchasePage.jsx](frontend/src/pages/WorkOrderPurchasePage.jsx) —
+  "Raise request for…" dropdown removed (per-WO drill-in stays via clicking a
+  Requests row; By-item "Raise PO" remains the raise path); `loadPrs`/`loadPos`
+  now toast on failure instead of silently showing an empty grid.
+- [MaterialsGrid.jsx](frontend/src/components/MaterialsGrid.jsx) — amber
+  shortage bar deleted; the action tab line now shows an amber
+  "⚠ N short · M units missing" pill (click = Short filter) and the
+  "Request purchase" button when there is a shortfall.
+
+**Not done (and why)**
+- No new per-WO raise entry point to replace the dropdown — the By-item
+  consolidated flow (CR-023) is the primary path; add a per-WO shortcut only if
+  buyers ask for it.
+
+## CR-046 — SO picker filter_by casing fix (2026-08-25) — ✅ shipped
+
+**Reported:** raising a Work Order against a Confirmed sales order failed with
+*"Zoho books API error: Invalid value passed for filter_by (code 2)"*; the New
+Work Order SO picker showed nothing.
+
+**Root causes (two, stacked):**
+1. `routes/workorder.js` `GET /sales-orders` passed status `"confirmed"`, which
+   `booksApi.js` `listSalesOrders` sent as `filter_by=Status.confirmed` — Zoho
+   rejects the lowercase value with code 2, and the capitalized
+   `Status.Confirmed` clears the error but matches **zero rows**. Zoho's
+   salesorders `filter_by` cannot express "confirmed".
+2. The client-side guard `creatableSalesOrders` matched
+   `status === "confirmed"`, but Books' API **never returns that string** —
+   verified against the MSUN org: a UI-"Confirmed" SO comes back as
+   `status: "open"` / `order_status: "open"` (header status can drift to
+   invoiced / partially_invoiced / overdue while `order_status` stays "open";
+   drafts are `order_status` "draft" / "pending_approval"). So even with the
+   filter_by gone, the guard emptied the picker.
+
+**Shipped:** dropped the server-side `filter_by` from `listSalesOrders` (and
+its unused `status` param); `creatableSalesOrders` now treats an SO as
+confirmed when `order_status === "open"` (or a literal `status: "confirmed"`
+for editions that report it), and the route passes `order_status` through.
+Self-check updated with the real MSUN status shapes. `reserve.js` passed no
+status and is unaffected.
+
+**Not done:** the "Purchase Request → By item shows nothing" report needed no
+code change — it aggregates the shortfall of *open* work orders, and with the
+picker broken no WO could be raised for the SO (once a WO exists, any
+still-unordered shortfall appears there; a fully covered item correctly drops
+off).
+
+## CR-045 — PO GST: inter- vs intra-state tax by vendor state (2026-08-25) — ✅ shipped
+
+**Reported:** pushing a PO to vendor "3D TECHNOLOGIES" failed with *"IGST cannot
+be applied as this is an intrastate transaction (code 3032)."*
+
+**Root cause:** CR-044 set every PO line's tax to the org's 18% GST, and
+`getGstTaxId` preferred a single GST-named tax — which resolves to **IGST**
+("IGST" matches `/gst/`). IGST is only valid inter-state; for a same-state
+(intrastate) vendor Books requires the **CGST+SGST group** and rejects IGST
+(3032).
+
+**Shipped (`zoho/booksApi.js`):**
+- `pickGstTax(taxes, interState)` — pure selector: inter-state → single IGST;
+  intra-state → the CGST+SGST `tax_group` (fallbacks keep a tax on the line so
+  110802 can't come back). Self-checked (`node …/booksApi.js --selftest`).
+- `getGstTaxId(catalyst, pct, { interState })` uses it; cache key now includes
+  direction. Item-create default keeps its previous single-GST behavior
+  (`interState: true`) — Books auto-bifurcates an item's *default* tax by place
+  of supply, so items are unaffected.
+- `getOrgGstStateCode` / `getContactGstStateCode` — GST state code = first two
+  digits of the GSTIN (org vs vendor).
+- `createPurchaseOrder` computes `interState = orgState && vendorState &&
+  orgState !== vendorState` and picks the matching tax. Unknown GSTIN on either
+  side → intra (the common local-vendor case, and the reported failure).
+
+**Not done (and why):** no separate inter/intra handling for sales-side
+transactions (invoices/SOs) — the app only *creates* POs in Books; sales docs
+are raised in Books directly, where its own place-of-supply logic applies. GSTIN
+prefix is the state signal; a registered vendor without a GSTIN on file defaults
+to intra.
+
+---
+
+## CR-044 — Books 110802: line-level GST tax on items & POs (2026-08-25) — ✅ shipped
+
+**Reported (A.G. Belting):** pushing to Books failed with *"Specify either a Tax
+or Tax Exemption or Reverse Charge" (code 110802)* even though a tax was selected.
+
+**Root cause:** in the India GST edition every transaction *line* must carry its
+own tax; the header tax dropdown does not back-fill lines. Items were created
+`is_taxable: true` but with no default tax, and `createPurchaseOrder` sent lines
+with no `tax_id` — so Books rejected the PO.
+
+**Shipped:**
+- `getGstTaxId(catalyst, pct)` resolves the org's GST tax id by percentage (memoized
+  per org); returns null on non-GST orgs so `tax_id` is simply omitted there.
+- `createItem` sets a default `tax_id` (GST 18%) → new items carry a line tax.
+- `createPurchaseOrder` puts `tax_id` on every line.
+- `poPutBody` echoes each fetched line's `tax_id` so a PO edit (PUT replaces lines
+  wholesale) doesn't clear the tax and re-trigger 110802.
+
+**Not done:** existing Books items created before this need a one-time tax backfill
+to fix the Books UI path; HSN-driven per-item rates (everything defaults to 18%).
+
+## CR-043 — Estimate offer number = CRM Quote No (2026-08-25) — ✅ shipped
+
+**Asked (MSUN):** the number shown on the estimate should be the Quote No from
+the Quotes module.
+
+**Shipped:**
+- `estimateParser.js` `buildEstimate`: `offerNo` is now
+  `quote.Quote_No || quote.Quote_Number`. MSUN's real quote number lives in a
+  **custom** field `Quote_No` (e.g. `MSUN-Q-0021`), not the standard
+  `Quote_Number` (which was blank), so binding only to the standard field showed
+  nothing / the Subject. `getQuote` fetches the full record so the custom field
+  is already present. Removed the `|| quote.Subject || quote.id` fallback that
+  made a blank-numbered quote print its free-text Subject ("test Quotation
+  print").
+- `crmApi.js` `QUOTE_LIST_FIELDS` + `EstimatePage.jsx` deal-quote picker: add
+  `Quote_No` (before `Quote_Number`) so the picker's quote-number line matches.
+
+**Not done (and why):** kept the label "Our Offer No" (company terminology on the
+Techno Commercial Proposal); only the value binding changed.
+
+---
+
+## CR-042 — Transfer Order fixes, SO-picker gating, dynamic approval, instant stock sync (2026-08-25) — ✅ shipped
+
+**Asked (MSUN):** (1) Transfer Orders fail on serial-tracked items (code 2205) —
+if a batch/serial isn't supplied, pick from the first available; (2) TOs fail
+with "mandatory Transfer Order Number" (code 6) — only supply one when Zoho isn't
+auto-numbering, else a friendly error; (3) the WO-creation list should show only
+**Confirmed** SOs and hide SOs that already have a WO; (4) two-level approval flips
+to Approved after the first sign-off — it should be Pending for the 2nd level, and
+the 2nd level should be required only when a 2nd approver is configured; (5) allow
+an instant stock sync so a Zoho inventory adjustment / opening stock reflects at once.
+
+**Shipped:**
+- **Serial/batch on TOs** — `zoho/inventoryApi.js`: `pickSerialsBatches` (pure) reads
+  the item's in-stock serials/batches at the source warehouse and attaches the first
+  N (N = qty) to each transfer line — serials as `serial_numbers`, batch-tracked as
+  FIFO-allocated `batches[]`. Untracked items are unaffected. If a tracked item has
+  no numbers in stock, a plain "receive stock before moving it" error replaces the
+  raw code 2205. Self-checked.
+- **TO number fallback (code 6)** — `createTransferOrder` retries once with
+  `transfer_order_number` (the MaterialTxn number, via `numberHint` from `confirmTxn`)
+  only when Zoho rejects with code 6; auto-numbering orgs never see a number.
+  `txn.js` `friendlyTransferError` rewords raw Zoho failures for the UI.
+- **SO picker** — `routes/workorder.js` `GET /sales-orders` now requests
+  `filter_by=Status.Confirmed`, keeps a `status === 'confirmed'` guard, and drops any
+  SO already linked to a WorkOrder (`creatableSalesOrders`, self-checked).
+- **Dynamic approval** — 2nd level required only when `approverL2Email` is set. After
+  L1 with an L2 pending, the WO sits at the new **PendingApproval** status; it becomes
+  Approved once every required level signs off (`requiredLevelsMet`, self-checked). The
+  manual status dropdown can no longer skip approvals (`FLOW.Draft` drops `Approved`).
+  Invoice gate and the WO page reflect the configured levels.
+- **Instant stock sync** — `reconcileOrg(catalyst, orgId, { full })` sweeps the whole
+  catalog (stock only) so an adjustment/opening on any item lands; exposed via
+  `POST /api/wo/refresh?full=1` and a "Sync all" button on the materials grid. New
+  `POST /api/wo/items/:itemId/sync-stock` (`syncItem`) for a single item.
+
+**Not done (and why):** the exact Zoho serial/batch response shape is read defensively
+and must be confirmed against the live org on first push (flagged `ponytail:`). No
+in-app inventory-adjustment writer — adjustments stay in Zoho, the app only pulls the
+effect (user chose the instant-pull option). No per-grid-row sync button — the grid's
+items are on open WOs and already covered by "Refresh stock"; "Sync all" covers the rest.
+
+---
+
+## CR-041 — Estimate header band on the first page only (2026-08-25) — ✅ shipped
+
+**Asked (MSUN):** the logo/header that repeats on every printed estimate page
+should appear on the first page only.
+
+**Shipped:**
+- `EstimatePage.jsx` CSS: one rule
+  `.est-print-area .est-sheet:not(:first-child) .est-head-band { display: none; }`.
+  Every sheet (item pages, CalcSheet, TermsSheet) is an `est-sheet` sibling
+  under `.est-print-area`, so the whole company band (logo + tagline + address)
+  is suppressed on all pages after the first, on both screen preview and print.
+  `HeadBand` still renders in each sheet; only CSS hides it.
+
+**Not done (and why):** pagination budget is still measured with the full header
+band and applied to all of an estimate's pages, so continuation pages under-fill
+by ~1 band height (minor bottom whitespace). Safe — never overflows. Left as a
+`ponytail:` note; subtract the band height for non-first pages only if it's ever
+a complaint.
+
+---
+
+## CR-040 — Estimate T&C A/B on all types + centered amounts (2026-08-25) — ✅ shipped
+
+**Asked (MSUN):** the A. Delivery Of Goods and B. Duties & Taxes terms are
+missing from the estimate — add them and arrange them properly; they apply to
+**all** estimate types. Also center-align the amount columns.
+
+**Shipped:**
+- **Export gets Duties & Taxes** (`estimateTerms.js` `EXPORT_TERMS`): inserted
+  `Duties & Taxes / As Per GST Rule @18% Extra.` as B (after Delivery Of Goods,
+  before Incoterms). Domestic `DEFAULT_TERMS` already led with A + B; lettering
+  is positional so no reordering was needed. All templates now read A = Delivery
+  Of Goods, B = Duties & Taxes.
+- **One-time cache reset** (`estimateTerms.js`): terms persist per-browser in
+  localStorage, so a browser that once saved a term list never picked up the new
+  A/B defaults. Added `TERMS_VERSION` + `ensureTermsVersion()` (called at the top
+  of `loadTerms`) that clears the stored domestic/export lists once when the
+  version changes, so every client re-seeds to current defaults on next load.
+- **Amount columns centered** (`EstimatePage.jsx`): `.est-num` changed from
+  `text-align: right` → `center`. One class covers every amount value — item
+  rows (LIST PRICE / TOTAL AMOUNT), per-page totals (TOTAL-A / DISC / TOTAL),
+  and the CalcSheet totals. Headers and totals labels left unchanged.
+
+**Not done (and why):** field-level merge of stored terms — the version bump is
+a full reset, so any custom per-browser term edits are discarded. Acceptable for
+shared org defaults; revisit only if per-browser customization becomes a real
+use case.
+
+---
+
+## CR-039 — Estimate print versions made functional (2026-08-22) — ✅ shipped
+
+**Asked (MSUN):** rename the estimate "Version" pick list and give each option
+real behavior: Standard (was General) = current grouping, no totals page;
+With Total = current template + totals page; Export = T&C changes to follow;
+All Item - Trading = no grouping, every CRM line its own row.
+
+**Shipped:**
+- **Pick list renamed** (`EstimatePage.jsx` `TEMPLATE_VERSIONS`): Standard /
+  With Total / Export / All Item - Trading; default `standard`.
+- **Totals page gated:** the CALCULATION FOR OFFER sheet (`CalcSheet`) renders
+  only on With Total; all other versions end with the last item page.
+- **Trading = no grouping:** `buildEstimate(quote, { merge })` — with
+  `merge: false` the one-CRM-line-per-size collapse is skipped so same-name
+  lines each print as their own row. `EstimatePage` now keeps the raw quote
+  payloads and re-derives estimates via `useMemo` on version change.
+- Parser test: `merge: false` yields one item per line with identical totals.
+
+**Not done:** Export-specific T&C — the changed terms are pending from MSUN;
+Export currently prints the same as Standard.
 
 ## CR-038 — Improvement pass, phase 4: UX & consistency (2026-08-22) — ✅ shipped
 
@@ -289,6 +695,78 @@ technical template and the A–F priced template.
   [estimateTerms.js](frontend/src/pages/estimateTerms.js)
   (self-check [estimateTerms.test.js](frontend/src/pages/estimateTerms.test.js)),
   components in [EstimateTerms.jsx](frontend/src/pages/EstimateTerms.jsx).
+- **Same-product line merge (one-CRM-line-per-size)** — a quote entered as one
+  line per size (same product repeated, each line's Description carrying the
+  full spec block incl. `Size: 1-1/4" | DN 32`) now prints as **one item**:
+  description block once (first line's specs, `Size:` removed), one size/qty/
+  rate row per CRM line, sub-sectioned by `Design`/`Design Type` when present
+  (orange DESIGN row skipped when absent). Size splits on `|` into the stacked
+  inch / DN cells. Lines without a `Size:` spec keep the flat fallback; sr
+  numbers reassigned after merging. Parser-level
+  ([estimateParser.js](frontend/src/pages/estimateParser.js)), so totals and
+  both templates get it for free.
+- **Real pagination with per-page totals** — CSS page-breaking couldn't keep an
+  item and its totals together, and could never do per-page totals; the page
+  now composes physical A4 pages itself
+  ([EstimatePage.jsx](frontend/src/pages/EstimatePage.jsx)): a hidden measure
+  pass renders each quote as one sheet, reads item-tbody heights, and greedily
+  packs items into pages (A4 content height minus measured header/thead/totals,
+  16px slack for screen-vs-print width drift). Each page prints as a **full
+  sheet** — repeated logo/To/Offer header, its items whole, and TOTAL-A / DISC
+  / PAGE-TOTAL rows computed from **that page's items only** (as in the
+  original scans). Page numbers run continuously across all selected quotes;
+  one re-measure after the logo image loads. Not done: intra-item pagination
+  (an item taller than a page overflows). Every page (T&C included) carries
+  the logo + factory-address footer bottom-pinned (sheet is a flex column at
+  full A4 height; footer height joins the pagination budget); the address text
+  is the T&C store's `footer` field, so a T&C edit updates all pages. Leftover
+  page height stretches the **last item's last row** (no spacer row), so its
+  columns run down to the totals with heading/design/totals heights untouched;
+  item detail rows show vertical column lines only (horizontal lines kept on
+  item boundaries, design bands, heading, totals); T&C rows accented per the
+  reference PDF — delivery/transit red, payment/freight blue, validity
+  enlarged — keyword-matched on the row label.
+- **Filler space removed + footer collision fix + bigger fonts (2026-08-22)** —
+  the measured filler that stretched the item columns down to the totals drew
+  its vertical borders into the bottom-pinned footer strip on full pages; the
+  filler tbody (and its `fill` math in the pagination pass) is gone, so the
+  grid now ends right after the totals rows and the gap to the page-bottom
+  footer is clean unbordered white, however many items a page holds. Sheet base
+  font 11→12px, grid headers 10→11px (measure pass repacks pages
+  automatically). ([EstimatePage.jsx](frontend/src/pages/EstimatePage.jsx))
+- **"CALCULATION FOR OFFER" summary page (2026-08-22)** — the grand-total page
+  from the reference PDF now prints after the item pages (before T&C): one row
+  per item per printed page (PAG nn, description, total qty, total amount —
+  PAG cell spans multi-item pages), then TOTAL QTY & AMOUNT (blue), DISCOUNT
+  @pct (pct shown only when all selected quotes share one), FINAL BASIC AMOUNT
+  (red), and the next sequential PAGE nn. Technical template gets the same
+  page without amount columns. Header chrome extracted to a shared
+  `SheetChrome` (title varies) so the calc page reuses the To/Offer header.
+  ([EstimatePage.jsx](frontend/src/pages/EstimatePage.jsx))
+- **Discount from CRM `Select_discount` + teal theme + template-version dropdown
+  (2026-08-22)** — discount % now reads the quote's custom `Select_discount`
+  field (tolerant of "25%"-style picklist strings), falling back to the
+  standard `Discount` field; shows as DISC/DISCOUNT @pct on item pages and the
+  calc page ([estimateParser.js](frontend/src/pages/estimateParser.js)). All
+  printed pages (items, calc, T&C) restyled to the
+  [Sales_Order_Template.html](estimate-prototype/Sales_Order_Template.html)
+  theme: Inter, teal #0F7576 headers/bands, tints #EAF2F1/#EFF5F4, #D8E5E4
+  gridlines, teal grand-total band rows, teal-ruled footer strip; T&C keyword
+  accents recolored teal. Toolbar gains a **Version** dropdown (General ·
+  Item Grouped · Export · Trading) threaded as a `version` prop through
+  EstimatePages → EstimateSheet/CalcSheet — all four render the same layout
+  today; per-version layouts branch there when defined.
+- **Company band on top, footer gone, DESIGN rows dropped (2026-08-22)** — the
+  orange DESIGN:- group-header rows no longer print (size rows only; parser
+  still groups, render skips). The bottom logo/address footer strip is removed
+  from every page; instead each page (items, calc, T&C) opens with a
+  Sales-Order-style header band — new logo
+  `frontend/public/msun_Invoicelogo_FINAL_LOGO.Png` + tagline left, full
+  right-aligned address block (company, plot address, M/E line, GSTIN, PAN,
+  hardcoded in the shared `HeadBand`, exported from
+  [EstimateTerms.jsx](frontend/src/pages/EstimateTerms.jsx) to avoid a
+  circular import). Pagination budget no longer reserves footer height; the
+  T&C store's `footer` text stays saved but is no longer rendered or editable.
 - **CRM setup (console, not code):** Deal custom link button →
   `/app/#/estimate?dealId=${Deal.Id}`; Quote custom link button →
   `/app/#/estimate?quoteId=${Quotes.Quote Id}`. The pre-hash form

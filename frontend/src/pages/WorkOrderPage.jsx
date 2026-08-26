@@ -1,26 +1,28 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import MaterialsGrid, { Empty, Banner } from '../components/MaterialsGrid.jsx';
 import WoItemsTab from '../components/WoItemsTab.jsx';
 import Modal, { ModalFooter, ModalBtn } from '../components/Modal.jsx';
-import { StatusChip, ProcChip, AccessNotice, spaced, btn, thStyle, cell } from '../components/woCommon.jsx';
+import { StatusChip, ProcChip, AccessNotice, spaced, btn } from '../components/woCommon.jsx';
 import { fmtMoney, fmtDate } from '../format.js';
 
 /**
- * One work order, Zoho Books style (CR-018): compact list of work orders on
- * the left, detail on the right with a toolbar (Edit · Approve ▾ · status ·
- * ⋯) and per-order sub-tabs. BOM and Purchase live on their own sidebar
- * pages now — this page is the order itself.
+ * One work order (CR-049, Claude Design mockup): compact list of work orders
+ * on the left, detail on the right — a bold header with every action beside
+ * the title, then Materials (KPI band + instant per-line actions), Items and
+ * a single Activity timeline. Approval actions live in the header; the
+ * invoice gate surfaces as a banner instead of its own tab.
  */
-const TABS = ['Details', 'Items', 'Approvals', 'History'];
+const TABS = ['Materials', 'Items', 'Activity'];
 
 export default function WorkOrderPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [tab, setTab] = useState('Details');
+  const [tab, setTab] = useState('Materials');
   const [wo, setWo] = useState(null);
+  const [gate, setGate] = useState(null);
   const [list, setList] = useState(null);
   const [blocked, setBlocked] = useState(null);
   const [editing, setEditing] = useState(false);
@@ -45,11 +47,19 @@ export default function WorkOrderPage() {
   }
   useEffect(() => { setWo(null); load(); /* eslint-disable-next-line */ }, [id]);
   useEffect(() => { axios.get('/api/wo').then(({ data }) => setList(data)).catch(() => {}); }, []);
+  // Invoice gate (was the Approvals tab) — now a header banner. Re-check when
+  // the status moves, since approving is what unblocks it.
+  useEffect(() => {
+    setGate(null);
+    axios.get(`/api/wo/${id}/invoice-gate`).then(({ data }) => setGate(data)).catch(() => {});
+  }, [id, wo?.status]);
 
   if (blocked) return <AccessNotice kind={blocked} />;
 
   const approvalOf = lv => wo?.approvals?.find(a => a.level === lv)?.status;
-  const bothApproved = approvalOf(1) === 'Approved' && approvalOf(2) === 'Approved';
+  // Fully approved = the WO has advanced past the approval gate. Levels required
+  // are settings-driven (2nd only when an L2 approver is set), so trust status.
+  const fullyApproved = wo && !['Draft', 'PendingApproval', 'Cancelled'].includes(wo.status);
   const nextLevel = approvalOf(1) !== 'Approved' ? 1 : 2;
   const canDelete = wo && ['Draft', 'Cancelled'].includes(wo.status);
   // Forward status moves (Cancel lives in the ⋯ menu, not the status dropdown).
@@ -139,11 +149,11 @@ export default function WorkOrderPage() {
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {!wo || String(wo.id) !== String(id) ? <Empty>Loading work order…</Empty> : (
           <>
-            <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <b style={{ fontSize: 15 }}>{wo.woNumber}</b>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <b style={{ fontSize: 20, fontWeight: 700 }}>{wo.woNumber}</b>
                     {forward.length ? (
                       <Menu
                         trigger={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><StatusChip status={wo.status} /> ▾</span>}
@@ -153,48 +163,55 @@ export default function WorkOrderPage() {
                     ) : <StatusChip status={wo.status} />}
                     <ProcChip status={wo.procStatus} />
                   </div>
-                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 3 }}>
-                    SO {wo.salesOrderNumber} · {wo.customerName}{wo.projectName ? ` · ${wo.projectName}` : ''}
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
+                    SO {wo.salesOrderNumber} · {wo.customerName}{wo.projectName ? ` · ${wo.projectName}` : ''} · {wo.woDate} · Rev {wo.revision}
                   </div>
+                  {wo.fgs?.length > 0 && (
+                    <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {wo.fgs.map(f => `${f.name} × ${f.qty}`).join(' · ')}
+                    </div>
+                  )}
                 </div>
-                <div style={{ flex: 1 }} />
-                <button onClick={() => navigate('/wo')} title="Back to the list" style={{ width: 28, height: 28, border: '1px solid var(--border)', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-secondary)' }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ verticalAlign: 'middle' }}>
-                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-                <div style={{ flex: 1 }} />
-                <button onClick={() => setEditing(true)} style={btn}>✎ Edit</button>
-                {bothApproved ? (
-                  <button onClick={() => setTab('Approvals')} style={btn}>
-                    Approved
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                  <button onClick={() => setEditing(true)} style={btn}>✎ Edit</button>
+                  {fullyApproved ? (
+                    <button style={{ ...btn, color: '#15803d', cursor: 'default' }} disabled>✓ Approved</button>
+                  ) : (
+                    <button onClick={() => approve('Approved')} disabled={busy}
+                      style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
+                      {wo.status === 'PendingApproval' ? `Approve — Level ${nextLevel}` : 'Approve'}
+                    </button>
+                  )}
+                  <Menu
+                    trigger="⋯"
+                    triggerStyle={{ ...btn, fontWeight: 700 }}
+                    align="right"
+                    items={[
+                      ...(!fullyApproved ? [{ label: `✕ Reject — Level ${nextLevel}`, tone: '#b91c1c', onClick: () => approve('Rejected') }] : []),
+                      ...(wo.nextStatuses?.includes('Cancelled') ? [{ label: 'Cancel work order', tone: '#b91c1c', onClick: () => changeStatus('Cancelled') }] : []),
+                      { label: '🖨 Print / PDF', onClick: printPdf },
+                      {
+                        label: 'Delete work order', tone: '#b91c1c',
+                        disabled: !canDelete,
+                        title: canDelete ? undefined : 'Only Draft or Cancelled work orders can be deleted',
+                        onClick: () => setConfirmDelete(true),
+                      },
+                    ]}
+                  />
+                  <button onClick={() => navigate('/wo')} title="Back to the list" style={{ width: 28, height: 28, border: '1px solid var(--border)', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ verticalAlign: 'middle' }}>
+                      <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
                   </button>
-                ) : (
-                  <button onClick={() => approve('Approved')} disabled={busy}
-                    style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
-                    Approve
-                  </button>
-                )}
-                <Menu
-                  trigger="⋯"
-                  triggerStyle={{ ...btn, fontWeight: 700 }}
-                  align="right"
-                  items={[
-                    ...(!bothApproved ? [{ label: `✕ Reject — Level ${nextLevel}`, tone: '#b91c1c', onClick: () => approve('Rejected') }] : []),
-                    ...(wo.nextStatuses?.includes('Cancelled') ? [{ label: 'Cancel work order', tone: '#b91c1c', onClick: () => changeStatus('Cancelled') }] : []),
-                    { label: '🖨 Print / PDF', onClick: printPdf },
-                    {
-                      label: 'Delete work order', tone: '#b91c1c',
-                      disabled: !canDelete,
-                      title: canDelete ? undefined : 'Only Draft or Cancelled work orders can be deleted',
-                      onClick: () => setConfirmDelete(true),
-                    },
-                  ]}
-                />
+                </div>
               </div>
             </div>
+
+            {gate && !gate.allowed && (
+              <Banner tone="warn">
+                {gate.blockedReason || 'Invoice creation is blocked until this work order is approved.'}
+              </Banner>
+            )}
 
             <div style={{ display: 'flex', gap: 2, padding: '0 20px', background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
               {TABS.map(t => (
@@ -209,10 +226,9 @@ export default function WorkOrderPage() {
             </div>
 
             <div style={{ flex: 1, minHeight: 0 }}>
-              {tab === 'Details' && <MaterialsGrid workOrderId={id} fgs={wo.fgs} onChanged={load} />}
+              {tab === 'Materials' && <MaterialsGrid workOrderId={id} fgs={wo.fgs} procStatus={wo.procStatus} onChanged={load} />}
               {tab === 'Items' && <WoItemsTab workOrderId={id} fgs={wo.fgs} status={wo.status} onChanged={load} />}
-              {tab === 'Approvals' && <ApprovalsTab workOrderId={id} wo={wo} onChanged={load} />}
-              {tab === 'History' && <HistoryTab workOrderId={id} wo={wo} />}
+              {tab === 'Activity' && <ActivityTab workOrderId={id} wo={wo} />}
             </div>
 
             {editing && <EditModal wo={wo} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); load(); }} />}
@@ -386,99 +402,111 @@ function WoPrintSheet({ wo, lines }) {
   );
 }
 
-// ---- Approvals ------------------------------------------------------------
+// ---- Activity (CR-050) -----------------------------------------------------
+// In/out movement ledger: every material transaction is a card — direction
+// icon (↗ out of stock, ↙ back in), colored edge, txn number, warehouse route,
+// item lines with quantities. Audit-trail events stay in the same newest-first
+// stream as slim dot rows between the cards.
+// ponytail: no "by user" line — MaterialTxn.confirmedBy is a raw Catalyst
+// userId; add it when a userId → email map exists. No filter tabs — the list
+// is short; add when WOs accumulate hundreds of txns.
 
-function ApprovalsTab({ workOrderId, wo, onChanged }) {
-  const [gate, setGate] = useState(null);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    axios.get(`/api/wo/${workOrderId}/invoice-gate`).then(({ data }) => setGate(data)).catch(() => {});
-  }, [workOrderId, wo.approvals]);
+const TXN_CARD = {
+  reserve: { verb: 'Reserved', dir: 'out', route: 'Main → Reserve' },
+  issue: { verb: 'Issued', dir: 'out', route: 'Reserve → Issue' },
+  dereserve: { verb: 'Released', dir: 'in', route: 'Reserve → Main' },
+  return: { verb: 'Returned', dir: 'in', route: 'Issue → Main' },
+};
+const DIR = {
+  out: { arrow: '↗', tone: '#2563eb' },
+  in: { arrow: '↙', tone: '#15803d' },
+};
 
-  async function act(level, status) {
-    setBusy(true);
-    try {
-      await axios.post(`/api/wo/${workOrderId}/approve`, { level, status });
-      toast.success(`Level ${level} ${status.toLowerCase()}`);
-      onChanged();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Could not record the approval');
-    } finally { setBusy(false); }
-  }
-
-  return (
-    <div style={{ padding: '16px 20px', maxWidth: 640 }}>
-      <Banner tone={gate?.allowed ? 'info' : 'warn'}>
-        {gate?.allowed
-          ? 'Both approvals are recorded — this work order can be invoiced.'
-          : gate?.blockedReason || 'Invoice creation is blocked until both levels approve.'}
-      </Banner>
-      {[1, 2].map(level => {
-        const a = wo.approvals?.find(x => x.level === level);
-        return (
-          <div key={level} style={{ marginTop: 12, padding: 14, border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', background: 'var(--bg-card)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <b style={{ fontSize: 13 }}>Level {level} approval</b>
-              {a && <StatusChip status={a.status} />}
-              <div style={{ flex: 1 }} />
-              <button onClick={() => act(level, 'Approved')} disabled={busy} style={{ ...btn, color: '#15803d' }}>Approve</button>
-              <button onClick={() => act(level, 'Rejected')} disabled={busy} style={{ ...btn, color: '#b91c1c' }}>Reject</button>
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
-              {a ? `${a.approverEmail || 'unknown'} · ${a.actedAt}` : level === 2 ? 'Level 1 must approve first.' : 'Not yet reviewed.'}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ---- History --------------------------------------------------------------
-
-function HistoryTab({ workOrderId, wo }) {
+function ActivityTab({ workOrderId, wo }) {
   const [log, setLog] = useState(null);
   useEffect(() => {
     axios.get(`/api/wo/${workOrderId}/history`).then(({ data }) => setLog(data)).catch(() => setLog([]));
   }, [workOrderId]);
 
+  const events = useMemo(() => {
+    const ts = v => { const t = Date.parse(v); return Number.isNaN(t) ? 0 : t; };
+    const txns = (wo.transactions || []).map(t => ({
+      key: `txn-${t.id}`, kind: 'txn', sort: ts(t.confirmedAt || t.createdAt), txn: t,
+    }));
+    const audit = (log || []).map((e, i) => ({
+      key: `log-${i}`, kind: 'audit', sort: ts(e.at), when: e.at, text: e.action, sub: e.entityType,
+    }));
+    return [...txns, ...audit].sort((a, b) => b.sort - a.sort);
+  }, [wo.transactions, log]);
+
   return (
     <div style={{ height: '100%', overflow: 'auto', padding: '14px 20px 24px' }}>
-      <h3 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 8px' }}>Material movements</h3>
-      {!wo.transactions?.length ? <Empty>Nothing has moved yet.</Empty> : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
-          <thead>
-            <tr>{['Document', 'Action', 'Status', 'Zoho Transfer Order', 'Lines', 'When'].map((h, i) => (
-              <th key={h} style={{ ...thStyle, textAlign: i > 3 ? 'right' : 'left' }}>{h}</th>
-            ))}</tr>
-          </thead>
-          <tbody>
-            {wo.transactions.map(t => (
-              <tr key={t.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                <td style={{ ...cell, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{t.txnNumber}</td>
-                <td style={{ ...cell, textTransform: 'capitalize' }}>{t.type}</td>
-                <td style={cell}><StatusChip status={t.status} /></td>
-                <td style={{ ...cell, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{t.transferOrderNumber || '—'}</td>
-                <td style={{ ...cell, textAlign: 'right' }}>{t.lines.length}</td>
-                <td style={{ ...cell, textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>{fmtDate(t.confirmedAt || t.createdAt)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      <h3 style={{ fontSize: 13, fontWeight: 600, margin: '20px 0 8px' }}>Audit trail</h3>
-      {!log ? <Empty>Loading…</Empty> : !log.length ? <Empty>Nothing recorded yet.</Empty> : (
-        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
-          {log.map((e, i) => (
-            <div key={i} style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', fontSize: 12, display: 'flex', gap: 12 }}>
-              <span style={{ color: 'var(--text-muted)', minWidth: 150 }}>{e.at}</span>
-              <b style={{ minWidth: 170 }}>{e.action}</b>
-              <span style={{ color: 'var(--text-muted)' }}>{e.entityType}</span>
+      {!log ? <Empty>Loading…</Empty> : !events.length ? <Empty>No activity yet.</Empty> : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {events.map(e => e.kind === 'txn' ? <TxnCard key={e.key} t={e.txn} /> : (
+            <div key={e.key} style={{ display: 'flex', gap: 12, padding: '2px 6px 2px 44px', fontSize: 12, alignItems: 'flex-start', color: 'var(--text-secondary)' }}>
+              <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--border-mid)', marginTop: 5, flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {e.text}
+                {e.sub && <span style={{ color: 'var(--text-muted)' }}> · {e.sub}</span>}
+              </div>
+              <div style={{ color: 'var(--text-muted)', flexShrink: 0 }}>{e.when}</div>
             </div>
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function TxnCard({ t }) {
+  const meta = TXN_CARD[t.type] || { verb: t.type, dir: 'out', route: '' };
+  const { arrow, tone } = DIR[meta.dir];
+  const dead = t.status === 'Cancelled';
+  return (
+    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', opacity: dead ? 0.55 : 1 }}>
+      <div style={{
+        width: 28, height: 28, borderRadius: '50%', flexShrink: 0, marginTop: 4,
+        background: `${tone}18`, color: tone, border: `1px solid ${tone}40`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 700,
+      }}>
+        {arrow}
+      </div>
+      <div style={{
+        flex: 1, minWidth: 0, background: 'var(--bg-card)', border: '1px solid var(--border)',
+        borderLeft: `3px solid ${tone}`, borderRadius: 'var(--radius-md)', padding: '10px 14px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: tone }}>{meta.verb}</span>
+          <b style={{ fontSize: 13, fontFamily: 'var(--font-mono)' }}>{t.txnNumber}</b>
+          {meta.route && (
+            <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 99, background: 'var(--bg-secondary)', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+              {meta.route}
+            </span>
+          )}
+          {t.status !== 'Confirmed' && <StatusChip status={t.status} />}
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 }}>{fmtDate(t.confirmedAt || t.createdAt)}</span>
+        </div>
+        {t.transferOrderNumber && (
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 3 }}>
+            Transfer Order <span style={{ fontFamily: 'var(--font-mono)' }}>{t.transferOrderNumber}</span>
+          </div>
+        )}
+        <div style={{ marginTop: 6 }}>
+          {t.lines.map(l => (
+            <div key={l.rmItemId} style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '3px 0', fontSize: 13 }}>
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {l.name || l.rmItemId}
+                {l.sku && <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}> · {l.sku}</span>}
+              </span>
+              <span style={{ flex: 1, borderBottom: '1px dotted var(--border)' }} />
+              <b style={{ fontFamily: 'var(--font-mono)', flexShrink: 0 }}>{Number(l.qty).toLocaleString()}{l.uom ? ` ${l.uom}` : ''}</b>
+            </div>
+          ))}
+        </div>
+        {t.notes && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{t.notes}</div>}
+      </div>
     </div>
   );
 }

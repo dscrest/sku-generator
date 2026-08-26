@@ -2,7 +2,7 @@
 // constants every /wo page uses. Extracted from WorkOrderPage (CR-018).
 
 export const STATUS_TONE = {
-  Draft: '#64748b', Approved: '#0369a1', MaterialAllocationPending: '#b45309',
+  Draft: '#64748b', PendingApproval: '#b45309', Approved: '#0369a1', MaterialAllocationPending: '#b45309',
   ReadyForProduction: '#0d9488', InProgress: '#2563eb', QualityCheck: '#7c3aed',
   Completed: '#15803d', Closed: '#334155', Cancelled: '#b91c1c',
 };
@@ -14,7 +14,7 @@ export const spaced = s => String(s || '').replace(/([a-z])([A-Z])/g, '$1 $2');
 export const PROC_TONE = {
   Requested: '#64748b', PORaised: '#2563eb', PartiallyReceived: '#b45309', Fulfilled: '#15803d',
 };
-const PROC_LABEL = {
+export const PROC_LABEL = {
   Requested: 'Requested', PORaised: 'PO Raised',
   PartiallyReceived: 'Partially received', Fulfilled: 'Received',
 };

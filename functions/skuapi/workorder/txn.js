@@ -19,6 +19,29 @@ const n = (v) => Number(v) || 0;
 const today = () => new Date().toISOString().slice(0, 10);
 
 /**
+ * Turn a raw Zoho Transfer Order failure into something a store user can act on.
+ * The serial/batch shortage error is already friendly (thrown with a .status by
+ * the API layer); only the raw `Zoho … API error: … (code N)` messages need
+ * rewording. Preserves .status/.details so the route reports the right HTTP code.
+ */
+function friendlyTransferError(err) {
+  if (err.status && !err.zohoCode) return err; // already user-facing
+  let message;
+  if (err.zohoCode === 6) {
+    message = "Zoho requires a Transfer Order number and could not auto-generate one — turn on auto-numbering for Transfer Orders in Zoho Inventory (Settings → Transfer Orders).";
+  } else {
+    // Strip our wrapper prefix and the trailing "(code N)" for a plain message.
+    message = String(err.message || "Could not create the Transfer Order")
+      .replace(/^Zoho \w+ API error:\s*/, "")
+      .replace(/\s*\(code \d+\)\s*$/, "")
+      .trim();
+  }
+  const e = new Error(message);
+  e.status = err.status || 400;
+  return e;
+}
+
+/**
  * Pure: match the requested quantities to the grid rows and check every cap.
  * Returns the lines to write plus every problem found — all of them, so the
  * user fixes the whole form in one pass instead of one error at a time.
@@ -121,13 +144,20 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
   if (errors.length) { const e = new Error(errors.join("\n")); e.status = 409; e.details = errors; throw e; }
 
   const route = await routeFor(catalyst, orgId, txn.type);
-  const to = await createTransferOrder(catalyst, {
-    date: today(),
-    fromWarehouseId: route.fromWarehouseId,
-    toWarehouseId: route.toWarehouseId,
-    reason: `${txn.type} — ${wo.woNumber} / ${wo.salesOrderNumber || "SO"}`,
-    lines,
-  });
+  let to;
+  try {
+    to = await createTransferOrder(catalyst, {
+      date: today(),
+      fromWarehouseId: route.fromWarehouseId,
+      toWarehouseId: route.toWarehouseId,
+      reason: `${txn.type} — ${wo.woNumber} / ${wo.salesOrderNumber || "SO"}`,
+      lines,
+      // Fallback number for orgs with Transfer Order auto-numbering off (code 6).
+      numberHint: txn.txnNumber,
+    });
+  } catch (err) {
+    throw friendlyTransferError(err);
+  }
 
   await catalyst.datastore().table("MaterialTxn").updateRow({
     ROWID: String(txn.ROWID),
@@ -370,12 +400,18 @@ async function txnLines(catalyst, orgId, txns) {
   return map;
 }
 
-// History for the work order's History tab.
+// History for the work order's Activity tab. Lines carry the item name/sku/uom
+// from the WO's BOM lines so the movement cards can name what moved (CR-050);
+// an item since removed from the BOM falls back to its id on the frontend.
 async function listTxns(catalyst, orgId, workOrderId) {
   const txns = await byOrg(
     catalyst, orgId, "MaterialTxn", `workOrderId = ${zStr(String(workOrderId))}`, "CREATEDTIME DESC",
   );
   const lineMap = await txnLines(catalyst, orgId, txns);
+  const items = new Map(
+    (await byOrg(catalyst, orgId, "WorkOrderLine", `workOrderId = ${zStr(String(workOrderId))}`))
+      .map((l) => [String(l.rmItemId), { name: l.rmName || null, sku: l.rmSku || null, uom: l.uom || null }]),
+  );
   const out = [];
   for (const t of txns) {
     const lines = lineMap.get(String(t.ROWID)) || [];
@@ -388,7 +424,10 @@ async function listTxns(catalyst, orgId, workOrderId) {
       confirmedAt: t.confirmedAt || null,
       createdAt: t.CREATEDTIME,
       notes: t.notes || null,
-      lines: lines.map((l) => ({ rmItemId: String(l.rmItemId), qty: n(l.qty) })),
+      lines: lines.map((l) => ({
+        rmItemId: String(l.rmItemId), qty: n(l.qty),
+        ...(items.get(String(l.rmItemId)) || { name: null, sku: null, uom: null }),
+      })),
     });
   }
   return out;
