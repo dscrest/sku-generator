@@ -1,52 +1,125 @@
-import { Fragment, useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
-import { PROC_LABEL } from './woCommon.jsx';
 
 /**
- * The Materials tab (CR-049): KPI band + overall coverage bar on top, banner
- * callouts for shortage/procurement, then one grid with instant per-line
- * actions. Reserve / Issue / Release act on the line's full cap in one click;
- * Return opens an inline row with a quantity (Issue → Main is the only return
- * route the backend supports). Every button posts the same confirmed txn the
- * old confirm bar did — just one line at a time.
+ * The Materials grid — one screen, four actions.
+ *
+ * Reserve, De-reserve, Issue and Return share this table, these columns and
+ * this confirm bar. Picking an action only changes which cap applies and what
+ * the editable "now" column means, so a user learns one screen and can do four
+ * jobs. Everything else on screen stays put.
+ *
+ * The layout is the plain-language reservation view: a shortage warning bar,
+ * filter chips, a per-line coverage bar, per-line MAX buttons, and a live
+ * confirm bar pinned to the bottom. Every number comes straight from the grid
+ * payload — coverage and the chip categories are derived on the client.
  */
 
-// ponytail: instant actions always move the line's full cap; partial amounts
-// only exist on Return. Add per-line qty inputs back if partial moves return.
-const VERB = { reserve: 'Reserved', dereserve: 'Released', issue: 'Issued', return: 'Returned' };
+const ACTIONS = [
+  { key: 'reserve', label: 'Reserve', verb: 'Reserve', gerund: 'Reserving', capKey: 'reservable',
+    move: 'Main → Reserve warehouse', help: 'Set aside stock for this work order. Capped by what is on hand.' },
+  { key: 'dereserve', label: 'De-reserve', verb: 'Release', gerund: 'Releasing', capKey: 'reserved',
+    move: 'Reserve → Main warehouse', help: 'Release material this work order no longer needs.' },
+  { key: 'issue', label: 'Issue', verb: 'Issue', gerund: 'Issuing', capKey: 'reserved',
+    move: 'Reserve → Issue warehouse', help: 'Send reserved material to production.' },
+  { key: 'return', label: 'Return', verb: 'Return', gerund: 'Returning', capKey: 'issued',
+    move: 'Issue → Main warehouse', help: 'Send unused issued material back to stock.' },
+];
 
-export default function MaterialsGrid({ workOrderId, fgs, procStatus, onChanged }) {
+// The four core columns (Needed / In stock / Reserved / Issued) and the coverage
+// bar are always shown. COLS are the extra BRD-reconciliation columns, hidden by
+// default and revealed through the column picker for anyone who wants them.
+const COLS = [
+  { key: 'po', label: 'PO', help: 'Quantity ordered from vendors for this work order.' },
+  { key: 'received', label: 'Received', help: 'Quantity received against those purchase orders.' },
+  { key: 'billed', label: 'Billed', help: 'Quantity the vendor has billed.' },
+  { key: 'reservable', label: 'Reservable', help: 'What you can still reserve: A − C − D − G, capped by stock on hand.' },
+  { key: 'extraReserved', label: 'Extra reserved', help: 'A + C − D − G, as defined in the BRD.' },
+];
+
+// Bumped from 'materialsGridCols' so the new hidden-by-default optional columns
+// take effect for everyone; old saved configs referenced columns that are now
+// structural. ponytail: one-time reset, no migration needed.
+const COL_STORAGE_KEY = 'materialsGridCols2';
+const defaultCfg = () => COLS.map(c => ({ key: c.key, visible: false }));
+
+// Reconcile any saved config against the current COLS so editing COLS in code
+// can never corrupt a saved preference: drop unknown keys, append new ones.
+function loadColCfg() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COL_STORAGE_KEY) || 'null');
+    if (!Array.isArray(saved)) return defaultCfg();
+    const known = new Set(COLS.map(c => c.key));
+    const kept = saved.filter(s => s && known.has(s.key)).map(s => ({ key: s.key, visible: s.visible === true }));
+    const missing = COLS.filter(c => !kept.some(s => s.key === c.key)).map(c => ({ key: c.key, visible: false }));
+    return [...kept, ...missing];
+  } catch { return defaultCfg(); }
+}
+
+const num = { padding: '8px 10px', fontSize: 13, textAlign: 'right', fontFamily: 'var(--font-mono)' };
+const th = {
+  padding: '9px 10px', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', textAlign: 'right',
+  background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap',
+  textTransform: 'uppercase', letterSpacing: '0.03em',
+};
+
+export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
   const navigate = useNavigate();
   const [fgId, setFgId] = useState(fgs[0]?.id || null);
+  const [action, setAction] = useState('reserve');
   const [grid, setGrid] = useState(null);
-  const [filter, setFilter] = useState('all');       // all | short | reserve | covered
+  const [qty, setQty] = useState({});          // itemId -> typed quantity
+  const [sel, setSel] = useState(() => new Set());   // itemIds ticked for bulk fill
+  const [filter, setFilter] = useState('all');       // all | short | covered | left
   const [search, setSearch] = useState('');
+  const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [busy, setBusy] = useState(null);            // itemId | 'bulk' while a txn runs
-  const [returnFor, setReturnFor] = useState(null);  // itemId with the return row open
-  const [retQty, setRetQty] = useState('');
+  const [colCfg, setColCfg] = useState(loadColCfg);   // applied column config
+  const [draftCfg, setDraftCfg] = useState(null);     // picker working copy (null = closed)
+  const [dragKey, setDragKey] = useState(null);
+  const act = ACTIONS.find(a => a.key === action);
+
+  const visibleCols = useMemo(
+    () => colCfg.filter(c => c.visible).map(c => COLS.find(col => col.key === c.key)).filter(Boolean),
+    [colCfg],
+  );
+
+  function applyCols() {
+    setColCfg(draftCfg);
+    localStorage.setItem(COL_STORAGE_KEY, JSON.stringify(draftCfg));
+    setDraftCfg(null);
+  }
+  function dropCol(targetKey) {
+    setDraftCfg(cfg => {
+      const next = [...cfg];
+      const from = next.findIndex(c => c.key === dragKey);
+      const to = next.findIndex(c => c.key === targetKey);
+      if (from < 0 || to < 0 || from === to) return cfg;
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+    setDragKey(null);
+  }
 
   function load(id = fgId) {
     if (!id) return;
     setLoading(true);
     axios.get(`/api/wo/${workOrderId}/grid`, { params: { fgId: id } })
-      .then(({ data }) => setGrid(data))
+      .then(({ data }) => { setGrid(data); setQty({}); setSel(new Set()); })
       .catch(err => toast.error(err.response?.data?.error || 'Could not load the grid'))
       .finally(() => setLoading(false));
   }
   useEffect(() => { load(fgId); /* eslint-disable-next-line */ }, [fgId, workOrderId]);
 
-  // Refresh = re-pull stock/PO numbers from Zoho, then re-read the grid. full=true
-  // sweeps the whole catalog so a Zoho inventory adjustment / opening stock on any
-  // item is reflected (the default refresh only covers items on open work orders).
-  async function syncStock(full = false) {
+  // Refresh = re-pull stock/PO numbers from Zoho, then re-read the grid.
+  async function syncStock() {
     setSyncing(true);
     try {
-      await axios.post('/api/wo/refresh', null, { params: full ? { full: 1 } : {} });
-      if (full) toast.success('Stock synced from Zoho');
+      await axios.post('/api/wo/refresh');
       load();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Stock sync failed');
@@ -57,43 +130,74 @@ export default function MaterialsGrid({ workOrderId, fgs, procStatus, onChanged 
 
   const rows = grid?.rows || [];
 
-  const tot = useMemo(() => rows.reduce(
-    (t, r) => ({
-      req: t.req + r.bom, res: t.res + r.reserved, iss: t.iss + r.issued,
-      short: t.short + (r.short ? r.shortfallQty : 0),
-    }),
-    { req: 0, res: 0, iss: 0, short: 0 },
-  ), [rows]);
-  const pct = tot.req ? Math.min(100, Math.round(100 * (tot.res + tot.iss) / tot.req)) : 0;
-
+  // A line still needs reserving when it isn't fully covered; for the other
+  // actions the actionable set is simply "there's a cap to act on".
+  const hasHeadroom = r => (action === 'reserve' ? r.needed > 0 : r[act.capKey] > 0);
   const counts = useMemo(() => ({
     all: rows.length,
     short: rows.filter(r => r.short).length,
-    reserve: rows.filter(r => r.reservable > 0).length,
     covered: rows.filter(r => r.needed === 0).length,
-  }), [rows]);
+    left: rows.filter(hasHeadroom).length,
+  }), [rows, action]);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter(r => {
       if (filter === 'short' && !r.short) return false;
-      if (filter === 'reserve' && !(r.reservable > 0)) return false;
       if (filter === 'covered' && r.needed !== 0) return false;
+      if (filter === 'left' && !hasHeadroom(r)) return false;
       if (q && !(r.name || '').toLowerCase().includes(q) && !(r.sku || '').toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [rows, filter, search]);
+  }, [rows, filter, search, action]);
 
-  async function doTxn(type, requested, itemId) {
-    setBusy(itemId ?? 'bulk');
+  const entered = useMemo(
+    () => Object.entries(qty).filter(([, v]) => Number(v) > 0).map(([itemId, v]) => ({ itemId, qty: Number(v) })),
+    [qty],
+  );
+  const enteredUnits = entered.reduce((s, e) => s + e.qty, 0);
+  const missingUnits = rows.reduce((s, r) => s + (r.short ? r.shortfallQty : 0), 0);
+
+  // Fill the most each line can take — the "reserve everything I can" case. Scoped
+  // to whatever the user is looking at: ticked rows if any, else the current filter.
+  function fillAvailable() {
+    const target = sel.size ? visible.filter(r => sel.has(r.itemId)) : visible;
+    const next = { ...qty };
+    let any = false;
+    for (const r of target) {
+      const cap = r[act.capKey];
+      if (cap > 0) { next[r.itemId] = String(cap); any = true; }
+    }
+    setQty(next);
+    if (!any) toast(`Nothing can be ${act.verb.toLowerCase()}d on these lines yet`);
+  }
+
+  const toggleRow = useCallback((itemId) => {
+    setSel(s => { const n = new Set(s); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n; });
+  }, []);
+  const setRowQty = useCallback((itemId, v) => setQty(q => ({ ...q, [itemId]: v })), []);
+  const allTicked = visible.length > 0 && visible.every(r => sel.has(r.itemId));
+  function toggleAll() {
+    setSel(s => {
+      const n = new Set(s);
+      if (allTicked) visible.forEach(r => n.delete(r.itemId));
+      else visible.forEach(r => n.add(r.itemId));
+      return n;
+    });
+  }
+
+  async function confirm() {
+    if (!entered.length) return toast.error('Enter a quantity on at least one line');
+    setBusy(true);
     try {
-      const { data } = await axios.post(`/api/wo/${workOrderId}/txn`, { fgId, type, requested, confirm: true });
+      const { data } = await axios.post(`/api/wo/${workOrderId}/txn`, {
+        fgId, type: action, requested: entered, confirm: true,
+      });
       toast.success(
         data.transferOrderNumber
-          ? `${VERB[type]} — Transfer Order ${data.transferOrderNumber} created`
-          : `${VERB[type]} — ${data.txnNumber}`,
+          ? `${act.verb}d — Transfer Order ${data.transferOrderNumber} created`
+          : `${act.verb}d — ${data.txnNumber}`,
       );
-      setReturnFor(null); setRetQty('');
       load();
       onChanged?.();
     } catch (err) {
@@ -101,56 +205,117 @@ export default function MaterialsGrid({ workOrderId, fgs, procStatus, onChanged 
       // Every problem at once, so the whole form is fixed in one pass.
       (d?.details || [d?.error || 'Could not complete the action']).forEach(m => toast.error(m, { duration: 6000 }));
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
-  }
-
-  // "Reserve everything available" — one txn covering every reservable line in view.
-  function reserveAll() {
-    const requested = visible.filter(r => r.reservable > 0).map(r => ({ itemId: r.itemId, qty: r.reservable }));
-    if (!requested.length) return toast('Nothing can be reserved on these lines yet');
-    doTxn('reserve', requested, null);
   }
 
   if (!fgs.length) return <Empty>Add a finished good to this work order first.</Empty>;
 
-  const missingUnits = tot.short;
+  const leftLabel = `Left to ${act.verb.toLowerCase()}`;
   const chips = [
     { key: 'all', label: 'All', n: counts.all },
     { key: 'short', label: 'Short', n: counts.short },
-    { key: 'reserve', label: 'To reserve', n: counts.reserve },
-    { key: 'covered', label: 'Covered', n: counts.covered },
+    { key: 'covered', label: 'Fully covered', n: counts.covered },
+    { key: 'left', label: leftLabel, n: counts.left },
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'auto' }}>
-      {/* utility row: finished good + sync */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 20px 0', flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      {/* action selector — the only thing that changes between the four jobs */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' }}>
         {fgs.length > 1 && (
-          <select value={fgId || ''} onChange={e => setFgId(e.target.value)} style={select}>
+          <select
+            value={fgId || ''}
+            onChange={e => {
+              // Switching FG reloads the grid and clears typed quantities — ask first.
+              if (entered.length && !window.confirm('Switching the finished good clears the quantities you typed. Continue?')) return;
+              setFgId(e.target.value);
+            }}
+            style={select}
+          >
             {fgs.map(f => <option key={f.id} value={f.id}>{f.name} × {f.qty}</option>)}
           </select>
         )}
-        {grid?.lastSyncAt && (
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            Stock last synced {grid.lastSyncAt} · BOM revision {grid.revision}
-          </span>
-        )}
-        <div style={{ flex: 1 }} />
-        <button onClick={() => syncStock(false)} disabled={syncing} style={btn}>{syncing ? 'Syncing…' : '⟳ Refresh stock'}</button>
-        <button onClick={() => syncStock(true)} disabled={syncing} title="Pull current stock for every item — reflects Zoho inventory adjustments / opening stock" style={btn}>Sync all</button>
-      </div>
-
-      {/* KPI band + overall coverage */}
-      <div style={{ padding: '12px 20px 0' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
-          <Kpi label="Required" value={tot.req} />
-          <Kpi label="Reserved" value={tot.res} color="var(--blue)" />
-          <Kpi label="Issued" value={tot.iss} color="#16a34a" />
-          <Kpi label="Short (to buy)" value={tot.short} color={tot.short > 0 ? '#b91c1c' : '#16a34a'} />
+        <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+          {ACTIONS.map(a => (
+            <button
+              key={a.key}
+              onClick={() => {
+                if (a.key === action) return;
+                // Same guard: the typed quantities belong to the current action.
+                if (entered.length && !window.confirm(`Switching to ${a.label} clears the quantities you typed. Continue?`)) return;
+                setAction(a.key); setQty({}); setSel(new Set());
+              }}
+              title={a.help}
+              style={{
+                padding: '7px 14px', fontSize: 13, border: 'none', cursor: 'pointer',
+                background: a.key === action ? 'var(--blue)' : 'var(--bg-card)',
+                color: a.key === action ? '#fff' : 'var(--text-secondary)',
+                fontWeight: a.key === action ? 600 : 400,
+              }}
+            >
+              {a.label}
+            </button>
+          ))}
         </div>
-        <div style={{ background: 'var(--bg-secondary)', height: 6, borderRadius: 999, overflow: 'hidden', marginTop: 10 }}>
-          <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, var(--blue), #16a34a)', borderRadius: 999 }} />
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{act.move}</span>
+        <div style={{ flex: 1 }} />
+        <button onClick={syncStock} disabled={syncing} style={btn}>{syncing ? 'Syncing…' : '⟳ Refresh stock'}</button>
+        <div style={{ position: 'relative' }}>
+          <button onClick={() => setDraftCfg(draftCfg ? null : colCfg)} title="Columns" aria-label="Columns"
+            style={{ ...btn, display: 'inline-flex', alignItems: 'center', padding: '7px 10px' }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>
+            </svg>
+          </button>
+          {draftCfg && (
+            <>
+              {/* click-away backdrop */}
+              <div onClick={() => setDraftCfg(null)} style={{ position: 'fixed', inset: 0, zIndex: 20 }} />
+              <div style={{
+                position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 21, width: 240,
+                background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.12)', padding: 6,
+              }}>
+                <div style={{ padding: '4px 8px 8px', fontSize: 11, color: 'var(--text-muted)' }}>Extra columns</div>
+                <div style={{ maxHeight: 320, overflow: 'auto' }}>
+                  {draftCfg.map(c => {
+                    const col = COLS.find(x => x.key === c.key);
+                    if (!col) return null;
+                    return (
+                      <label
+                        key={c.key}
+                        draggable
+                        onDragStart={() => setDragKey(c.key)}
+                        onDragOver={e => e.preventDefault()}
+                        onDrop={() => dropCol(c.key)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', fontSize: 13,
+                          borderRadius: 'var(--radius-sm)', cursor: 'grab',
+                          background: dragKey === c.key ? 'var(--bg-page)' : 'transparent',
+                        }}
+                      >
+                        <span style={{ color: 'var(--text-muted)', display: 'flex' }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="5" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="5" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="15" cy="19" r="1.5"/></svg>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={c.visible}
+                          onChange={() => setDraftCfg(cfg => cfg.map(x => x.key === c.key ? { ...x, visible: !x.visible } : x))}
+                        />
+                        <span>{col.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--border)' }}>
+                  <button onClick={() => setDraftCfg(defaultCfg())} style={{ ...btn, flex: 1 }}>Reset</button>
+                  <button onClick={() => setDraftCfg(null)} style={{ ...btn, flex: 1 }}>Cancel</button>
+                  <button onClick={applyCols} style={{ ...btn, flex: 1, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>Apply</button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -160,57 +325,57 @@ export default function MaterialsGrid({ workOrderId, fgs, procStatus, onChanged 
           warehouses in <b>Settings</b> (account menu, top right).
         </Banner>
       )}
+
+      {/* shortage warning bar — what can't be fully reserved, and the way out */}
       {grid?.shortCount > 0 && (
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 12, margin: '12px 20px 0', padding: '10px 14px',
+          margin: '10px 20px 0', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12,
           background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-md)',
         }}>
-          <div style={{ flex: 1, fontSize: 13, color: '#92400e', fontWeight: 600 }}>
-            {grid.shortCount} item{grid.shortCount === 1 ? ' is' : 's are'} short — {missingUnits.toLocaleString()} units must be bought before this order can be covered.
+          <span style={{ fontSize: 16 }} aria-hidden>⚠️</span>
+          <div style={{ flex: 1, fontSize: 13, color: '#92400e' }}>
+            <b>{grid.shortCount} item{grid.shortCount === 1 ? '' : 's'} can’t be fully reserved — {missingUnits.toLocaleString()} units missing.</b>{' '}
+            You can still reserve what’s available now.
           </div>
-          <button onClick={() => navigate('/wo/purchase')}
-            style={{ ...btn, background: '#b45309', borderColor: '#b45309', color: '#fff', fontWeight: 600, flexShrink: 0 }}>
+          <button
+            onClick={() => setFilter('short')}
+            style={{ ...btn, background: 'var(--bg-card)', borderColor: '#fcd34d', color: '#92400e' }}>
+            Show short items
+          </button>
+          <button
+            onClick={() => navigate('/wo/purchase')}
+            style={{ ...btn, background: '#b45309', borderColor: '#b45309', color: '#fff', fontWeight: 600 }}>
             Request purchase
           </button>
         </div>
       )}
-      {procStatus && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 12, margin: '12px 20px 0', padding: '10px 14px',
-          background: 'var(--blue-light)', border: '1px solid var(--blue-border)', borderRadius: 'var(--radius-md)',
-        }}>
-          <div style={{ flex: 1, fontSize: 13, color: 'var(--blue)', fontWeight: 600 }}>
-            Procurement is under way for this work order — {PROC_LABEL[procStatus] || procStatus}.
-          </div>
-          <button onClick={() => navigate('/wo/purchase')}
-            style={{ ...btn, color: 'var(--blue)', borderColor: 'var(--blue-border)', fontWeight: 600, flexShrink: 0 }}>
-            Track in Purchase request
-          </button>
-        </div>
-      )}
 
-      {/* filter chips + search + bulk reserve */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 20px 10px', flexWrap: 'wrap' }}>
+      {/* filter chips + search + bulk fill */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 20px 4px', flexWrap: 'wrap' }}>
         {chips.map(c => (
           <button key={c.key} onClick={() => setFilter(c.key)} style={chipStyle(filter === c.key)}>
             {c.label} <span style={{ fontWeight: 700 }}>{c.n}</span>
           </button>
         ))}
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Reserve: Main → Reserve WH · Issue: Reserve → Issue WH</span>
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Find an item or code"
-          style={{ ...select, width: 180, maxWidth: 180 }}
+          style={{ ...select, width: 220, maxWidth: 220 }}
         />
-        <button onClick={reserveAll} disabled={busy === 'bulk'}
-          style={{ ...btn, background: 'var(--blue)', borderColor: 'var(--blue)', color: '#fff', fontWeight: 600 }}>
-          {busy === 'bulk' ? 'Reserving…' : 'Reserve everything available'}
+        <button onClick={fillAvailable} style={{ ...btn, background: 'var(--blue)', borderColor: 'var(--blue)', color: '#fff', fontWeight: 600 }}>
+          {act.verb} everything available
         </button>
       </div>
 
-      <div style={{ padding: '0 20px 20px' }}>
+      {grid?.lastSyncAt && (
+        <div style={{ padding: '2px 20px 8px', fontSize: 12, color: 'var(--text-muted)' }}>
+          Stock last synced {grid.lastSyncAt} · BOM revision {grid.revision}
+        </div>
+      )}
+
+      <div style={{ flex: 1, overflow: 'auto', padding: '0 20px' }}>
         {loading ? <Empty>Loading…</Empty> : !rows.length ? (
           <Empty>No BOM lines yet — import the BOM on the <b>BOM</b> tab.</Empty>
         ) : !visible.length ? (
@@ -219,133 +384,150 @@ export default function MaterialsGrid({ workOrderId, fgs, procStatus, onChanged 
           <table style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
             <thead>
               <tr>
+                <th style={{ ...th, textAlign: 'center', width: 34 }}>
+                  <input type="checkbox" checked={allTicked} onChange={toggleAll} aria-label="Select all" />
+                </th>
                 <th style={{ ...th, textAlign: 'left' }}>Item</th>
-                <th style={th} title="What this work order needs in total: per-unit BOM × finished-good quantity.">Req</th>
-                <th style={th} title="On hand in the Main warehouse right now.">Stock</th>
+                <th style={th} title="What this work order needs in total: per-unit BOM × finished-good quantity.">Needed</th>
+                <th style={th} title="On hand in the Main warehouse right now.">In stock</th>
                 <th style={th} title="Sitting in the Reserve warehouse for this work order.">Reserved</th>
                 <th style={th} title="Sent to production, net of anything returned.">Issued</th>
-                <th style={th} title="Quantity ordered from vendors for this work order.">On order</th>
-                <th style={th} title="What cannot be covered from stock or open POs.">Short</th>
-                <th style={{ ...th, textAlign: 'left' }}>Status</th>
-                <th style={{ ...th, textAlign: 'right', minWidth: 210 }} />
+                {visibleCols.map(c => <th key={c.key} style={th} title={c.help}>{c.label}</th>)}
+                <th style={{ ...th, textAlign: 'left', minWidth: 150 }}>Coverage</th>
+                <th style={{ ...th, textAlign: 'right', minWidth: 130 }}>{act.verb} now</th>
               </tr>
             </thead>
             <tbody>
-              {visible.map(r => {
-                const [st, tone] = lineStatus(r);
-                const rowBusy = busy === r.itemId;
-                return (
-                  <Fragment key={r.itemId}>
-                    <tr style={{ borderBottom: returnFor === r.itemId ? 'none' : '1px solid var(--border)' }}>
-                      <td style={{ ...num, textAlign: 'left', fontFamily: 'var(--font)' }}>
-                        <div style={{ fontWeight: 500 }}>{r.name || r.itemId}</div>
-                        {r.sku && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{r.sku}{r.uom ? ` · ${r.uom}` : ''}</div>}
-                      </td>
-                      <td style={{ ...num, fontWeight: 600 }}>{r.bom.toLocaleString()}</td>
-                      <td style={num}>{r.stock.toLocaleString()}</td>
-                      <td style={{ ...num, color: r.reserved > 0 ? 'var(--blue)' : undefined, fontWeight: r.reserved > 0 ? 600 : 400 }}>{r.reserved.toLocaleString()}</td>
-                      <td style={{ ...num, color: r.issued > 0 ? '#15803d' : undefined, fontWeight: r.issued > 0 ? 600 : 400 }}>{r.issued.toLocaleString()}</td>
-                      <td style={{ ...num, color: r.po > 0 ? '#b45309' : 'var(--text-muted)' }}>{(r.po || 0).toLocaleString()}</td>
-                      <td style={{ ...num, fontWeight: r.short ? 700 : 400, color: r.short ? '#b91c1c' : 'var(--text-muted)' }}>{(r.short ? r.shortfallQty : 0).toLocaleString()}</td>
-                      <td style={{ padding: '8px 10px' }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 99, color: tone, background: `${tone}18`, whiteSpace: 'nowrap' }}>{st}</span>
-                      </td>
-                      <td style={{ padding: '6px 10px' }}>
-                        <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                          {r.reservable > 0 && (
-                            <button disabled={rowBusy} onClick={() => doTxn('reserve', [{ itemId: r.itemId, qty: r.reservable }], r.itemId)}
-                              style={{ ...actBtn, background: 'var(--blue-light)', borderColor: 'var(--blue-border)', color: 'var(--blue)' }}>
-                              Reserve {r.reservable.toLocaleString()}
-                            </button>
-                          )}
-                          {r.reserved > 0 && (
-                            <button disabled={rowBusy} onClick={() => doTxn('issue', [{ itemId: r.itemId, qty: r.reserved }], r.itemId)}
-                              style={{ ...actBtn, background: '#effaf2', borderColor: '#c9e5d2', color: '#15803d' }}>
-                              Issue {r.reserved.toLocaleString()}
-                            </button>
-                          )}
-                          {r.reserved > 0 && (
-                            <button disabled={rowBusy} title="Release the reservation back to the Main warehouse"
-                              onClick={() => doTxn('dereserve', [{ itemId: r.itemId, qty: r.reserved }], r.itemId)}
-                              style={actBtn}>
-                              Release
-                            </button>
-                          )}
-                          {r.issued > 0 && (
-                            <button disabled={rowBusy}
-                              onClick={() => { setReturnFor(returnFor === r.itemId ? null : r.itemId); setRetQty(String(r.issued)); }}
-                              style={actBtn}>
-                              Return
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                    {returnFor === r.itemId && (
-                      <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-page)' }}>
-                        <td colSpan={9} style={{ padding: '10px 14px', borderTop: '1px dashed var(--border-mid)' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
-                            <b>Return</b>
-                            <input
-                              type="number" min="1" max={r.issued} step="any" value={retQty}
-                              onChange={e => setRetQty(e.target.value)}
-                              style={{ width: 80, padding: '5px 8px', fontSize: 13, textAlign: 'right', fontFamily: 'var(--font-mono)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-card)' }}
-                            />
-                            <span style={{ color: 'var(--text-muted)' }}>of {r.issued.toLocaleString()} issued, back to the Main warehouse</span>
-                            <button disabled={rowBusy || !(Number(retQty) > 0) || Number(retQty) > r.issued}
-                              onClick={() => doTxn('return', [{ itemId: r.itemId, qty: Number(retQty) }], r.itemId)}
-                              style={{ ...actBtn, background: 'var(--blue)', borderColor: 'var(--blue)', color: '#fff' }}>
-                              {rowBusy ? 'Returning…' : 'Confirm return'}
-                            </button>
-                            <button onClick={() => setReturnFor(null)} style={{ ...actBtn, border: 'none', background: 'transparent', color: 'var(--text-muted)' }}>
-                              Cancel
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
+              {visible.map(r => (
+                <GridRow
+                  key={r.itemId} r={r} act={act} visibleCols={visibleCols}
+                  qtyVal={qty[r.itemId] ?? ''} ticked={sel.has(r.itemId)}
+                  onToggle={toggleRow} onQty={setRowQty}
+                />
+              ))}
             </tbody>
           </table>
         )}
+      </div>
+
+      {/* live confirm bar — pinned; nothing commits until pressed */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px',
+        borderTop: '1px solid var(--border)', background: 'var(--bg-card)',
+      }}>
+        <div style={{ flex: 1, fontSize: 13, color: 'var(--text-secondary)' }}>
+          {entered.length ? (
+            <>
+              <b style={{ color: 'var(--text-primary)' }}>{act.gerund} {enteredUnits.toLocaleString()} units across {entered.length} line{entered.length === 1 ? '' : 's'}</b>
+              <span style={{ color: 'var(--text-muted)' }}> · {act.move}</span>
+            </>
+          ) : (
+            <span style={{ color: 'var(--text-muted)' }}>Enter a quantity or press MAX to {act.verb.toLowerCase()} a line.</span>
+          )}
+        </div>
+        <button onClick={() => setQty({})} disabled={!entered.length} style={{ ...btn, opacity: entered.length ? 1 : 0.5 }}>
+          Discard changes
+        </button>
+        <button
+          onClick={confirm}
+          disabled={busy || !entered.length}
+          style={{
+            ...btn, background: entered.length ? 'var(--blue)' : 'var(--bg-card)',
+            color: entered.length ? '#fff' : 'var(--text-muted)', borderColor: entered.length ? 'var(--blue)' : 'var(--border)',
+            fontWeight: 600, cursor: entered.length && !busy ? 'pointer' : 'not-allowed', padding: '8px 16px',
+          }}
+        >
+          {busy ? 'Working…' : entered.length ? `${act.verb} ${entered.length} line${entered.length === 1 ? '' : 's'}` : `${act.verb} lines`}
+        </button>
       </div>
     </div>
   );
 }
 
-// Per-line state pill, worst problem first: short beats covered beats actionable.
-function lineStatus(r) {
-  if (r.short) return ['Short', '#b91c1c'];
-  if (r.needed === 0) return [r.issued >= r.bom ? 'Issued' : 'Covered', '#15803d'];
-  if (r.reservable > 0) return ['To reserve', '#2563eb'];
-  return ['Waiting stock', '#64748b'];
-}
-
-function Kpi({ label, value, color }) {
+// Coverage against the full requirement: issued (green) + reserved (blue) + the
+// outstanding remainder — hatched red when it can't be covered from stock, a
+// neutral track when it just hasn't been reserved yet.
+// Memoized row: typing in one row's qty input re-renders only that row, not
+// the whole grid — matters on multi-hundred-line BOMs.
+const GridRow = memo(function GridRow({ r, act, visibleCols, qtyVal, ticked, onToggle, onQty }) {
+  const cap = r[act.capKey];
+  const over = Number(qtyVal || 0) > cap;
   return (
-    <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '10px 14px' }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</div>
-      <div style={{ fontSize: 20, fontWeight: 700, marginTop: 2, color, fontFamily: 'var(--font-mono)' }}>{value.toLocaleString()}</div>
+    <tr style={{ borderBottom: '1px solid var(--border)' }}>
+      <td style={{ textAlign: 'center' }}>
+        <input type="checkbox" checked={ticked} onChange={() => onToggle(r.itemId)} aria-label={`Select ${r.name || r.itemId}`} />
+      </td>
+      <td style={{ ...num, textAlign: 'left', fontFamily: 'var(--font)' }}>
+        <div style={{ fontWeight: 500 }}>{r.name || r.itemId}</div>
+        {r.sku && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{r.sku}{r.uom ? ` · ${r.uom}` : ''}</div>}
+      </td>
+      <td style={{ ...num, fontWeight: r.needed > 0 ? 700 : 400, color: r.short ? '#b91c1c' : undefined }}>{r.bom.toLocaleString()}</td>
+      <td style={num}>{r.stock.toLocaleString()}</td>
+      <td style={num}>{r.reserved.toLocaleString()}</td>
+      <td style={num}>{r.issued.toLocaleString()}</td>
+      {visibleCols.map(c => (
+        <td key={c.key} style={{ ...num, color: c.key === 'reservable' && r[c.key] > 0 ? '#16a34a' : undefined }}>
+          {r[c.key]}
+        </td>
+      ))}
+      <td style={{ padding: '8px 10px' }}><CoverageBar r={r} /></td>
+      <td style={{ padding: '4px 8px' }}>
+        <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', alignItems: 'center' }}>
+          <input
+            type="number" min="0" max={cap} step="any"
+            value={qtyVal}
+            onChange={e => onQty(r.itemId, e.target.value)}
+            placeholder={cap > 0 ? '0' : '—'}
+            disabled={cap <= 0}
+            title={cap > 0 ? `Up to ${cap}` : `Nothing to ${act.verb.toLowerCase()} on this line`}
+            style={{
+              width: 72, padding: '5px 8px', fontSize: 13, textAlign: 'right',
+              fontFamily: 'var(--font-mono)', borderRadius: 'var(--radius-sm)',
+              border: `1px solid ${over ? '#dc2626' : 'var(--border)'}`,
+              background: cap <= 0 ? 'var(--bg-page)' : 'var(--bg-card)',
+              color: over ? '#dc2626' : 'inherit',
+            }}
+          />
+          <button
+            onClick={() => cap > 0 && onQty(r.itemId, String(cap))}
+            disabled={cap <= 0}
+            title={cap > 0 ? `Fill the most this line can take (${cap})` : 'Nothing available'}
+            style={{ ...maxBtn, opacity: cap <= 0 ? 0.4 : 1, cursor: cap <= 0 ? 'not-allowed' : 'pointer' }}>
+            MAX
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+});
+
+function CoverageBar({ r }) {
+  const basis = r.bom > 0 ? r.bom : (r.reserved + r.issued + r.needed);
+  if (!basis) return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>—</span>;
+  const pct = n => `${Math.max(0, Math.min(100, (n / basis) * 100))}%`;
+  const caption = r.needed === 0 ? 'covered' : r.short ? `${r.shortfallQty.toLocaleString()} missing` : `${r.needed.toLocaleString()} left to reserve`;
+  const capColor = r.needed === 0 ? '#15803d' : r.short ? '#b91c1c' : 'var(--text-muted)';
+  return (
+    <div>
+      <div style={{ display: 'flex', height: 6, borderRadius: 999, overflow: 'hidden', background: 'var(--bg-secondary)' }}>
+        <div style={{ width: pct(r.issued), background: '#16a34a' }} />
+        <div style={{ width: pct(r.reserved), background: 'var(--blue)' }} />
+        {r.short && (
+          <div style={{ width: pct(r.needed), backgroundImage: 'repeating-linear-gradient(45deg,#fca5a5 0,#fca5a5 4px,#fee2e2 4px,#fee2e2 8px)' }} />
+        )}
+      </div>
+      <div style={{ fontSize: 11, color: capColor, marginTop: 4 }}>{caption}</div>
     </div>
   );
 }
 
-const num = { padding: '8px 10px', fontSize: 13, textAlign: 'right', fontFamily: 'var(--font-mono)' };
-const th = {
-  padding: '9px 10px', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', textAlign: 'right',
-  background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap',
-  textTransform: 'uppercase', letterSpacing: '0.03em',
-};
 const btn = {
   padding: '7px 12px', fontSize: 12, background: 'var(--bg-card)', border: '1px solid var(--border)',
   borderRadius: 'var(--radius-md)', cursor: 'pointer', color: 'var(--text-secondary)',
 };
-const actBtn = {
-  padding: '5px 10px', fontSize: 12, fontWeight: 600, background: 'var(--bg-card)',
-  border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
-  color: 'var(--text-secondary)', whiteSpace: 'nowrap',
+const maxBtn = {
+  padding: '5px 8px', fontSize: 11, fontWeight: 600, background: 'var(--bg-secondary)',
+  border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)',
 };
 const select = {
   padding: '6px 10px', fontSize: 13, border: '1px solid var(--border)',
@@ -372,3 +554,5 @@ export function Banner({ tone = 'info', children }) {
     </div>
   );
 }
+
+export { ACTIONS, COLS };

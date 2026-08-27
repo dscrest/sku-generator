@@ -17,7 +17,7 @@ const COMPANY = {
     'Plot No.B-10,Swastik Industrial Park,',
     'Kothiya Kunha Road,Kunha Patiya,Ta-Daskroi,',
     'Ahmedabad, Gujarat, India',
-    'M: 91-9512506161 ·E: kamal@marutivalves.com',
+    'M: 91-9512506161',
     'E: sales@msunvalve.com · sales@marutivalves.com',
   ],
   gstin: '24AAQCM4066R1ZN',
@@ -66,14 +66,20 @@ export function FillTable({ widths, className = 'est-grid' }) {
   );
 }
 
-// Certificate strip pinned to the bottom of every printed sheet. If the image
-// fails to load, onError renders nothing (zero height, pagination unaffected).
+// Certification logos pinned to the bottom of every printed sheet (CR-058):
+// IAF · IAS · IBR · ISO as individual images. A logo that fails to load drops
+// out alone (zero width, pagination unaffected).
+const FOOT_LOGOS = ['IAF - LOGO.jpeg', 'IAS - LOGO.jpeg', 'IBR APPROVED - LOGO.jpeg', 'ISO - 9002-2015 - LOGO.png'];
+
 export function FootBand({ onLoad }) {
-  const [ok, setOk] = useState(true);
-  if (!ok) return null;
+  const [hidden, setHidden] = useState([]);
   return (
-    <img className="est-foot-band" src="MSUN-Footer_Certificates.png" alt=""
-      onLoad={onLoad} onError={() => setOk(false)} />
+    <div className="est-foot-band">
+      {FOOT_LOGOS.filter(f => !hidden.includes(f)).map(f => (
+        <img key={f} src={f} alt="" onLoad={onLoad}
+          onError={() => setHidden(h => [...h, f])} />
+      ))}
+    </div>
   );
 }
 

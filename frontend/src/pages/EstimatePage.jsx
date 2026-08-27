@@ -65,19 +65,22 @@ const CSS = `
    ponytail: budget uses full chrome for every page, so continuation pages
    under-fill by ~1 band height — safe (never overflows). */
 .est-print-area .est-sheet:not(:first-child) .est-head-band { display: none; }
-/* Certificate strip pinned to the sheet bottom (sheet is a flex column).
-   margin-top:auto is the safety net when the image fails to load and no
-   est-grow table fills the sheet. */
-.est-foot-band { margin-top: auto; width: 100%; }
+/* Certification-logo row pinned to the sheet bottom (sheet is a flex column).
+   margin-top:auto is the safety net when the images fail to load and no
+   est-grow table fills the sheet. Height-capped at the CR-055 16mm budget so
+   long item text + footer still fit one page. */
+.est-foot-band { margin: auto auto 0; display: flex; align-items: center; justify-content: center;
+  gap: 6mm; max-width: 100%; max-height: 13.6mm; }
+.est-foot-band img { max-height: 13.6mm; width: auto; }
 .est-proposal-title { text-align: center; font-weight: 800; color: #0F7576; text-transform: uppercase;
   letter-spacing: 1.2px; margin: 4px 0 8px; font-size: 14px; }
 .est-sheet table { width: 100%; border-collapse: collapse; }
-.est-hdr td { border: 1px solid #D8E5E4; background: #fff; padding: 4px 7px; vertical-align: top; }
+.est-hdr td { border: 1px solid #D8E5E4; background: #fff; padding: 4px 7px; vertical-align: middle; }
 .est-hdr .est-to-name { font-size: 15px; font-weight: 700; color: #111; }
 .est-hdr .est-offer-no { color: #0F7576; font-weight: 800; }
 .est-hdr .est-hdr-lbl { font-weight: 400; color: #555; }
 .est-grid { margin-top: 6px; }
-.est-grid th, .est-grid td { border: 1px solid #D8E5E4; padding: 3px 6px; vertical-align: top; }
+.est-grid th, .est-grid td { border: 1px solid #D8E5E4; padding: 3px 6px; vertical-align: middle; }
 .est-grid th { background: #0F7576; color: #fff; border-color: #0F7576; font-size: 11px;
   font-weight: 700; text-transform: uppercase; letter-spacing: .8px; }
 .est-grid tbody { break-inside: avoid; page-break-inside: avoid; }
@@ -92,7 +95,7 @@ const CSS = `
 /* Grand-total band, as the Sales Order template's totals-grand-row. */
 .est-grid tr.est-t-band td { background: #0F7576; color: #fff; border-color: #0F7576; }
 .est-tc { margin-top: 10px; }
-.est-tc td { border: 1px solid #D8E5E4; padding: 4px 7px; vertical-align: top; }
+.est-tc td { border: 1px solid #D8E5E4; padding: 4px 7px; vertical-align: middle; }
 .est-tc .est-tc-lbl { font-weight: 700; text-decoration: underline; width: 24%; background: #EFF5F4; }
 .est-tc-bank td { width: 25%; text-align: center; }
 .est-tc-bank .est-tc-lbl { text-decoration: none; }
@@ -141,8 +144,7 @@ function SheetChrome({ h, title, onLogoLoad }) {
         <tbody>
           <tr>
             <td style={{ width: '58%' }}>
-              <div>To,</div>
-              <div className="est-to-name">{h.to.name}</div>
+              <div className="est-to-name" style={{ whiteSpace: 'nowrap' }}>To, {h.to.name}</div>
               {h.to.address && <div>{h.to.address}</div>}
               {(h.to.phone || h.to.email) && <div>{[h.to.phone, h.to.email].filter(Boolean).join(' · ')}</div>}
               {h.to.gstin && <div><b>GSTIN:</b> {h.to.gstin}</div>}
@@ -276,11 +278,11 @@ function CalcSheet({ estimates, pages, priced, pageNo }) {
             return (
               <tr key={`${k}-${j}`}>
                 {j === 0 && (
-                  <td className="est-ctr" style={{ fontWeight: 700 }} rowSpan={p.items.length}>
+                  <td className="est-ctr" style={{ fontWeight: 700, verticalAlign: 'middle' }} rowSpan={p.items.length}>
                     PAG {String(k + 1).padStart(2, '0')}
                   </td>
                 )}
-                <td className="est-ctr" style={{ fontWeight: 700 }}>{it.title}</td>
+                <td style={{ fontWeight: 700, textAlign: 'center' }}>{it.title}</td>
                 <td className="est-ctr">{t.totalQty}</td>
                 {/* Amount is clubbed per page: one cell spanning the page's
                     item rows, mirroring the PAG cell. */}
@@ -294,12 +296,13 @@ function CalcSheet({ estimates, pages, priced, pageNo }) {
           }))}
         </tbody>
       </table>
-      <FillTable widths={widths} />
       <table className="est-grid" style={{ marginTop: 0 }}>
         <Cols widths={widths} />
         <tbody>
           <tr>
-            <td colSpan={2} className="est-t-lbl" style={{ textAlign: 'right' }}>Total Qty &amp; Amount</td>
+            {/* Non-priced sheets have no teal band below, so PAGE nn lives here. */}
+            {priced ? <td /> : <td className="est-ctr" style={bold}>PAGE {pageNo}</td>}
+            <td className="est-t-lbl" style={{ textAlign: 'right' }}>Total Qty &amp; Amount</td>
             <td className="est-ctr" style={bold}>{grand.totalQty}</td>
             {priced && <td className="est-num" style={bold}>{inr.format(grand.totalA)}</td>}
           </tr>
@@ -314,14 +317,14 @@ function CalcSheet({ estimates, pages, priced, pageNo }) {
           )}
           {priced && (
             <tr className="est-t-band">
-              <td colSpan={2} className="est-t-lbl" style={{ textAlign: 'right' }}>Final Basic Amount</td>
+              <td className="est-ctr est-t-final">PAGE {pageNo}</td>
+              <td className="est-t-lbl" style={{ textAlign: 'right' }}>Final Basic Amount</td>
               <td />
               <td className="est-num est-t-final">{inr.format(grand.net)}</td>
             </tr>
           )}
         </tbody>
       </table>
-      <div className="est-ctr" style={{ fontWeight: 800 }}>PAGE {pageNo}</div>
       <FootBand />
     </div>
   );
@@ -336,7 +339,7 @@ function CalcSheet({ estimates, pages, priced, pageNo }) {
 
 const MM = 96 / 25.4; // CSS px per mm
 const PAGE_PX = (297 - 24) * MM; // A4 height inside the sheet's 12mm vertical padding
-const SLACK_PX = 16; // print geometry matches screen; slack absorbs wrap/rounding drift
+const SLACK_PX = 24; // absorbs the unmeasured est-grid margin + wrap/rounding drift
 
 function EstimatePages({ estimates, priced, version }) {
   const [pages, setPages] = useState(null);
@@ -344,6 +347,15 @@ function EstimatePages({ estimates, priced, version }) {
   const remeasured = useRef(new Set()); // one re-run per image (logo, ISO strip)
 
   useLayoutEffect(() => { setPages(null); }, [estimates, priced, version]);
+
+  // The sheet renders in the Inter webfont; a measure pass that ran before it
+  // loaded packed items with shorter fallback-font heights, overflowing the
+  // printed page. Re-measure once all fonts are in.
+  useEffect(() => {
+    let live = true;
+    document.fonts?.ready?.then(() => { if (live) setPages(null); });
+    return () => { live = false; };
+  }, []);
 
   useLayoutEffect(() => {
     if (pages || !measureRef.current) return;
@@ -461,7 +473,7 @@ function RevFields({ value, onChange, label }) {
         <input type="date" value={v.revDate || ''} onChange={(e) => set({ revDate: e.target.value })} />
       </label>
       <label style={{ fontSize: 12 }}>Revision No{' '}
-        <input type="text" size={8} value={v.revNo || ''} onChange={(e) => set({ revNo: e.target.value })} />
+        <input type="number" min="1" step="1" style={{ width: 60 }} value={v.revNo || ''} onChange={(e) => set({ revNo: e.target.value })} />
       </label>
     </span>
   );

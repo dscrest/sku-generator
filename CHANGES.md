@@ -7,6 +7,11 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 | CR | Date | Title | Status |
 |----|------|-------|--------|
+| CR-059 | 2026-08-27 | Estimate print tweaks — CalcSheet PAGE nn moved off its stray line into the totals band, "To, {customer}" one bold line, all table cells vertically centered | ✅ shipped |
+| CR-058 | 2026-08-27 | Estimate footer → IAF · IAS · IBR · ISO certification row (individual images replace the baked ISO/IAS/IAF/D&B strip; D&B dropped, MSUN logo header-only); IAF jpeg cleaned of its baked-in transparency checkerboard | ✅ shipped |
+| CR-057 | 2026-08-27 | Demo revert: WO details page back to the pre-redesign screen (`WorkOrderPage.jsx` + `MaterialsGrid.jsx` restored from `b9a1248`) — CR-049 redesign + CR-051 movement ledger parked in git (`5d9eb68`) for re-restore after the demo | ✅ shipped |
+| CR-056 | 2026-08-26 | Estimate print polish — Revision No numeric (1,2,3…) printed before Revision Date (blank fields omitted), kamal@ email dropped from header, "To," + customer name on one line, CalcSheet ends at its aggregate rows (no stretch-to-footer), PAG NO. middle-aligned + long descriptions wrap | ✅ shipped |
+| CR-055 | 2026-08-26 | Estimate print: certificates footer height-capped at 16mm (centered), packing slack widened, and pagination re-measures after the Inter webfont loads — long item text + footer no longer break onto an extra page; geometry verified via headless-Chrome PDF harness | ✅ shipped |
 | CR-054 | 2026-08-26 | Estimate print: browser URL/date/title header-footer removed (`@page` margin 0, margins moved into sheet padding) + footer no longer spills to its own page — print geometry now matches the pagination measure pass | ✅ shipped |
 | CR-053 | 2026-08-26 | Estimate print: Revision No / Revision Date (toolbar fields, CR-050) now print in the sheet header below Offer Preparation Date when filled in | ✅ shipped |
 | CR-052 | 2026-08-26 | Estimate print: MSUN certificates strip as the page footer (fills the CR-050 ISO footer slot) + every sheet's table stretches to the footer — column rules run through the empty space, totals band at the page bottom | ✅ shipped |
@@ -62,6 +67,57 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 | CR-001 | 2026-05-28 | SKU editing + Zoho Books value sync & import | ✅ shipped |
 
 ---
+
+## CR-059 — Estimate print tweaks (2026-08-27) — ✅ shipped
+
+**Asked:** CalcSheet page number rendering wrong (stray "PAGE 03" line under
+the table), "To," + customer name on one bold line, all table text vertically
+centered in its cell.
+
+**Shipped (`EstimatePage.jsx`):**
+- CalcSheet: the floating `PAGE nn` div removed; the number now sits in the
+  first cell of the Final Basic Amount teal band (priced) or of the Total Qty
+  & Amount row (non-priced), matching the item sheets.
+- `To, {name}` is one non-wrapping `est-to-name` line (bold, 15px).
+- `.est-hdr td`, `.est-grid th/td`, `.est-tc td`: `vertical-align: top → middle`.
+
+## CR-058 — Estimate footer: certification-logo row (2026-08-27) — ✅ shipped
+
+**Asked:** replace the estimate print footer with the four supplied
+certification logos, one centered row, no MSUN logo in the footer (header
+only), D&B dropped.
+
+**Shipped**
+- `EstimateTerms.jsx` `FootBand` — the single baked-strip `<img>`
+  (`MSUN-Footer_Certificates.png`) replaced by a `div.est-foot-band` with four
+  `<img>`s from `frontend/public/`: `IAF - LOGO.jpeg`, `IAS - LOGO.jpeg`,
+  `IBR APPROVED - LOGO.jpeg`, `ISO - 9002-2015 - LOGO.png`. Each keeps the
+  pagination `onLoad` re-measure; a logo that fails to load drops out alone.
+- `EstimatePage.jsx` `.est-foot-band` CSS — flex row, centered, `gap: 6mm`,
+  imgs capped at 13.6mm (started at the CR-055 16mm budget; reduced 15% after
+  the row broke pagination in a real print).
+- `IAF - LOGO.jpeg` had the transparency checkerboard baked in — whitened
+  (light unsaturated pixels → white) via a one-off Pillow pass.
+
+**Not done:** D&B logo (dropped per user); deploy — held back because the
+tree carries the CR-057 demo WO revert and pending estimate edits.
+
+## CR-057 — Demo revert: old WO details screen (2026-08-27) — ✅ shipped
+
+**Asked:** "we want to demo older screen for now" — bring back the Work Order
+details page as it was before the CR-049 redesign.
+
+**Shipped:** `frontend/src/pages/WorkOrderPage.jsx` and
+`frontend/src/components/MaterialsGrid.jsx` restored from `b9a1248` (the commit
+before the redesign): Details · Items · Approvals · History tabs, confirm-bar
+materials grid. The CR-049 redesign + CR-051 movement ledger stay committed at
+`5d9eb68` — bring them back after the demo with
+`git checkout 5d9eb68 -- frontend/src/pages/WorkOrderPage.jsx frontend/src/components/MaterialsGrid.jsx`.
+The CR-051 backend enrichment in `txn.js` (txn lines carry name/sku/uom) is
+kept — the old page ignores the extra fields.
+
+**Caveat:** the old page assumes the fixed two-level approval flow; the backend
+has been dynamic since CR-042 (L2 optional). Fine for a demo, don't ship long.
 
 ## CR-052 — Estimate footer image + tables stretch to footer (2026-08-26) — ✅ shipped
 

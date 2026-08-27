@@ -16,6 +16,18 @@ Last updated: 2026-08-26.
 
 ## In progress
 
+### CR-059 — Estimate print tweaks (branch `feat/zoho-field-mapping`)
+- [x] CalcSheet PAGE nn into totals band; To-line bold single line; cells vertically centered
+- [ ] Verify on deploy: CalcSheet shows PAGE nn inside the teal band, long customer names stay on the To line, item rows read centered against tall description cells
+
+### CR-058 — Estimate footer certification-logo row (branch `feat/zoho-field-mapping`)
+- [x] `FootBand` → four individual logos (IAF · IAS · IBR · ISO) in a centered 13.6mm flex row (16mm broke print pagination); IAF jpeg checkerboard cleaned
+- [ ] Verify on deploy: footer row on every printed sheet incl. T&C page, no extra blank page in A4 print preview (CR-055 geometry)
+
+### CR-057 — Demo revert: old WO details screen (branch `feat/zoho-field-mapping`)
+- [x] `WorkOrderPage.jsx` + `MaterialsGrid.jsx` restored from `b9a1248` (pre-CR-049); redesign + ledger parked at `5d9eb68`
+- [ ] After the demo: `git checkout 5d9eb68 -- frontend/src/pages/WorkOrderPage.jsx frontend/src/components/MaterialsGrid.jsx`, rebuild, deploy — then close CR-049/051 verify items
+
 ### CR-051 — WO Activity in/out movement ledger (branch `feat/zoho-field-mapping`)
 - [x] `txn.js` `listTxns` — txn lines enriched with `name`/`sku`/`uom` from the WO's `WorkOrderLine` rows (one extra query)
 - [x] `WorkOrderPage.jsx` `ActivityTab` — movement cards (↗ out / ↙ in, colored edge, route chip, TO number, item rows with qty); audit events as slim rows in the same stream
@@ -312,6 +324,8 @@ Reference + setup procedure: [WORKORDER.md](WORKORDER.md).
 
 ## Done (recent — full detail in CHANGES.md)
 
+- [x] CR-055 Estimate print: footer capped 16mm + font-load re-measure; spill-free confirmed by headless-Chrome PDF test (2026-08-26)
+- [x] CR-056 Estimate print polish: numeric Revision No before Revision Date (blank = omitted), header email removed, "To, <name>" one line, CalcSheet compact (no filler stretch), PAG NO. middle-aligned, wrapping descriptions (2026-08-26)
 - [x] CR-054 Estimate print: no browser URL/date header-footer (`@page` margin 0 + sheet padding); footer stays on its page — print matches measured layout (2026-08-26)
 - [x] CR-053 Estimate print: toolbar Revision No/Date print in the sheet header below Offer Preparation Date when set (2026-08-26)
 - [x] CR-052 Estimate print: MSUN certificates footer image + tables stretch to the footer on every sheet (2026-08-26)
