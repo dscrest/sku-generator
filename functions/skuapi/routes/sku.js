@@ -1,7 +1,8 @@
 "use strict";
 const express = require("express");
-const { rowList, out, idOk, orgClause, ownsRow, findSkuRowId, isActive, nameFilter } = require("../store");
+const { rowList, out, idOk, orgClause, findSkuRowId, isActive, nameFilter } = require("../store");
 const { saveItemValues, deleteItemValues, missingRequired } = require("../itemValues");
+const { nextSeriesSku, stripSuffix, escRe } = require("../skuSeries");
 const { pushToZoho } = require("../zoho/push");
 
 const router = express.Router();
@@ -78,7 +79,23 @@ router.post("/generate", async (req, res) => {
     }
 
     const sep = industry.skuSeparator || "";
-    const sku = segments.map((s) => s.join("")).join(sep);
+    let sku = segments.map((s) => s.join("")).join(sep);
+    if (sku && Number(industry.seriesStart) > 0) {
+      // Numerical series (CR-089). Preview computes but never consumes a
+      // number. Editing keeps the item's existing suffix while its property
+      // combination is unchanged; a changed combination gets a fresh number.
+      let kept = null;
+      if (idOk(excludeItemId)) {
+        const cur = rowList(
+          await zcql.executeZCQLQuery(
+            `SELECT sku FROM SKUItem WHERE ROWID = ${excludeItemId} AND ${orgClause(req.catalyst)}`,
+          ),
+        )[0];
+        const m = cur && new RegExp(`^${escRe(sku + sep)}(\\d{4})$`, "i").exec(cur.sku);
+        if (m) kept = m[1];
+      }
+      sku = kept ? sku + sep + kept : await nextSeriesSku(req.catalyst, sku, sep, industry.seriesStart);
+    }
     res.json({
       sku,
       name: nameParts.join(" "),
@@ -102,17 +119,33 @@ router.post("/create-item", async (req, res) => {
   if (!idOk(industryId)) return res.status(400).json({ error: "Invalid industryId" });
 
   try {
-    if (!(await ownsRow(req.catalyst, "Industry", industryId))) return res.status(404).json({ error: "Industry not found" });
+    // Loading the industry IS the ownership check (replaces ownsRow) — its
+    // seriesStart drives the suffix recompute below.
+    const inds = rowList(
+      await req.catalyst.zcql().executeZCQLQuery(
+        `SELECT * FROM Industry WHERE ROWID = ${industryId} AND ${orgClause(req.catalyst)}`,
+      ),
+    );
+    if (!inds.length) return res.status(404).json({ error: "Industry not found" });
+    const industry = out(inds[0]);
     const missing = await missingRequired(req.catalyst, industryId, selectedValues);
     if (missing.length) {
       return res.status(400).json({ error: `Required fields missing: ${missing.join(", ")}` });
     }
-    if (await findSkuRowId(req.catalyst, sku)) {
+    // Series suffix is recomputed server-side at save time so two users racing
+    // on the same combination converge on fresh numbers (the client sends the
+    // preview's sku, which may be stale by now).
+    let finalSku = sku;
+    if (Number(industry.seriesStart) > 0) {
+      const sep = industry.skuSeparator || "";
+      finalSku = await nextSeriesSku(req.catalyst, stripSuffix(sku, sep), sep, industry.seriesStart);
+    }
+    if (await findSkuRowId(req.catalyst, finalSku)) {
       return res.status(409).json({ error: "SKU already exists" });
     }
     const row = await req.catalyst.datastore().table("SKUItem").insertRow({
       name,
-      sku,
+      sku: finalSku,
       description: description || null,
       type,
       industryId: String(industryId),

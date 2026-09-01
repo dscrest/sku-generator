@@ -18,14 +18,27 @@
 const { rowList, zStr } = require("../store");
 const { dsDate } = require("../zoho/auth");
 const { getItemStock, listItemsWithStock } = require("../zoho/inventoryApi");
-const { byOrg, inList, warehouses, logActivity } = require("./store");
+const { byOrg, inList, warehouses, logActivity, setSetting } = require("./store");
 const { refreshPurchaseOrders } = require("./purchase");
 const { refreshComposite } = require("./bom");
 
 const n = (v) => Number(v) || 0;
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const DELAY_MS = 150; // Zoho allows ~100 req/min/org
 const OPEN_WO = ["Closed", "Cancelled"];
+
+// Run `fn` over `items` at most `limit` at a time. The reconcile is bounded by
+// Catalyst's 30s function ceiling, so per-item Zoho calls must overlap instead
+// of running serially — a single sequential sweep of a few hundred items times
+// out (408). limit 6 keeps ~6 concurrent Zoho calls: fast enough to finish well
+// inside 30s, gentle enough not to trip the org rate limit for a short burst.
+// The full catalog sweep no longer relies on one request fitting the ceiling —
+// reconcileOrg pages it via offset/limit (see below).
+async function mapLimit(items, limit, fn) {
+  const it = items[Symbol.iterator]();
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (let x = it.next(); !x.done; x = it.next()) await fn(x.value);
+  });
+  await Promise.all(workers);
+}
 
 // The only items worth syncing: raw materials on work orders still in play.
 async function workingSet(catalyst, orgId) {
@@ -48,14 +61,11 @@ async function workingSet(catalyst, orgId) {
  * Upsert one item's stock rows: the org total plus a row per warehouse when
  * Zoho gives us the breakdown. Column B reads the Main-warehouse row.
  */
-async function writeStock(catalyst, orgId, item, source) {
-  const table = catalyst.datastore().table("ItemStockSnapshot");
-  const itemId = String(item.item_id);
-  const existing = await byOrg(catalyst, orgId, "ItemStockSnapshot", `itemId = ${zStr(itemId)}`);
-  const byWarehouse = new Map(existing.map((r) => [String(r.warehouseId || ""), r]));
-
-  // Locations-enabled orgs report the breakdown as locations[] with location_*
-  // field names; legacy orgs as warehouses[] with warehouse_* names.
+// Pure: shape a Zoho item payload into stock rows — index 0 is the org total
+// (warehouseId ""), then one row per warehouse/location. Locations-enabled orgs
+// report the breakdown as locations[] with location_* field names; legacy orgs
+// as warehouses[] with warehouse_* names.
+function stockTargets(item) {
   const pick = (...vs) => vs.find((v) => v !== undefined);
   const targets = [{ warehouseId: "", stockOnHand: n(item.stock_on_hand), availableStock: n(item.available_stock) }];
   for (const w of [...(item.warehouses || []), ...(item.locations || [])]) {
@@ -65,18 +75,60 @@ async function writeStock(catalyst, orgId, item, source) {
       availableStock: n(pick(w.warehouse_available_stock, w.location_available_stock, w.available_stock)),
     });
   }
+  return targets;
+}
+
+async function writeStock(catalyst, orgId, item, source) {
+  const table = catalyst.datastore().table("ItemStockSnapshot");
+  const itemId = String(item.item_id);
+  const existing = await byOrg(catalyst, orgId, "ItemStockSnapshot", `itemId = ${zStr(itemId)}`);
+  const byWarehouse = new Map(existing.map((r) => [String(r.warehouseId || ""), r]));
+
+  const targets = stockTargets(item);
 
   for (const t of targets) {
     const prev = byWarehouse.get(t.warehouseId);
     const fields = {
       orgId: String(orgId), itemId, warehouseId: t.warehouseId,
+      itemName: item.name || "", sku: item.sku || "",
       stockOnHand: t.stockOnHand, availableStock: t.availableStock,
       source, syncedAt: dsDate(Date.now()),
     };
     if (prev) await table.updateRow({ ROWID: prev.ROWID, ...fields });
     else await table.insertRow({ ...fields, poQty: 0, receivedQty: 0, billedQty: 0 });
   }
+
+  // Drop per-warehouse rows this payload no longer carries — else a location
+  // that emptied out (or an old breakdown Zoho stopped returning) leaves a stale
+  // row behind. Only when the payload HAS a breakdown: a total-only payload
+  // (bulk list) says nothing about warehouses, and pruning on it deletes the
+  // Main-warehouse baseline the grid and the TO write-through depend on — that
+  // is how WO-0008 showed In stock −2 (write-through rebuilt Main from 0).
+  if (targets.length > 1) {
+    const keep = new Set(targets.map((t) => t.warehouseId));
+    for (const r of existing) {
+      if (!keep.has(String(r.warehouseId || ""))) await table.deleteRow(r.ROWID);
+    }
+  }
 }
+
+// Per-org delta cursor: the newest Zoho last_modified_time an incremental full
+// sweep has caught up to. Stored in the generic OrgSetting key/value table (no
+// schema change). Read directly so it never leaks into the /settings response.
+async function getStockCursor(catalyst, orgId) {
+  const rows = rowList(await catalyst.zcql().executeZCQLQuery(
+    `SELECT settingValue FROM OrgSetting WHERE orgId = ${zStr(String(orgId))} AND settingKey = 'stockSyncCursor'`,
+  ));
+  return rows.length && rows[0].settingValue ? String(rows[0].settingValue) : null;
+}
+const newestLmt = (bulk) => {
+  let max = null;
+  for (const it of bulk.values()) {
+    const lmt = it.last_modified_time;
+    if (lmt && (!max || new Date(lmt).getTime() > new Date(max).getTime())) max = lmt;
+  }
+  return max;
+};
 
 /**
  * One org's nightly reconcile. Returns a count of everything touched so the
@@ -86,10 +138,23 @@ async function writeStock(catalyst, orgId, item, source) {
 // "Sync all stock" path so a Zoho adjustment / opening stock on any item lands
 // immediately, even when the item is on no open WO. full skips the PO/composite
 // refresh (it only needs stock), so it stays a stock-only pull.
-async function reconcileOrg(catalyst, orgId, { full = false } = {}) {
+//
+// A full sweep of a Locations-enabled org needs one item-detail call PER item
+// (the bulk list reports stock_on_hand 0 with no per-location breakdown). To
+// keep that affordable it runs incrementally: a per-org cursor (newest Zoho
+// last_modified_time) means a normal sync only pulls items changed since — five
+// changed items cost ~five calls, not the whole catalog. First run (no cursor)
+// and `force` do the full sweep, which is paged (`limit` → items[offset..+limit],
+// returns `{ total, nextOffset, done }`) so each request clears the 30s ceiling;
+// the cursor is advanced once a sweep completes.
+async function reconcileOrg(catalyst, orgId, { full = false, force = false, offset = 0, limit = null } = {}) {
   const ws = full ? { itemIds: [], fgItemIds: [] } : await workingSet(catalyst, orgId);
   const result = { items: 0, purchaseOrders: 0, compositeItems: 0 };
   if (!full && !ws.itemIds.length) return result;
+
+  // Incremental only when full, not forced, and a cursor exists. The delta is
+  // small, so it is processed whole (no paging); a full/forced sweep still pages.
+  const cursor = full && !force ? await getStockCursor(catalyst, orgId) : null;
 
   // Bulk /items sweep first (200 per call), then a per-item detail call only
   // where the bulk payload is ambiguous: Locations-enabled orgs report
@@ -100,45 +165,59 @@ async function reconcileOrg(catalyst, orgId, { full = false } = {}) {
   let bulk = new Map();
   try {
     bulk = new Map(
-      (await listItemsWithStock(catalyst))
+      (await listItemsWithStock(catalyst, cursor ? { since: cursor } : undefined))
         .filter((i) => !wanted || wanted.has(String(i.item_id)))
         .map((i) => [String(i.item_id), i]),
     );
   } catch (err) {
     console.error("bulk stock list failed, falling back to per-item:", err && err.message);
   }
-  const itemIds = full ? [...bulk.keys()] : ws.itemIds;
+  const allIds = full ? [...bulk.keys()] : ws.itemIds;
+  // Page only a full/forced sweep; the incremental delta is small enough to
+  // finish in one request. total/nextOffset/done let the caller resume a sweep.
+  const paged = full && !cursor && limit != null;
+  const total = allIds.length;
+  const itemIds = paged ? allIds.slice(offset, offset + limit) : allIds;
+  const nextOffset = offset + itemIds.length;
   const fgItemIds = ws.fgItemIds;
-  for (const itemId of itemIds) {
+  await mapLimit(itemIds, 6, async (itemId) => {
     const b = bulk.get(String(itemId));
-    const trustworthy = b && (n(b.stock_on_hand) > 0 || (b.warehouses || []).length || (b.locations || []).length);
+    // Trust the bulk row only when it carries the per-warehouse breakdown —
+    // writeStock needs it to keep the Main-warehouse row fresh. A bare total
+    // (this org's bulk shape) forces the item-detail call.
+    const trustworthy = b && ((b.warehouses || []).length || (b.locations || []).length);
     try {
-      if (trustworthy) {
-        await writeStock(catalyst, orgId, b, "cron");
-      } else {
-        await writeStock(catalyst, orgId, await getItemStock(catalyst, itemId), "cron");
-        await sleep(DELAY_MS);
-      }
+      const item = trustworthy ? b : await getItemStock(catalyst, itemId);
+      await writeStock(catalyst, orgId, item, "cron");
       result.items++;
     } catch (err) {
       console.error(`item ${itemId} stock refresh failed:`, err && err.message);
     }
-  }
+  });
 
-  if (full) return result; // stock-only pull — skip PO/composite refresh
+  // stock-only pull — skip PO/composite refresh; hand back paging cursor.
+  if (full) {
+    const done = paged ? nextOffset >= total : true;
+    // Advance the cursor once the sweep is complete (whole delta, or last chunk),
+    // so the next sync only pulls what changed after the newest item seen here.
+    if (done) {
+      const newest = newestLmt(bulk);
+      if (newest) await setSetting(catalyst, orgId, "stockSyncCursor", newest);
+    }
+    return { ...result, total, nextOffset, done };
+  }
 
   const po = await refreshPurchaseOrders(catalyst, orgId);
   result.purchaseOrders = po.purchaseOrders;
 
-  for (const fgItemId of fgItemIds) {
+  await mapLimit(fgItemIds, 6, async (fgItemId) => {
     try {
       await refreshComposite(catalyst, orgId, fgItemId);
       result.compositeItems++;
     } catch (err) {
       console.error(`composite ${fgItemId} refresh failed:`, err && err.message);
     }
-    await sleep(DELAY_MS);
-  }
+  });
   return result;
 }
 
@@ -249,7 +328,10 @@ async function handleZohoEvent(catalyst, orgId, type, body) {
 async function syncItem(catalyst, orgId, itemId) {
   const item = await getItemStock(catalyst, itemId);
   await writeStock(catalyst, orgId, item, "manual");
-  return { itemId: String(itemId), stockOnHand: n(item.stock_on_hand) };
+  // Return the org total plus the per-warehouse breakdown so the caller (the
+  // per-item refresh in the report) can patch its row in place, no re-pull.
+  const targets = stockTargets(item);
+  return { itemId: String(itemId), stockOnHand: targets[0].stockOnHand, availableStock: targets[0].availableStock, warehouses: targets.slice(1) };
 }
 
 /** Warehouse list for the settings screen (the one place that needs it live). */
@@ -264,6 +346,6 @@ async function warehouseOptions(catalyst) {
 }
 
 module.exports = {
-  OPEN_WO, workingSet, writeStock, reconcileOrg, reconcileAllOrgs, tokenForOrg,
-  handleZohoEvent, warehouseOptions, warehouses, syncItem,
+  OPEN_WO, workingSet, writeStock, stockTargets, reconcileOrg, reconcileAllOrgs, tokenForOrg,
+  handleZohoEvent, warehouseOptions, warehouses, syncItem, mapLimit,
 };

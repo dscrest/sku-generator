@@ -10,11 +10,181 @@ Related docs: [CHANGES.md](CHANGES.md) (change requests + shipped log),
 [SCHEMA.md](SCHEMA.md) (DB), [ARCHITECTURE.md](ARCHITECTURE.md) (system),
 [ZOHO_AUTH.md](ZOHO_AUTH.md) (OAuth setup).
 
-Last updated: 2026-08-26.
+Last updated: 2026-09-01.
 
 ---
 
 ## In progress
+
+### CR-090 — Admin console org registry (branch `feat/zoho-field-mapping`)
+- [x] Catalyst — new `Org` table (`orgId` varchar 50 unique mandatory, `orgName` varchar 255) via MCP
+- [x] `zoho/auth.js` — `saveOrg` best-effort upserts into `Org` (try/catch, never blocks selection)
+- [x] `routes/admin.js` — `GET /orgs` unions Org ∪ distinct ZohoToken (pure `orgUnion` + `--selftest`); `Org` in `ORG_TABLES` cascade
+- [x] `AddonAdminPage.jsx` — org-count badge + missing `work-order` label
+- [ ] Verify after deploy: switch ABC → XYZ → both listed with independent toggles; count badge = 2; delete an org removes its registry row
+
+### CR-089 — SKU numerical series per property combination (branch `feat/zoho-field-mapping`)
+- [x] Catalyst — `Industry.seriesStart` (int, nullable) via MCP
+- [x] New `skuSeries.js` (`nextSuffix`/`nextSeriesSku`/`stripSuffix`) + `skuSeries.test.js`
+- [x] `store.js` — `seriesStart` in `NUM_COLS`
+- [x] `routes/industries.js` — accept/persist `seriesStart` (POST/PUT)
+- [x] `routes/sku.js` — `/generate` appends suffix (edit keeps it while combination unchanged); `/create-item` recomputes server-side
+- [x] `IndustriesPage.jsx` — Numerical Series field in Add/Edit modals + grid column
+- [x] `SKUGeneratorPage.jsx` — series chip + toast uses server sku
+- [ ] Verify after deploy: series 1 on an industry → same combination twice = `-0001`, `-0002`; different value = `-0001`; edit without changing values keeps the number; blank field = no suffix
+
+### CR-087 — Push-to-Books config dialog + CF mapping removal (branch `feat/zoho-field-mapping`)
+- [x] `booksApi.js` — `listStockAccounts`; `createItem` takes `{ tracking, inventoryAccountId }` (serial default, batch via `track_batch_number`); all custom-field push code deleted
+- [x] `inventoryApi.js` — `createCompositeItem` same tracking/account opts; CF code removed
+- [x] `push.js` / `itemValues.js` — opts threaded through `pushToZoho`/`pushManufacturing`; `buildZohoCustomFields` deleted
+- [x] `routes/skuItems.js` — `GET /stock-accounts`; push route reads `{ tracking, inventoryAccountId }` body
+- [x] `SKUItemsPage.jsx` — pre-push dialog (single + Push All), tracking radio, account dropdown default Finished Goods
+- [x] Tests — `push.test.js` + `booksApi.test.js` rewritten for tracking/account mapping and no-CF payloads
+- [ ] Verify after deploy: push Trading + Manufacturing item with Batch + chosen account → Books item batch-tracked, right account, no custom fields; `track_batch_number` accepted by the live org
+
+### CR-086 — SKU generator: Tab between property fields (branch `feat/zoho-field-mapping`)
+- [x] `SKUGeneratorPage.jsx` — `tabIndex={0}` on property selects + range inputs (macOS browsers skip selects on Tab by default)
+- [ ] Verify after deploy: on the SKU Generator, click the first property, press Tab → focus moves down the property list; dropdowns open with Space/arrows
+
+### CR-085 — Industries tab → account/Settings menu (branch `feat/zoho-field-mapping`)
+- [x] `App.jsx` — Industries out of `SKU_TABS`; "Industries" item in the account dropdown (sku-generator addon); SKU nav + `/sku/*` fallback → `/sku/items`; industries routes kept for permalinks
+- [ ] Verify after deploy: SKU Generator sidebar entry opens the items list; account menu → Industries opens the old page; deep links from Properties/global search still work
+
+### CR-084 — Purchase requests: modify & delete + WO Purchase tab (branch `feat/zoho-field-mapping`)
+- [x] `purchase.js` — `deletePR` (409 when any line is on a PO) + `deletePRLine` (last line deleted → PR removed too, `prDeleted:true`); `pr.delete`/`pr.line.delete` activity
+- [x] Routes — `DELETE /api/wo/pr/:prId`, `DELETE /api/wo/pr-line/:lineId`
+- [x] `PurchaseTab.jsx` — "Delete request" (confirm modal) on Draft PRs, per-line ✕ on lines without a PO
+- [x] `WorkOrderPage.jsx` — Purchase tab renders `PurchaseTab` (detail endpoint already returns `purchaseRequests`)
+- [ ] Verify after deploy (WO-0009): edit PR qty 2 → 10 from WO → Purchase; delete a line → shortfall returns; delete the PR → chip clears; confirmed PR delete 409s until the PO is deleted
+
+### CR-083 — "Request purchase" prefills the grid's Purchase action (branch `feat/zoho-field-mapping`)
+- [x] `MaterialsGrid.jsx` — button no longer navigates to `/wo/purchase`; it switches to Purchase mode and prefills qty = `shortfallQty` for ticked rows (else all short rows); confirm bar raises the PR as in CR-077
+- [ ] Verify after deploy: on a WO with short items, click Request purchase → Purchase mode + shortfalls prefilled → Request N lines → PR number toast, chip shows Requested; ticking one row prefills only it; double-raise 409s "Already requested"
+
+### CR-082 — WO approval levels setting (branch `feat/zoho-field-mapping`)
+- [x] `store.js` — `approvalLevels` in `SETTING_KEYS` (select: Auto/Disabled/1/2), pure `approvalLevelCount` (explicit setting wins, else derived from approver emails, none → 0), `requiredLevelsMet(set, count)`; selftest cases
+- [x] Routes — `/approve` 409s at 0 levels or level > count; status advance + `/invoice-gate` (`[1,2].slice(0,count)`, empty = allowed) use the count; WO detail returns `requiredApprovalLevels`
+- [x] UI — settings page renders `select`-type keys; WO page hides Approve/Reject at 0 levels; Approvals tab: disabled notice at 0, one card at 1
+- [ ] Verify after deploy: settings dropdown persists; Disabled → no Approve button + invoice gate open; 1 level → L1 approves to Approved, L2 attempt 409s; 2 levels → PendingApproval after L1; Auto matches configured emails
+
+### CR-081 — Qty inputs: no spinner arrows (branch `feat/zoho-field-mapping`)
+- [x] Global `index.css` rule hides spin buttons on all `input[type="number"]` (webkit + `appearance: textfield`); numeric-only typing unchanged
+- [ ] Verify after deploy: qty boxes (Materials grid, Purchase pages, PO edit) show no arrows, typing letters still rejected
+
+### CR-080 — WO Close (all-issued gate) + admin Reopen with reason (branch `feat/zoho-field-mapping`)
+- [x] Close gate in `POST /:id/status`: 409 `unissued` with item list when net issued < required; `force:true` closes anyway (logged `forced:true`); `unissuedRows` + `unissued.test.js`
+- [x] `POST /:id/reopen` (requireAdmin): Closed → Completed, reason required, `wo.reopen` logged with reason (History tab)
+- [x] UI: Close WO button (Completed) + warn modal, Reopen WO button (Closed, admin only) + reason modal; `user` threaded to WorkOrderPage
+- [ ] Deploy, then verify: close a fully-issued WO silently, close a short WO via the warning, reopen as admin (reason in History), non-admin gets no button and a 403
+
+### CR-075 — WO "In stock" −2: snapshot prune/write-through chain (branch `feat/zoho-field-mapping`)
+- [x] `writeStock` prunes per-warehouse rows only when the payload has a breakdown; breakdown-less bulk rows fall to the item-detail call; `healStock` also heals a missing Main row
+- [x] `stocktargets.test.js` writeStock prune tests + selftests pass
+- [ ] Deploy, then per-item Sync on item 123456789 → WO-0008 In stock shows the real Head-Office qty (not −2)
+- [ ] Verify WO Settings Main warehouse (`4000844000000032109`) is the Head Office location; check Zoho — if its Main went negative from TO 4000844000001673101, fix in Zoho (redo TO / adjust stock)
+
+### CR-079 — By-item Purchase page qty always editable (branch `feat/zoho-field-mapping`)
+- [x] ByItemView/RowGroup: `canOrder` gate removed — checkbox + qty input on every row (covered rows default 0); select-all covers all rows; `raise()` drops zero-qty lines
+- [x] `raiseItemPO`: covered/extra item (qty > 0, no pending breakdown) inserts one unattributed line instead of being skipped; selftest passes
+- [ ] Deploy + verify: WO-0010 → Request purchase → 987654333 row editable, type 5 + vendor → Raise PO creates PR + draft PO
+
+### CR-078 — cf_so_no SO traceability on TOs + PO lines (branch `feat/zoho-field-mapping`)
+- [x] `createTransferOrder` sends `custom_fields: [{cf_so_no}]` (SO number from `confirmTxn`); retry once without CFs if the org lacks the field
+- [x] `createPurchaseOrder` line items send `item_custom_fields: [{cf_so_no}]`; same strip-CFs retry; `poPutBody` echoes `item_custom_fields` through PO edits
+- [x] `collapseLines` keyed by (item, SO) → one PO line per SO; `confirmPR` stamps the WO's SO on every line; `raiseItemPO` carries per-breakdown SO (in memory, no DB column)
+- [x] Selftest: per-SO collapse + item_custom_fields echo
+- [ ] Deploy + verify: Reserve → TO in Zoho Inventory shows cf_so_no; confirm PR → PO lines show SO NO per line; By-item raise across 2 SOs → 2 lines; PO qty edit keeps cf_so_no
+
+### CR-077 — Materials grid Purchase action (branch `feat/zoho-field-mapping`)
+- [x] Fifth action "Purchase" on the WO Materials grid: uncapped qty input, MAX = remaining shortfall, Confirm posts the PR with the typed lines
+- [ ] Verify: WO → Materials → Purchase → tick item, type qty → Confirm → PR appears under Purchase page → Requests with that qty
+
+### CR-076 — PO GST retry, duplicate-PR guard, pre-raise qty (branch `feat/zoho-field-mapping`)
+- [x] `createPurchaseOrder` retries once with flipped IGST↔CGST+SGST on Zoho 3032/3033
+- [x] `createPR` re-nets posted lines against open draft PRs (`openDraftLines` shared with the shortfall route) → 409 when fully covered
+- [x] PurchaseTab shortfall qty editable before raising; zero-qty lines dropped
+- [ ] Deploy + verify: failing PR now raises its PO (IGST on the Books PO); double "Raise purchase request" → 409 toast; edited qty lands on the PR line
+
+### CR-070 — Cheaper stock sync: incremental delta + webhooks (branch `feat/zoho-field-mapping`)
+- [x] `listItemsWithStock({since})` — newest-first + early-stop; `reconcileOrg` reads/advances `OrgSetting.stockSyncCursor`; incremental delta processed whole, full/force sweep paged
+- [x] `/refresh` accepts `?force=1`; **⟳ Sync stock** (incremental) + **↻ Full resync** buttons
+- [x] `internalAuth` accepts `?secret=` fallback for Books webhook rules; WORKORDER.md §4.6 updated
+- [x] `maplimit.test.js` delta early-stop + cursor-max assertions pass
+- [ ] Deploy + verify: 1st sync writes `stockSyncCursor`; change one item → access logs show ~1 list + ~1 detail call (not 143)
+- [ ] Client: register Books `item` workflow rule → confirm 200 + a `source:"webhook"` snapshot row
+
+### CR-074 — Warehouse-per-column flat grid (branch `feat/zoho-field-mapping`)
+- [x] `warehouseStock` pivots server-side: `{ warehouses, mainWarehouseId, issueWarehouseId, items }`; Available = main − issue (org-total fallback); syncedAt = newest row
+- [x] Flat grid, dynamic warehouse columns, "—" when no breakdown; dropdown filters (warehouse + stock qty) + zero-stock checkbox; GridFooter pagination
+- [x] Per-item ⟳ patch recomputes stocks/total/available; CSV pivots warehouse names to columns; CR-073 reserved/issued fields removed
+- [x] Tests + build pass; deployed
+- [ ] Verify: columns match org warehouses, Available = Head Office − Issue, dropdowns + checkbox + pager work, ⟳ updates a row in place
+
+### CR-073 — Reserve/Issue → consumption columns (branch `feat/zoho-field-mapping`)
+- [x] `warehouseStock` pivots Reserve/Issue location rows into per-item `reserved`/`issued`; only physical warehouses group; `syncItem` returns both for live patch
+- [x] Grid columns `Item | SKU | On hand | Reserved | Issued | Available | Last synced` + group totals; CSV labels added
+- [x] Tests + build pass; deployed
+- [ ] Verify: Reserve/Issue no longer appear as groups; Reserved/Issued figures match Zoho; per-item ⟳ updates them
+
+### CR-072 — Warehouse-stock report redesign (branch `feat/zoho-field-mapping`)
+- [x] `byOrgAll` in store.js — ROWID-cursor paging past ZCQL's ~300-row cap; `warehouseStock` returns full per-warehouse set + "Unassigned" group; rows carry `warehouseId`+`syncedAt`; `?warehouseId=` filter dropped
+- [x] New grouped grid: collapsible warehouse headers (totals, zero count, per-group ⟳ Sync), per-item ⟳, SKU, color-coded stock, Last synced
+- [x] Chip filters (warehouse counts + All/In stock/Low(<10)/Zero) + "Ignore items with 0 stock" checkbox + Sync visible; all client-side
+- [x] Fonts: Inter body + Space Grotesk display app-wide (index.html, index.css, SKUGeneratorPage tokens)
+- [x] Tests (stocktargets, maplimit, store selftest) + build pass; deployed
+- [ ] Verify on `/wo/reports` → Warehouse stock: groups collapse, chips + checkbox filter, per-group Sync walks items, Last synced updates, fonts changed
+- [ ] Optional: re-skin exactly from `Warehouse Stock.dc.html` once the design file is dropped into the repo
+
+### CR-071 — Warehouse-stock report: per-item ⟳ refresh + SKU column (branch `feat/zoho-field-mapping`)
+- [x] `stockTargets(item)` extracted from `writeStock` (pure); `syncItem` returns `{stockOnHand, availableStock, warehouses[]}`
+- [x] `WorkOrderReportsPage.refreshItem(itemId)` — one `sync-stock` call, patches the row in place (org total, or selected warehouse's breakdown); busy spinner; no re-pull
+- [x] `⟳` button per item row + SKU column restored; subtotal/grand-total colSpans widened; `npm run build` passes
+- [x] `stocktargets.test.js` (org-total-first + per-location/warehouse shaping) passes
+- [ ] Deploy + verify on `/wo/reports` → Warehouse stock: ⟳ updates one item's numbers in place; item/SKU search + SKU column; warehouse-filtered refresh patches that warehouse's row
+
+### CR-069 — Warehouse-stock report: merged warehouse cells (branch `feat/zoho-field-mapping`)
+- [x] `WarehouseStock` → single grouped table, `rowSpan`-merged + shaded warehouse cell over each group's item rows + subtotal
+- [x] Columns `Warehouse | Item Name | Stock on hand | Available` (SKU dropped from screen, still in CSV export)
+- [x] Per-warehouse subtotals + grand total preserved; `npm run build` passes
+- [ ] Deploy + verify on `/wo/reports` → Warehouse stock: one table, merged shaded warehouse cells, totals correct
+
+### CR-068 — Warehouse-stock report reads item-level on-hand (branch `feat/zoho-field-mapping`)
+- [x] `warehouseStock` default view = org-total row per item (item-level truth, no 300-row truncation); warehouse pick → that warehouse's rows
+- [x] `writeStock` deletes per-warehouse rows the fresh payload no longer carries (no stale 0 rows)
+- [x] Report warehouse dropdown fed from `/settings` locations; filter now server-side (`?warehouseId=`)
+- [x] Deployed
+- [ ] Verify: AFR - AIRWIN shows on-hand 1 in the report (refresh; no resync needed — org-total already 1)
+
+### CR-067 — "Sync all stock" 408 fix: paged full sweep (branch `feat/zoho-field-mapping`)
+- [x] `reconcileOrg({full,offset,limit})` processes a 50-item slice, returns `{total,nextOffset,done}`; route passes `offset`/`limit` through
+- [x] `WorkOrderReportsPage.syncAll()` loops chunks until done (`Syncing… N/total`)
+- [x] `maplimit.test.js` paging-cursor check (every id once, terminates) passes
+- [ ] Deploy + verify: full sync completes with no 408; AFR - AIRWIN lands in `ItemStockSnapshot` with on-hand 1 at its location
+
+### CR-066 — Stock refresh 408 fix (branch `feat/zoho-field-mapping`)
+- [x] `reconcileOrg` per-item + composite loops run via `mapLimit(items, 6, fn)`; removed serial `sleep`/`DELAY_MS`; `maplimit.test.js` passes
+- [ ] Verify on deploy: "⟳ Refresh stock" returns 200 (access-log duration well under 30s), no 408
+- [ ] Deferred: move reconcile to a background job when the working set outgrows 6-wide-in-30s (`ponytail:` at `mapLimit`)
+
+### CR-065 — Estimate uses CRM per-line Size field (branch `feat/zoho-field-mapping`)
+- [x] `buildEstimate` reads `line.Size` (source of truth) over stale description `Size:`; distinct sizes per row; test 5c
+- [ ] Verify on deploy (`/#/estimate?quoteId=1356653000001379320`): one name shows its distinct sizes (26"/19"/20"/21"…) each with its own price
+
+### CR-064 — Estimate SIZE printed once per run (branch `feat/zoho-field-mapping`)
+- [x] `ItemRows` size stack blanks a size that repeats the row above (empty `<li>` keeps alignment); prices/qty per row unchanged
+- [ ] Verify on deploy (`/#/estimate?quoteId=1356653000001379320`): SR 11 shows `26" DN 650` once; a genuine multi-size item still prints each distinct size once
+
+### CR-063 — Estimate size-value spacing (branch `feat/zoho-field-mapping`)
+- [x] One `<tr>` per item; Size/Qty/List/Amount stacked with 10px gaps (`est-stack`), aligned via uniform entry height
+- [ ] Verify on deploy: a 2-size item shows tight 10px-gapped values at the top (no stretch); many-size items still aligned; pagination/column rules intact
+
+### CR-062 — Estimate stale in-line Size fix (branch `feat/zoho-field-mapping`)
+- [x] `parseLineDescription` drops the redundant `Size:` spec line (SIZE column is the source of truth); test 1b covers it
+- [ ] Verify on deploy: a same-name item with a changed size prints the new size, no `Size:` line in the description block
+
+### CR-060 — Estimate print polish (branch `feat/zoho-field-mapping`)
+- [x] Revision No free text + above date; SR-NO top-aligned; Terms↔Bank gap→divider; bold customer contact; contact-email fallback; company email two lines; CalcSheet PAGE nn aligned to item pages
+- [ ] Verify on deploy: type R1 in Revision No prints as-is above the date; customer email shows in the To block (else find the real CRM field on a live `_contact`); bank table sits under Terms with the divider; summary PAGE nn lines up with pages 1–2
 
 ### CR-059 — Estimate print tweaks (branch `feat/zoho-field-mapping`)
 - [x] CalcSheet PAGE nn into totals band; To-line bold single line; cells vertically centered
@@ -324,6 +494,7 @@ Reference + setup procedure: [WORKORDER.md](WORKORDER.md).
 
 ## Done (recent — full detail in CHANGES.md)
 
+- [x] CR-061 Warehouse-stock report — `/wo/reports` "Warehouse stock" tab (item × warehouse On hand/Available), warehouse + item-search filters, ⟳ Sync all stock + CSV; `ItemStockSnapshot` gains `itemName`/`sku` (2026-08-29)
 - [x] CR-055 Estimate print: footer capped 16mm + font-load re-measure; spill-free confirmed by headless-Chrome PDF test (2026-08-26)
 - [x] CR-056 Estimate print polish: numeric Revision No before Revision Date (blank = omitted), header email removed, "To, <name>" one line, CalcSheet compact (no filler stretch), PAG NO. middle-aligned, wrapping descriptions (2026-08-26)
 - [x] CR-054 Estimate print: no browser URL/date header-footer (`@page` margin 0 + sheet padding); footer stays on its page — print matches measured layout (2026-08-26)

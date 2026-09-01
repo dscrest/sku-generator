@@ -94,11 +94,19 @@ function assemble(wo, fg, lines, stock, balances, po, lastSyncAt, mainWarehouseI
   };
 }
 
-// Self-heal: never-synced items read as zero stock → false shortage. Pull
-// them live once (in parallel — bounded by BOM size); the webhook/reconcile
-// keeps them fresh from then on. Mutates `stock`.
+// Self-heal: never-synced items read as zero stock → false shortage, and an
+// item with only the org-total row reads as the org total → over-promises B and
+// lets a reserve drive the Main warehouse negative. Pull either live once (in
+// parallel — bounded by BOM size); the webhook/reconcile keeps them fresh from
+// then on. Mutates `stock`.
 async function healStock(catalyst, orgId, stock, itemIds, mainWarehouseId) {
-  const missing = [...new Set(itemIds.filter((id) => !stock.has(id)))];
+  // ponytail: an item whose Zoho detail carries no breakdown at all stays
+  // !__main and re-heals on every grid open (one call per item); add a
+  // cooldown if an org without per-warehouse tracking ever connects.
+  const missing = [...new Set(itemIds.filter((id) => {
+    const s = stock.get(id);
+    return !s || (mainWarehouseId && !s.__main);
+  }))];
   if (!missing.length) return;
   const { getItemStock } = require("../zoho/inventoryApi");
   const { writeStock } = require("./sync");

@@ -154,6 +154,8 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
       lines,
       // Fallback number for orgs with Transfer Order auto-numbering off (code 6).
       numberHint: txn.txnNumber,
+      // Published to the TO's cf_so_no SO-lookup custom field (needs the id).
+      soId: wo.salesOrderId || "",
     });
   } catch (err) {
     throw friendlyTransferError(err);

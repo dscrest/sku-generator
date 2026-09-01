@@ -55,9 +55,13 @@ router.post("/logout", (_req, res) => {
 
 router.get("/me", requireAuth, async (req, res) => {
   try {
-    const user = await getUserById(req.catalyst, req.userId);
+    // Parallel: independent lookups — shorter execution = a concurrency slot
+    // freed sooner (Dev env throttles on concurrency × duration, CR-088).
+    const [user, token] = await Promise.all([
+      getUserById(req.catalyst, req.userId),
+      loadToken(req.catalyst, req.userId),
+    ]);
     if (!user) return res.status(401).json({ error: "Not authenticated" });
-    const token = await loadToken(req.catalyst, req.userId);
     const orgId = (token && token.orgId) || null;
     res.json({
       ...shape(user),

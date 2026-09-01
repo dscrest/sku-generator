@@ -6,7 +6,7 @@
  * which is the whole reason the read model exists.
  */
 const { zStr } = require("../store");
-const { byOrg, inList } = require("./store");
+const { byOrg, byOrgAll, inList, settings } = require("./store");
 const { buildGridsBulk } = require("./grid");
 
 const n = (v) => Number(v) || 0;
@@ -33,6 +33,15 @@ function rollUp(rows) {
   // Fully covered = nothing outstanding and nothing short.
   t.complete = t.shortItems === 0 && t.required > 0 && t.reserved + t.issued >= t.required;
   return t;
+}
+
+/**
+ * Pure: grid rows not yet fully issued (net issued < required). The Close gate —
+ * unlike rollUp's `complete`, reserved material does not count; closing means
+ * manufacturing consumed it.
+ */
+function unissuedRows(rows) {
+  return rows.filter((r) => n(r.issued) < n(r.bom));
 }
 
 /**
@@ -229,6 +238,59 @@ async function reconciliation(catalyst, orgId, { workOrderId } = {}) {
   return out;
 }
 
+/**
+ * Pure: join stock-snapshot rows to warehouse names and shape the report row.
+ * `snap` rows are ItemStockSnapshot; `whMap` is warehouseId → name. Rows with no
+ * matching warehouse fall back to the id so nothing is dropped. Sorted by item
+ * then warehouse.
+ */
+/**
+ * Warehouse-wise stock report, pivoted: one entry per ITEM with a column per
+ * warehouse. Reads the FULL snapshot set from our own cache (zero per-item
+ * Zoho calls), paged past ZCQL's ~300-row cap.
+ *
+ * `available` follows the Work Order logic (formulas.js: B = Main-warehouse
+ * stock, issue routes reserve→issue, return routes issue→main): what can still
+ * be consumed = Main (Head Office) stock − qty sitting in the Issue warehouse.
+ * Items with no per-warehouse breakdown yet (Locations orgs' bulk sync only
+ * writes the org total) fall back to their org total so stock never hides
+ * (CR-068). Stale breakdown rows are pruned at write time (writeStock).
+ */
+async function warehouseStock(catalyst, orgId) {
+  const { warehouseOptions } = require("./sync");
+  const warehouses = (await warehouseOptions(catalyst))
+    .sort((a, b) => (b.isPrimary === true) - (a.isPrimary === true))
+    .map((w) => ({ id: String(w.id), name: w.name }));
+  const cfg = await settings(catalyst, orgId);
+  const mainWarehouseId = String(cfg.mainWarehouseId || "");
+  const issueWarehouseId = String(cfg.issueWarehouseId || "");
+
+  const byItem = new Map();
+  for (const r of await byOrgAll(catalyst, orgId, "ItemStockSnapshot")) {
+    const id = String(r.itemId);
+    const it = byItem.get(id) || { itemId: id, itemName: r.itemName || id, sku: r.sku || null, stocks: {}, total: 0, syncedAt: null };
+    if (r.itemName) it.itemName = r.itemName;
+    if (r.sku) it.sku = r.sku;
+    const wid = String(r.warehouseId || "");
+    if (wid) it.stocks[wid] = n(r.stockOnHand);
+    else it.total = n(r.stockOnHand);
+    // dsDate strings ("yyyy-MM-dd HH:mm:ss") compare correctly as strings.
+    if (r.syncedAt && (!it.syncedAt || String(r.syncedAt) > it.syncedAt)) it.syncedAt = String(r.syncedAt);
+    byItem.set(id, it);
+  }
+
+  const items = [...byItem.values()]
+    .map((it) => ({
+      ...it,
+      available: Object.keys(it.stocks).length
+        ? n(it.stocks[mainWarehouseId]) - n(it.stocks[issueWarehouseId])
+        : it.total, // no breakdown yet — org total is the honest answer
+    }))
+    .sort((a, b) => a.itemName.localeCompare(b.itemName));
+
+  return { warehouses, mainWarehouseId, issueWarehouseId, items };
+}
+
 // The work order's own History tab feed: material movements + BOM revisions +
 // approvals, newest first, already merged.
 async function history(catalyst, orgId, workOrderId) {
@@ -247,7 +309,7 @@ async function history(catalyst, orgId, workOrderId) {
   }));
 }
 
-module.exports = { rollUp, soBom, shortfall, history, pipelineRollup, itemPipeline, reconcileRows, reconciliation };
+module.exports = { rollUp, unissuedRows, soBom, shortfall, history, pipelineRollup, itemPipeline, reconcileRows, reconciliation, warehouseStock };
 
 // ponytail self-check: `node functions/skuapi/workorder/reports.js --selftest`
 if (require.main === module && process.argv.includes("--selftest")) {

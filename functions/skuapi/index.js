@@ -45,11 +45,16 @@ app.use("/auth/zoho", require("./routes/zohoAuth"));
 // req.catalyst.__orgId scope every data query to that tenant.
 const { requireAuth, requireAdmin } = require("./session");
 const { requireAddon } = require("./addons");
-const { loadToken } = require("./zoho/auth");
+const { loadToken, cachedOrgId, rememberOrgId } = require("./zoho/auth");
 async function requireOrg(req, res, next) {
   try {
-    const token = await loadToken(req.catalyst, req.userId);
-    const orgId = token && token.orgId;
+    // 60s cache: most requests skip the ZohoToken query entirely (CR-088).
+    let orgId = cachedOrgId(req.userId);
+    if (!orgId) {
+      const token = await loadToken(req.catalyst, req.userId);
+      orgId = token && token.orgId;
+      if (orgId) rememberOrgId(req.userId, orgId);
+    }
     if (!orgId) return res.status(400).json({ error: "No Zoho organization selected" });
     req.orgId = String(orgId);
     req.catalyst.__orgId = req.orgId;
@@ -87,7 +92,11 @@ app.use("/api/sku-items", skuGen, require("./routes/skuItems"));
 
 // ---- internal endpoints: no user session, shared-secret guarded ----
 function internalAuth(req, res) {
-  if (!process.env.SYNC_SECRET || req.get("X-Sync-Secret") !== process.env.SYNC_SECRET) {
+  // Header is the norm (cron sends it). Books workflow-rule webhooks can't always
+  // set a custom header, so a `?secret=` query param is accepted as a fallback —
+  // the rule authenticates from its URL alone. Same shared secret either way.
+  const supplied = req.get("X-Sync-Secret") || req.query.secret;
+  if (!process.env.SYNC_SECRET || supplied !== process.env.SYNC_SECRET) {
     res.status(401).json({ error: "unauthorized" });
     return false;
   }

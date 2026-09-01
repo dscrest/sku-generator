@@ -2,7 +2,6 @@
 const { isConfigured, dsDate } = require("./auth");
 const { createItem, updateItem, findItemByName, getItem, deleteItem } = require("./booksApi");
 const { createCompositeItem, updateCompositeItemFields, getCompositeItem, updateCompositeItem } = require("./inventoryApi");
-const { buildZohoCustomFields } = require("../itemValues");
 const { rowList, out, orgClause, zStr, isActive, idOk } = require("../store");
 
 // Books says the linked item no longer exists (deleted in Books):
@@ -101,14 +100,13 @@ async function syncMappedItems(catalyst, item, desired) {
 // plain-item id, so the composite update 404s — if that plain item still
 // exists, delete it first or the composite create collides on SKU. Books
 // refuses to delete an item with transactions; that error surfaces verbatim.
-async function pushManufacturing(catalyst, item, description, customFields) {
+async function pushManufacturing(catalyst, item, description, opts = {}) {
   if (item.zohoItemId) {
     try {
       const updated = await updateCompositeItemFields(catalyst, item.zohoItemId, {
         name: item.name,
         sku: item.sku,
         ...(description !== undefined ? { description, purchase_description: description } : {}),
-        ...(customFields && customFields.length ? { custom_fields: customFields } : {}),
       });
       await syncMappedItems(catalyst, item, await buildAssociatedItems(catalyst, item));
       return updated;
@@ -121,7 +119,8 @@ async function pushManufacturing(catalyst, item, description, customFields) {
   }
   const mappedItems = await buildAssociatedItems(catalyst, item);
   const comp = await createCompositeItem(catalyst, {
-    name: item.name, sku: item.sku, description, customFields, mappedItems,
+    name: item.name, sku: item.sku, description, mappedItems,
+    tracking: opts.tracking, inventoryAccountId: opts.inventoryAccountId,
   });
   const compId = comp && (comp.composite_item_id || comp.item_id);
   if (compId) {
@@ -133,30 +132,31 @@ async function pushManufacturing(catalyst, item, description, customFields) {
 /**
  * Best-effort push of a SKU item to Zoho Books. No-op (returns null) until Zoho
  * credentials are configured. `item` is the API-shaped row (item.id = ROWID).
- * Property values whose Property has a zohoCfApiName are pushed into the matching
- * Books custom fields. Manufacturing items become composite (assembly) items;
- * Trading items stay plain inventory items. `item.type` tells which Books API
- * the stored zohoItemId belongs to — safe because type locks after first push.
+ * Custom fields are never pushed — the client maintains them in Books by hand.
+ * Manufacturing items become composite (assembly) items; Trading items stay
+ * plain inventory items. `item.type` tells which Books API the stored
+ * zohoItemId belongs to — safe because type locks after first push.
+ * opts: { tracking: 'none'|'serial'|'batch', inventoryAccountId } from the push
+ * dialog — only used on create (immutable in Books after transactions).
  */
-async function pushToZoho(catalyst, item, description) {
+async function pushToZoho(catalyst, item, description, opts = {}) {
   if (!isConfigured()) {
     console.log("[Zoho] skipped (not configured) — sku:", item.sku);
     return null;
   }
-  const customFields = await buildZohoCustomFields(catalyst, item.id);
   let result;
   if (item.type === "Manufacturing") {
-    result = await pushManufacturing(catalyst, item, description, customFields);
+    result = await pushManufacturing(catalyst, item, description, opts);
   } else {
     if (item.zohoItemId) {
       try {
-        result = await updateItem(catalyst, item.zohoItemId, item.name, item.sku, description, customFields);
+        result = await updateItem(catalyst, item.zohoItemId, item.name, item.sku, description);
       } catch (e) {
         if (!isGone(e)) throw e; // stale link: item was deleted in Books → re-create below
       }
     }
     if (result === undefined) {
-      result = await createItem(catalyst, item.name, item.sku, description, customFields);
+      result = await createItem(catalyst, item.name, item.sku, description, opts);
       if (result && result.item_id) {
         await catalyst.datastore().table("SKUItem").updateRow({ ROWID: item.id, zohoItemId: String(result.item_id) });
       }
@@ -192,7 +192,7 @@ async function pushValueToZoho(catalyst, value) {
   // (a) already linked → keep Books in sync; a dead link falls through to re-create
   if (value.zohoItemId) {
     try {
-      return await updateItem(catalyst, value.zohoItemId, name, undefined, description, []);
+      return await updateItem(catalyst, value.zohoItemId, name, undefined, description);
     } catch (e) {
       if (!isGone(e)) throw e;
       value.zohoItemId = null;
@@ -224,7 +224,7 @@ async function pushValueToZoho(catalyst, value) {
 
   // (d) nothing found → create it
   if (!zohoItemId) {
-    const zohoItem = await createItem(catalyst, name, undefined, description, []);
+    const zohoItem = await createItem(catalyst, name, undefined, description);
     if (zohoItem && zohoItem.item_id) zohoItemId = String(zohoItem.item_id);
   }
 

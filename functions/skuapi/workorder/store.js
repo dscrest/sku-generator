@@ -29,6 +29,16 @@ const SETTING_KEYS = [
   { key: "purchaseTeamEmail", label: "Purchase team email", type: "email", hint: "Receives material shortfall alerts" },
   { key: "approverL1Email", label: "Approver — level 1", type: "email" },
   { key: "approverL2Email", label: "Approver — level 2", type: "email" },
+  {
+    key: "approvalLevels", label: "Approval levels", type: "select",
+    hint: "Disabled = work orders need no approval",
+    options: [
+      { value: "", label: "Auto (from approver emails)" },
+      { value: "0", label: "Disabled" },
+      { value: "1", label: "1 level" },
+      { value: "2", label: "2 levels" },
+    ],
+  },
   { key: "shortfallAlertDays", label: "Shortfall alert after (days)", type: "number", hint: "Days from BOM import before alerting" },
   { key: "costAlertPct", label: "Cost alert threshold (%)", type: "number", hint: "% of estimated cost that triggers a review" },
   { key: "woNumberPrefix", label: "Work order prefix", type: "text" },
@@ -151,6 +161,24 @@ async function byOrg(catalyst, orgId, table, where, order) {
   return rowList(await catalyst.zcql().executeZCQLQuery(q));
 }
 
+// Like byOrg but complete: pages past ZCQL's ~300-row cap on a ROWID cursor so
+// callers that need every row (e.g. the warehouse-stock report's full
+// per-warehouse set) never hit silent truncation.
+async function byOrgAll(catalyst, orgId, table, where) {
+  const PAGE = 290;
+  const out = [];
+  let last = "0";
+  for (;;) {
+    let q = `SELECT * FROM ${table} WHERE orgId = ${zStr(String(orgId))} AND ROWID > ${last}`;
+    if (where) q += ` AND ${where}`;
+    q += ` ORDER BY ROWID LIMIT ${PAGE}`;
+    const page = rowList(await catalyst.zcql().executeZCQLQuery(q));
+    out.push(...page);
+    if (page.length < PAGE) return out;
+    last = String(page[page.length - 1].ROWID);
+  }
+}
+
 // ZCQL has no IN-with-empty-list; this keeps callers from building `IN ()`.
 // Empty/null values are dropped too: callers pass ROWID lists, and a blank id
 // (e.g. a consolidated PR's workOrderId "") makes ZCQL reject the whole query
@@ -175,15 +203,26 @@ function creatableSalesOrders(sos, takenSoIds) {
   });
 }
 
-// Two-level sign-off is dynamic: level 2 is required only when an L2 approver is
-// configured. Level 1 alone suffices otherwise. Pure so it can be self-checked.
-function requiredLevelsMet(approvedLevels, l2Required) {
-  return approvedLevels.has(1) && (!l2Required || approvedLevels.has(2));
+// How many approval levels this org requires (0, 1 or 2). The explicit
+// `approvalLevels` setting wins; unset falls back to which approver emails are
+// configured — none configured means no approval at all. Pure, self-checked.
+function approvalLevelCount(s) {
+  const v = String(s.approvalLevels ?? "").trim();
+  if (v !== "") return Math.min(2, Math.max(0, Number(v) || 0));
+  if (String(s.approverL2Email || "").trim()) return 2;
+  if (String(s.approverL1Email || "").trim()) return 1;
+  return 0;
+}
+
+// Sign-off is dynamic: every level up to the configured count must approve;
+// zero levels means nothing is required. Pure so it can be self-checked.
+function requiredLevelsMet(approvedLevels, levelCount) {
+  return levelCount === 0 || (approvedLevels.has(1) && (levelCount < 2 || approvedLevels.has(2)));
 }
 
 module.exports = {
   DEFAULTS, WAREHOUSE_KEYS, SETTING_KEYS, settings, setSetting, warehouses, routeFor,
-  nextNumber, logActivity, byOrg, inList, creatableSalesOrders, requiredLevelsMet,
+  nextNumber, logActivity, byOrg, byOrgAll, inList, creatableSalesOrders, requiredLevelsMet, approvalLevelCount,
 };
 
 // ponytail self-check: `node functions/skuapi/workorder/store.js --selftest`
@@ -266,11 +305,20 @@ if (require.main === module && process.argv.includes("--selftest")) {
     );
     assert.deepStrictEqual(creatableSalesOrders([], new Set()), []);
 
-    // Dynamic approval: L1 alone suffices unless an L2 approver is configured.
-    assert.strictEqual(requiredLevelsMet(new Set([1]), false), true, "L1 enough when no L2 approver");
-    assert.strictEqual(requiredLevelsMet(new Set([1]), true), false, "L1 not enough when L2 required");
-    assert.strictEqual(requiredLevelsMet(new Set([1, 2]), true), true, "both satisfy L2-required");
-    assert.strictEqual(requiredLevelsMet(new Set([2]), false), false, "L1 is always required");
+    // Dynamic approval: every level up to the configured count must sign off.
+    assert.strictEqual(requiredLevelsMet(new Set(), 0), true, "zero levels means nothing required");
+    assert.strictEqual(requiredLevelsMet(new Set([1]), 1), true, "L1 enough at one level");
+    assert.strictEqual(requiredLevelsMet(new Set([1]), 2), false, "L1 not enough at two levels");
+    assert.strictEqual(requiredLevelsMet(new Set([1, 2]), 2), true, "both satisfy two levels");
+    assert.strictEqual(requiredLevelsMet(new Set([2]), 1), false, "L1 is required when any level is");
+
+    // Level count: explicit setting wins, else derived from configured emails.
+    assert.strictEqual(approvalLevelCount({}), 0, "nothing set up = no approval");
+    assert.strictEqual(approvalLevelCount({ approverL1Email: "a@b.c" }), 1, "L1 email alone derives one level");
+    assert.strictEqual(approvalLevelCount({ approverL2Email: "a@b.c" }), 2, "L2 email derives two levels");
+    assert.strictEqual(approvalLevelCount({ approvalLevels: "0", approverL2Email: "a@b.c" }), 0, "explicit Disabled beats emails");
+    assert.strictEqual(approvalLevelCount({ approvalLevels: "1", approverL2Email: "a@b.c" }), 1, "explicit count beats emails");
+    assert.strictEqual(approvalLevelCount({ approvalLevels: "9" }), 2, "count is clamped to 2");
 
     console.log("workorder/store.js self-check passed");
   })().catch((err) => { console.error(err); process.exit(1); });

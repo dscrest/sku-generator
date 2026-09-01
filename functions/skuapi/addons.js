@@ -19,13 +19,22 @@ function mergeEnabled(rows) {
   return ADDON_KEYS.filter((k) => (explicit.has(k) ? explicit.get(k) : DEFAULT_ON.has(k)));
 }
 
+// ponytail: 60s in-memory cache — requireAddon runs one ZCQL on EVERY /api
+// request, which held function-concurrency slots and helped trip the Dev-env
+// 429 cap. Entitlement toggles take ≤60s to show; cache dies with the instance.
+const addonCache = new Map(); // orgId -> { keys, t }
+
 async function enabledAddons(catalyst, orgId) {
+  const hit = addonCache.get(String(orgId));
+  if (hit && Date.now() - hit.t < 60_000) return hit.keys;
   const rows = rowList(
     await catalyst.zcql().executeZCQLQuery(
       `SELECT addonKey, enabled FROM OrgAddon WHERE orgId = ${zStr(String(orgId))}`,
     ),
   );
-  return mergeEnabled(rows);
+  const keys = mergeEnabled(rows);
+  addonCache.set(String(orgId), { keys, t: Date.now() });
+  return keys;
 }
 
 // Middleware factory: 403 unless the request's org (set by requireOrg) has the
@@ -42,7 +51,12 @@ function requireAddon(key) {
   };
 }
 
-module.exports = { ADDON_KEYS, DEFAULT_ON, mergeEnabled, enabledAddons, requireAddon };
+// Admin toggles call this so the change shows immediately (same instance).
+function clearAddonCache(orgId) {
+  addonCache.delete(String(orgId));
+}
+
+module.exports = { ADDON_KEYS, DEFAULT_ON, mergeEnabled, enabledAddons, requireAddon, clearAddonCache };
 
 // ponytail self-check: `node addons.js --selftest`
 if (require.main === module && process.argv.includes("--selftest")) {

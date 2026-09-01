@@ -147,6 +147,20 @@ function HeaderBar({ zoho, addons, onLogout, onSwitchOrg }) {
                 </div>
               </div>
               <div style={{ height: 1, background: 'var(--border)', margin: '2px 6px 6px' }} />
+              {addons?.includes('sku-generator') && (
+                <button
+                  style={menuItem}
+                  onClick={() => { setOpen(false); navigate('/sku/industries'); }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/>
+                    <path d="M9 9v.01M9 12v.01M9 15v.01M9 18v.01"/>
+                  </svg>
+                  Industries
+                </button>
+              )}
               {addons?.includes('work-order') && (
                 <button
                   style={menuItem}
@@ -208,7 +222,7 @@ function HeaderBar({ zoho, addons, onLogout, onSwitchOrg }) {
 // enabled addons from /auth/me.
 const NAV_LINKS = [
   { section: 'Add-ons' },
-  { to: '/sku/industries', match: '/sku', addon: 'sku-generator', label: 'SKU Generator', icon:<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17h7M17 14v7"/></> },
+  { to: '/sku/items', match: '/sku', addon: 'sku-generator', label: 'SKU Generator', icon:<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17h7M17 14v7"/></> },
   { to: '/wo', match: '/wo', addon: 'work-order', label: 'Order Management', icon: <><path d="M20 7h-3V4a1 1 0 00-1-1H8a1 1 0 00-1 1v3H4a1 1 0 00-1 1v11a1 1 0 001 1h16a1 1 0 001-1V8a1 1 0 00-1-1z"/><path d="M9 7V5h6v2"/><path d="M8 13h8M8 17h5"/></>,
     children: [
       { to: '/wo', label: 'Work Orders' },
@@ -222,11 +236,11 @@ const NAV_LINKS = [
   { to: '/admin/addons', adminOnly: true, label: 'Customer add-ons', icon: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></> },
 ];
 
-// Tab order follows the setup flow: create Industries → their Properties →
-// generate SKUs. "SKU Generator" is the combined items-list + generator page
-// (/sku/generator is its "New" sub-page, kept as a route for permalinks).
+// Tab order follows the setup flow: Properties → generate SKUs. Industries
+// (rarely touched once set up) moved to the account/Settings menu; its routes
+// stay for permalinks. "SKU Generator" is the combined items-list + generator
+// page (/sku/generator is its "New" sub-page, kept as a route for permalinks).
 const SKU_TABS = [
-  { to: '/sku/industries', label: 'Industries', end: true },
   { to: '/sku/properties', label: 'Properties' },
   { to: '/sku/books-items', label: 'Books items' },
   { to: '/sku/items', label: 'SKU Generator' },
@@ -255,7 +269,7 @@ function TabBar({ tabs }) {
 
 // The Order Management module: second-level nav lives in the sidebar submenu
 // (Work Orders / Reports); Settings is reached from the account menu.
-function WorkOrderLayout() {
+function WorkOrderLayout({ user }) {
   return (
     <>
       <div style={{ flex: 1, minHeight: 0 }}>
@@ -265,7 +279,7 @@ function WorkOrderLayout() {
           <Route path="purchase" element={<WorkOrderPurchasePage />} />
           <Route path="reports" element={<WorkOrderReportsPage />} />
           <Route path="settings" element={<WorkOrderSettingsPage />} />
-          <Route path=":id" element={<WorkOrderPage />} />
+          <Route path=":id" element={<WorkOrderPage user={user} />} />
           <Route path="*" element={<Navigate to="/wo" replace />} />
         </Routes>
       </div>
@@ -285,7 +299,7 @@ function SkuLayout() {
           <Route path="industries/:id/properties" element={<PropertyManagerPage />} />
           <Route path="properties" element={<PropertiesPage />} />
           <Route path="books-items" element={<BooksLinkedValuesPage />} />
-          <Route path="*" element={<Navigate to="industries" replace />} />
+          <Route path="*" element={<Navigate to="items" replace />} />
         </Routes>
       </div>
     </>
@@ -422,7 +436,7 @@ function AppShell({ user, refreshUser, onLogout }) {
           <Route path="/sku/*" element={<SkuLayout />} />
           {/* Deep link from Zoho Books custom button: /app/#/reserve?soId=… ;
               backend 403s if the addon is off — the page shows a clear notice. */}
-          <Route path="/wo/*" element={<WorkOrderLayout />} />
+          <Route path="/wo/*" element={<WorkOrderLayout user={user} />} />
           <Route path="/reserve" element={<ReservePage />} />
           {/* Deep link from a CRM deal: /#/estimate?dealId=… — no sidebar entry */}
           <Route path="/estimate" element={<EstimatePage />} />

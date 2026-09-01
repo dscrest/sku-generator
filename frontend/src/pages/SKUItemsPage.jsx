@@ -55,6 +55,11 @@ export default function SKUItemsPage() {
   const [saving, setSaving] = useState(false);
   const [pushingId, setPushingId] = useState(null); // item id (or 'bulk') currently syncing to Zoho
   const [confirmDelete, setConfirmDelete] = useState(null); // item awaiting delete confirmation
+  // Push config dialog (CR-087): target is an item or 'ALL' (bulk). Tracking +
+  // inventory account only apply on Books create — a re-push of a linked item
+  // takes the update path where they're immutable.
+  const [pushCfg, setPushCfg] = useState(null); // { target, tracking, accountId } | null
+  const [stockAccounts, setStockAccounts] = useState(null); // null = not loaded yet, [] = fetch failed
 
   // Text filters (free-text + SKU), debounced so we don't fire per keystroke.
   // ?q= seeds the box so a global-search hit lands on a filtered grid.
@@ -169,14 +174,32 @@ export default function SKUItemsPage() {
     else { setSortCol(col); setSortDir('asc'); }
   }
 
-  async function handlePushZoho(item, e) {
-    e.stopPropagation();
+  // Opens the push config dialog; the actual push happens on its Push button.
+  async function openPushDialog(target, e) {
+    e?.stopPropagation();
+    if (pushingId) return;
+    if (target === 'ALL' && !items.some(i => !i.zohoItemId)) return toast('Everything is already synced to Books');
+    setPushCfg({ target, tracking: 'serial', accountId: '' });
+    if (stockAccounts !== null) return;
+    try {
+      const { data } = await axios.get('/api/sku-items/stock-accounts');
+      setStockAccounts(data);
+      const fg = data.find(a => /finished goods/i.test(a.name));
+      if (fg) setPushCfg(cfg => (cfg ? { ...cfg, accountId: fg.id } : cfg));
+    } catch {
+      setStockAccounts([]); // dropdown falls back to the Books default
+    }
+  }
+
+  async function handlePushZoho(item, cfg) {
     if (pushingId) return; // guard against double-clicks while a push is in flight
     setPushingId(item.id);
     const verb = item.zohoItemId ? 'Re-pushing' : 'Pushing';
     const tid = toast.loading(`${verb} "${item.sku}" to Zoho Books…`);
     try {
-      const { data } = await axios.post(`/api/sku-items/${item.id}/push-zoho`);
+      const { data } = await axios.post(`/api/sku-items/${item.id}/push-zoho`, {
+        tracking: cfg.tracking, inventoryAccountId: cfg.accountId || undefined,
+      });
       toast.success(`Synced to Zoho Books · ID ${data.zohoItemId}`, { id: tid });
       load();
     } catch (err) {
@@ -232,7 +255,8 @@ export default function SKUItemsPage() {
   }
 
   // Bulk push (CR-038): loop the unsynced items through the existing endpoint.
-  async function handlePushAll() {
+  // One dialog's settings (cfg) apply to the whole batch (CR-087).
+  async function handlePushAll(cfg) {
     const unsynced = items.filter(i => !i.zohoItemId);
     if (!unsynced.length) return toast('Everything is already synced to Books');
     setPushingId('bulk');
@@ -240,7 +264,9 @@ export default function SKUItemsPage() {
     let ok = 0; const failed = [];
     for (const item of unsynced) {
       try {
-        await axios.post(`/api/sku-items/${item.id}/push-zoho`);
+        await axios.post(`/api/sku-items/${item.id}/push-zoho`, {
+          tracking: cfg.tracking, inventoryAccountId: cfg.accountId || undefined,
+        });
         ok++;
       } catch (err) {
         failed.push(`${item.sku}: ${err.response?.data?.error || 'failed'}`);
@@ -289,7 +315,7 @@ export default function SKUItemsPage() {
             <span style={{ fontWeight: 700 }}>Z</span> Import from Zoho
           </button>
           <button
-            onClick={handlePushAll}
+            onClick={() => openPushDialog('ALL')}
             disabled={pushingId === 'bulk'}
             title="Push every SKU not yet in Zoho Books, one by one"
             style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', fontSize: 12, fontWeight: 600, borderRadius: 'var(--radius-md)', border: '1px solid #bbf7d0', background: '#f0fdf4', color: '#16a34a', cursor: pushingId === 'bulk' ? 'wait' : 'pointer', opacity: pushingId === 'bulk' ? 0.6 : 1, whiteSpace: 'nowrap' }}
@@ -429,7 +455,7 @@ export default function SKUItemsPage() {
                               const stale = isStale(item);
                               return (
                                 <button
-                                  onClick={e => handlePushZoho(item, e)}
+                                  onClick={e => openPushDialog(item, e)}
                                   disabled={pushingId === item.id}
                                   title={stale ? 'Edited since the last push — Books is out of date. Click to re-push.'
                                     : item.zohoItemId ? `Synced to Zoho Books (ID ${item.zohoItemId}) — click to re-push updates` : 'Push to Zoho Books'}
@@ -530,7 +556,7 @@ export default function SKUItemsPage() {
                     )}
                     {selectedItem && (
                       <button
-                        onClick={e => handlePushZoho(selectedItem, e)}
+                        onClick={e => openPushDialog(selectedItem, e)}
                         disabled={pushingId === selectedItem.id}
                         title={selectedItem.zohoItemId ? `Synced to Zoho Books (ID ${selectedItem.zohoItemId}) — click to re-push updates` : 'Push to Zoho Books'}
                         style={{
@@ -601,6 +627,71 @@ export default function SKUItemsPage() {
             </div>
           )}
         </div>
+      )}
+
+      {pushCfg && (
+        <Modal
+          title={`Push to Zoho Books — ${pushCfg.target === 'ALL' ? 'all unsynced items' : pushCfg.target.sku}`}
+          onClose={() => setPushCfg(null)}
+          width={420}
+          onSubmit={() => {
+            const cfg = pushCfg;
+            setPushCfg(null);
+            if (cfg.target === 'ALL') handlePushAll(cfg);
+            else handlePushZoho(cfg.target, cfg);
+          }}
+        >
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Track Inventory: <b style={{ color: 'var(--text-secondary)' }}>On</b></div>
+          <div>
+            <label style={labelStyle}>Inventory Tracking</label>
+            <div style={{ display: 'flex', gap: 16, fontSize: 13, color: 'var(--text-primary)' }}>
+              {[['none', 'None'], ['serial', 'Serial Number'], ['batch', 'Batch']].map(([val, lab]) => (
+                <label key={val} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="pushTracking"
+                    checked={pushCfg.tracking === val}
+                    onChange={() => setPushCfg({ ...pushCfg, tracking: val })}
+                  />
+                  {lab}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label style={labelStyle}>Inventory Account</label>
+            <select
+              style={{ ...inputStyle, cursor: 'pointer' }}
+              value={pushCfg.accountId}
+              onChange={e => setPushCfg({ ...pushCfg, accountId: e.target.value })}
+              disabled={stockAccounts === null}
+            >
+              {stockAccounts === null
+                ? <option value="">Loading accounts…</option>
+                : <option value="">Books default (Finished Goods)</option>}
+              {(stockAccounts || []).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </div>
+          {pushCfg.target !== 'ALL' && pushCfg.target.zohoItemId && (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Already linked in Books — tracking and account can't change on a re-push; only name, SKU and description update.
+            </div>
+          )}
+          <ModalFooter>
+            <ModalBtn onClick={() => setPushCfg(null)}>Cancel</ModalBtn>
+            <ModalBtn
+              variant="primary"
+              onClick={() => {
+                const cfg = pushCfg;
+                setPushCfg(null);
+                if (cfg.target === 'ALL') handlePushAll(cfg);
+                else handlePushZoho(cfg.target, cfg);
+              }}
+            >
+              Push
+            </ModalBtn>
+          </ModalFooter>
+        </Modal>
       )}
 
       {confirmDelete && (

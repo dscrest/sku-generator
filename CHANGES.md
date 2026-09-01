@@ -7,6 +7,37 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 
 | CR | Date | Title | Status |
 |----|------|-------|--------|
+| CR-090 | 2026-09-01 | **Admin console lists every org ever used** — the entitlements page only showed each user's *last-selected* org: `GET /admin/orgs` enumerated distinct `orgId` from `ZohoToken`, whose single per-user row is overwritten by `saveOrg` on every org switch (ABC → XYZ clobbered ABC). New `Org` registry table (`orgId` unique, `orgName`); `saveOrg` best-effort upserts into it on every selection (select-org + single-org auto-pick both funnel through it), `GET /admin/orgs` unions Org ∪ distinct ZohoToken (legacy backfill, registry name wins — pure `orgUnion` + selftest), `Org` added to the delete-org cascade. UI: org-count badge in the header (pricing count) + missing `work-order` label added to `ADDON_LABELS`. Deliberately not done: no proactive backfill of pre-CR orgs (the ZohoToken union already surfaces them until re-selected) | ✅ shipped |
+| CR-089 | 2026-09-01 | **SKU numerical series per property combination** — Industries settings gain a "Numerical Series" number field (`Industry.seriesStart`; blank/0 = off, N≥1 = on + first number for a fresh combination). When on, generated SKUs append a 4-digit suffix after the property segments, sequenced **per unique combination**: `FAB-RED-0001`, `FAB-RED-0002`, `FAB-BLU-0001`. No counter table — next = max existing suffix for the exact prefix + 1 (`skuSeries.js` LIKE scan + regex filter, same philosophy as WO `nextNumber`); `/generate` previews without consuming, `/create-item` recomputes server-side so racing users converge (SKUItem unique constraint 409s the loser); editing keeps the suffix while the combination is unchanged, a changed combination gets a fresh number. Generator shows the series as its own chip. Deliberately not done: atomic counter row (accepted WO-numbering race ceiling), >300-SKU-per-combination paging | ✅ shipped |
+| CR-088 | 2026-09-01 | **App-wide 429s / stuck "Loading…" fixed** — Catalyst Dev env hit "Concurrency limit reached for the feature FUNCTIONS": the generator page fired one `/properties/:id/values` request **per property in parallel** (20+ at once, each also paying requireOrg + requireAddon ZCQL queries), saturating the function-concurrency cap until the gateway 429'd/hung everything (access logs: same endpoints 76→273ms, 93→703ms as bursts piled up; app log "redundant initialization attempt" at burst time). Fixes: new batched `GET /api/industries/:id/property-values` (`{propertyId: [values]}`, 2 ZCQL queries + 300-row page loop) replaces the fan-out in SKUGeneratorPage; `enabledAddons` gets a 60s in-memory TTL cache (invalidated by admin org-addons toggle) so requireAddon stops costing one ZCQL on every /api request. Old per-property endpoint kept (PropertyManagerPage still uses it). Follow-ups same day: `/auth/me` runs its user+token lookups in parallel; `requireOrg` gets a 60s userId→orgId cache (cleared on select-org / token save) so most /api requests skip the ZohoToken query too — steady-state cost is now ~1 ZCQL per request (was 3+). Root cause context: Dev-env FUNCTIONS concurrency is **org-wide and duration-scaled** (~10 concurrent at 1s/request shared by all 5 projects); the boffo tracker's 1-min polling from open browser tabs contends for the same pool — long-term fix is a Production env for this project | ✅ shipped |
+| CR-087 | 2026-09-01 | **Push-to-Books config dialog + custom-field mapping removed** (MSUN) — clicking Push (single or "Push all unsynced") now opens a dialog: Track Inventory always On, Inventory Tracking radio **None / Serial / Batch** (`track_serial_number`/`track_batch_number`, create-only — immutable in Books after transactions), Inventory Account dropdown fed by new `GET /api/sku-items/stock-accounts` (chart-of-accounts stock type, pre-selected to Finished Goods; empty = server default). Bulk push applies one dialog to the whole batch. **All automatic item custom-field mapping removed** (supersedes CR-027 §3/§4 and CR-033): hardcoded `ITEM_DEFAULT_CFS` + property-derived `zohoCfApiName` push deleted (`buildZohoCustomFields`, `buildItemCfs`, `normalizeCustomFields`, `getItemCfOptions` all dead code, removed) — client fills Item Type / Criticality / Design Type / Source / Size / Drilling manually in Books. Import-side CF reading and `cf_so_no` (CR-078) untouched | ✅ shipped |
+| CR-086 | 2026-09-01 | SKU generator: **Tab key walks the property fields** — explicit `tabIndex` on the property `<select>`s and range inputs; macOS Safari/Chrome skip selects on Tab unless the OS "full keyboard access" preference is on, which made keyboard entry look broken since nearly every property is a dropdown | ✅ shipped |
+| CR-085 | 2026-09-01 | **Industries tab → account/Settings menu** — the Industries tab leaves the SKU module tab bar (setup-only, rarely touched); it's now an "Industries" item in the top-right account dropdown (visible with the `sku-generator` addon, next to Settings). SKU sidebar entry + `/sku/*` fallback land on `/sku/items` instead of industries; all `/sku/industries…` routes kept for permalinks and deep links (property manager, global search) | ✅ shipped |
+| CR-084 | 2026-09-01 | Purchase requests: **modify & delete + reachable from the WO screen** — new `DELETE /api/wo/pr/:prId` (whole request) and `DELETE /api/wo/pr-line/:lineId` (single line; deleting the last line removes the emptied request too), both 409-blocked once a line sits on a Books PO ("delete the PO first" — deleting the PO already resets the PR to Draft). PurchaseTab: red "Delete request" button (confirm modal) on each Draft request + per-line ✕ on lines not yet on a PO; qty/vendor editing unchanged. WO details page gains a **Purchase tab** (reuses PurchaseTab, `GET /:id` already carried `purchaseRequests`) so a raised PR can be re-quantified or deleted right where it was raised (WO-0009: raised 2, wanted 10). Activity log: `pr.delete` / `pr.line.delete` | ✅ shipped |
+| CR-083 | 2026-09-01 | WO grid "Request purchase" button **prefills the purchase request** instead of navigating away — click switches the Materials grid to the (CR-077) Purchase action and prefills qty = shortfall for the ticked rows, or for every short row when nothing is ticked; quantities stay editable and the confirm bar's "Request N lines" raises the PR (chip → Requested; PO Raised still comes from confirming the PO). Nothing prefilled → toast + Purchase mode. The standalone `/wo/purchase` page stays reachable from the sidebar "Purchase request" nav | ✅ shipped |
+| CR-082 | 2026-09-01 | WO **approval levels setting** — new `OrgSetting` key `approvalLevels` (Disabled / 1 level / 2 levels / Auto) as a dropdown on the WO settings page; unset ("Auto") derives the count from configured approver emails (L2 email → 2, L1 only → 1, none → 0), so no setup means **no approval required at all**. New pure `approvalLevelCount` in `workorder/store.js`; `requiredLevelsMet` now takes a level count (0/1/2). `/approve` 409s when disabled or when the level exceeds the configured count; `/invoice-gate` requires `[1,2].slice(0, count)` (empty = always allowed); WO detail returns `requiredApprovalLevels`. UI: Approve/Reject hidden and Approvals tab shows a "disabled" notice at 0 levels, one card at 1 level; settings page gains a generic `select` field type | ✅ shipped |
+| CR-081 | 2026-09-01 | Qty inputs app-wide: **spinner arrows removed** — one global `index.css` rule hides the webkit inner/outer spin buttons and sets `appearance: textfield` on every `input[type="number"]` (11 across the app); inputs stay `type="number"` so non-numeric typing is still rejected | ✅ shipped |
+| CR-080 | 2026-09-01 | WO **Close / Reopen** — "Close WO" button on a Completed WO with an **all-items-issued gate**: `POST /:id/status` (to=Closed) builds the grids and 409s (`code:"unissued"`, item list) when any row's net issued < required; the page shows a "N items not fully issued — close anyway?" modal and resends with `force:true` (forced closes log `forced:true`). New pure `unissuedRows` in reports.js (issued-only, unlike rollUp's `complete` which counts reserved) + `unissued.test.js`. **Admin-only `POST /:id/reopen`** (requireAdmin, reason required) moves Closed → Completed and logs `wo.reopen {reason}` to ActivityLog (visible in the History tab); deliberately NOT in FLOW so the generic status endpoint can't reopen. "Reopen WO" button shows only for `user.isAdmin` (user threaded App → WorkOrderLayout → WorkOrderPage), reason textarea modal. No schema change | ✅ shipped |
+| CR-079 | 2026-08-31 | By-item Purchase page: **qty always editable** — a row whose pending shortfall is 0 (netted away by another WO's draft PR) no longer locks (`—`, disabled checkbox); every row keeps an enabled checkbox + qty input (covered rows default 0), `raise()` drops zero-qty lines, and `raiseItemPO` accepts a covered/extra item by inserting one unattributed line (empty `workOrderId`/SO) instead of silently skipping it. Fixes "created WO-0010, want to raise purchase, but 987654333 qty cannot be edited" | ✅ shipped |
+| CR-078 | 2026-08-31 | SO traceability via **`cf_so_no` custom fields** — every Transfer Order (reserve/de-reserve/issue/return + auto-return) publishes the WO's SO number to the TO's `cf_so_no` field; every addon-raised PO stamps each line item's `cf_so_no` (item custom field) with the SO it traces to, **one PO line per (item, SO)** (`collapseLines` keyed by item+SO — same-SO merge kept, cross-SO lines split; By-item consolidated raise carries per-breakdown SO). PO edits echo `item_custom_fields` through the wholesale PUT so cf_so_no survives qty edits. Orgs lacking either field: create retries once without custom fields — a missing field never blocks a stock move or PO | ✅ shipped |
+| CR-077 | 2026-08-31 | Materials grid gets a **Purchase action**: tick items, type any quantity (input never disabled — MAX fills what is still short), confirm raises the purchase request with exactly those lines/qtys (`POST /purchase-request`, dedup-netted server-side). Fixes "qty box was disabled and Request purchase raised the PR directly" | ✅ shipped |
+| CR-076 | 2026-08-31 | PO raise: **GST-direction retry** (3032/3033 → re-post once with flipped IGST↔CGST+SGST), **server-side duplicate-PR guard** (`createPR` re-nets posted lines against open draft PRs → 409 when fully covered), and **editable shortfall qty** before raising the PR (PurchaseTab) | ✅ shipped |
+| CR-075 | 2026-08-31 | WO "In stock" showed **−2** (WO-0008) — bulk sweep pruned per-warehouse snapshot rows on a breakdown-less payload, grid fell back to the org total (over-promising reservable stock), and the reserve write-through rebuilt Main from a zero baseline. Fixes: `writeStock` prunes only when the payload has a breakdown, bulk rows without a breakdown fall to the item-detail call, grid self-heals when the **Main** row is missing (not just when the item has no row) | ✅ shipped |
+| CR-074 | 2026-08-31 | Warehouse-stock report: **pivot to warehouse-per-column, flat grid** (corrects CR-072/073 — Reserve/Issue ARE warehouses in this org) — one row per item, one column per org warehouse (`Item \| SKU \| Head Office \| Reserve \| Issue \| … \| Total \| Available \| Last synced`), grouping removed entirely; **dropdown filters** (warehouse + stock qty: All/In stock/Low&lt;10/Zero, qty evaluated on the selected warehouse's column or Total) replace chips, zero-stock checkbox kept; standard `GridFooter` pagination (25/page). **Available = Main (Head Office) − Issue-warehouse qty** per WO logic (formulas.js routes; falls back to org total when no breakdown). Backend `warehouseStock` pivots server-side → `{ warehouses, mainWarehouseId, issueWarehouseId, items[{stocks{},total,available,syncedAt}] }`; per-group Sync + CR-073 `reserved`/`issued` fields dropped; per-item ⟳ + Sync visible unchanged | ✅ shipped |
+| CR-073 | 2026-08-31 | Warehouse-stock report: **Reserve/Issue are consumption columns, not warehouses** (CR-072 correction) — the org's Reserve/Issue locations (`reserveWarehouseId`/`issueWarehouseId` roles from settings) no longer render as collapsible groups; only physical warehouses group. Their per-item quantities pivot into **Reserved** / **Issued** columns (`Item \| SKU \| On hand \| Reserved \| Issued \| Available \| Last synced`) with group-header totals; `syncItem` returns `reserved`/`issued` so the per-item ⟳ patches them live. No "Returned" column — the org has no return location (returns land back in the source warehouse) | ✅ shipped |
+| CR-072 | 2026-08-31 | Warehouse-stock report **redesign** (Claude Design mock) — item-led grid with **all warehouses grouped at once**: collapsible group header per warehouse (totals, zero-stock count, per-group **⟳ Sync**), item rows with per-item ⟳ / SKU / color-coded stock (zero grey, low &lt;10 amber) / **Last synced**; **chip filters** (warehouse with counts, All/In stock/Low/Zero) + **"Ignore items with 0 stock" checkbox** + toolbar **Sync visible** (replaces the incremental Sync-stock button; nightly cron + webhooks still cover incremental). Backend: `byOrgAll` (store.js) pages past ZCQL's ~300-row cap on a ROWID cursor; `warehouseStock` returns the full per-warehouse set (org-total-only items land under "Unassigned"), rows gain `warehouseId`+`syncedAt`; `?warehouseId=` server filter dropped (client-side now). Fonts app-wide: Manrope → **Inter** body + **Space Grotesk** display (`--font-display`) as free Styrene-style stand-ins. Design source: user's claude.ai/design project (files inaccessible from session — built from screenshot) | ✅ shipped |
+| CR-071 | 2026-08-31 | Warehouse-stock report — **per-item ⟳ refresh** + **SKU column**. Each item row gets a refresh button that live-pulls just that item from Zoho (`POST /api/wo/items/:itemId/sync-stock`, one call) and patches the row in place — no table re-pull, far cheaper than ↻ Full resync. `syncItem` now returns `{stockOnHand, availableStock, warehouses[]}` (org total + per-warehouse breakdown, shaped by extracted pure `stockTargets(item)`) so the patch works in both the default "All warehouses" view and a warehouse-filtered view. SKU shown as its own column (was CSV-only since CR-069) so the existing item/SKU search box is visibly meaningful; subtotal/grand-total colSpans widened. No schema change; new `stocktargets.test.js` | ✅ shipped |
+| CR-070 | 2026-08-29 | Cheaper stock sync — **incremental delta + real-time webhooks**. "Sync all stock" now pulls only items changed since a per-org cursor (`OrgSetting.stockSyncCursor` = newest Zoho `last_modified_time`): `listItemsWithStock({since})` lists newest-first and early-stops, so 5 changed items cost ~5 calls not ~143. First run / new **↻ Full resync** button re-pull everything (paged, cursor reset). Also opened the already-built webhook path: `internalAuth` accepts `?secret=` so a Books workflow rule can push per-item changes to `/internal/zoho-event` from its URL alone (real-time, `source:"webhook"`) — WORKORDER.md §4.6 updated | ✅ shipped |
+| CR-069 | 2026-08-29 | Warehouse-stock report → one grouped table with **merged warehouse cells** — `WarehouseStock` renders a single `Warehouse \| Item Name \| Stock on hand \| Available` table (was a separate bordered table per warehouse); the warehouse name is a `rowSpan`-merged, lightly shaded (`--bg-page`) cell spanning its item rows + subtotal for at-a-glance grouping. SKU column dropped from screen (kept in CSV); per-warehouse subtotals + grand total unchanged; mirrors the estimate rowSpan pattern | ✅ shipped |
+| CR-068 | 2026-08-29 | Warehouse-stock report shows the wrong count for Locations orgs — synced item now reads its **item-level on-hand** (the `warehouseId ''` org-total row) instead of the per-warehouse breakdown. The breakdown is unreliable for Locations-enabled orgs (stock sits in a location the `/items` detail doesn't enumerate → stale 0 rows) and its full set overran ZCQL's ~300-row cap (372 rows → silent truncation). AFR - AIRWIN's on-hand 1 was in the org-total row all along but hidden behind stale 0s. `writeStock` now also drops per-warehouse rows a fresh payload no longer carries; warehouse drill-down dropdown fed from `/settings` (live locations) + server-side `?warehouseId=` filter | ✅ shipped |
+| CR-067 | 2026-08-29 | "Sync all stock" 408 fix (follow-up to CR-066) — the full-catalog sweep is now **paged**: `reconcileOrg({full,offset,limit})` processes a 50-item slice and returns `{total,nextOffset,done}`; the report page loops slices until done (button shows `Syncing… N/total`). 6-wide concurrency alone still 408'd a whole Locations-org catalog (one detail call per item); this keeps every request under the 30s ceiling so standalone items (e.g. AFR - AIRWIN, on no open WO) actually land in `ItemStockSnapshot` | ✅ shipped |
+| CR-066 | 2026-08-29 | Stock refresh 408 fix — `reconcileOrg` fans per-item stock pulls + composite refreshes out 6-wide (`mapLimit`) instead of a serial loop with 150ms sleeps; a Locations-enabled org's per-item fallback for every item was pushing the sweep past Catalyst's 30s ceiling → 408 → generic "Stock sync failed" toast | ✅ shipped |
+| CR-065 | 2026-08-29 | Estimate reads the CRM per-line `Size` field (source of truth) instead of the stale description `Size:` — a same-name item now prints its distinct sizes (26"/19"/20"/…) with each line's price; supersedes CR-062's "no size field" assumption (that metadata was a different org) | ✅ shipped |
+| CR-064 | 2026-08-29 | Estimate: print a stacked item's SIZE once per run — blank when it repeats the row above, so a valve + its same-size accessory price lines don't repeat `26" DN 650` on every row (price/qty rows unchanged) | ✅ shipped |
+| CR-063 | 2026-08-29 | Estimate items table: stack Size/Qty/List-price/Amount vertically (fixed 10px gaps) in one row per item instead of one `<tr>` per size — a rowspan description no longer stretches a 2-size item's values far apart; many-size items unchanged | ✅ shipped |
+| CR-062 | 2026-08-29 | Estimate: drop the redundant `Size:` line from the description spec block — a same-name item whose in-line `Size:` text went stale no longer shows the previous item's size; the SIZE (INCH) column (fed by the size-row lines) is the single source of truth, matching how merge-path items already render | ✅ shipped |
+| CR-061 | 2026-08-29 | Warehouse-stock report — new "Warehouse stock" tab on `/wo/reports`: one row per item × warehouse (On hand / Available) from the local `ItemStockSnapshot` cache, warehouse + item-search filters, ⟳ Sync all stock (full-catalog sweep) + CSV export; `ItemStockSnapshot` gains `itemName`/`sku` cached at sync time | ✅ shipped |
+| CR-060 | 2026-08-29 | Estimate print polish — Revision No accepts free text (R1/R2) stacked above Revision Date, SR-NO top-aligned, Terms↔Bank gap removed with a divider, customer contact name bold + contact-email fallback, company email on two lines, CalcSheet PAGE nn aligned to the item-page description column | ✅ shipped |
 | CR-059 | 2026-08-27 | Estimate print tweaks — CalcSheet PAGE nn moved off its stray line into the totals band, "To, {customer}" one bold line, all table cells vertically centered | ✅ shipped |
 | CR-058 | 2026-08-27 | Estimate footer → IAF · IAS · IBR · ISO certification row (individual images replace the baked ISO/IAS/IAF/D&B strip; D&B dropped, MSUN logo header-only); IAF jpeg cleaned of its baked-in transparency checkerboard | ✅ shipped |
 | CR-057 | 2026-08-27 | Demo revert: WO details page back to the pre-redesign screen (`WorkOrderPage.jsx` + `MaterialsGrid.jsx` restored from `b9a1248`) — CR-049 redesign + CR-051 movement ledger parked in git (`5d9eb68`) for re-restore after the demo | ✅ shipped |
@@ -67,6 +98,366 @@ not done. Schema effects go to [SCHEMA.md](SCHEMA.md); resulting work goes to
 | CR-001 | 2026-05-28 | SKU editing + Zoho Books value sync & import | ✅ shipped |
 
 ---
+
+## CR-079 — By-item Purchase page: qty always editable (2026-08-31) — ✅ shipped
+
+**Asked:** "I raised the SO, created WO-0010, I want to raise the Purchase
+request — but the 987654333 qty cannot be edited. I should have the facility
+for that."
+
+**Diagnosis:** "Request purchase" navigates to `/wo/purchase` (By item), where
+a row locked (`—`, disabled checkbox) whenever its *pending* `totalQty` was 0.
+`totalQty` is netted org-wide against draft PRs (`applyDraftCoverage`), so a
+draft PR raised earlier from another WO (WO-0008/0009) swallowed WO-0010's
+5-unit need and locked the row even though this WO is still short. The Reserve
+grid's disabled input is correct (nothing reservable from 0 stock) and is
+untouched.
+
+**Shipped:**
+- `WorkOrderPurchasePage.jsx` (ByItemView/RowGroup): the `canOrder` gate is
+  gone — every row keeps an enabled checkbox and qty input (a draft-covered row
+  defaults to 0, the buyer types what they want); select-all covers all rows;
+  `raise()` drops zero-qty lines ("Every selected quantity is zero" if none
+  survive).
+- `workorder/purchase.js` `raiseItemPO`: an item with qty > 0 but no pending
+  WO breakdown (the covered/extra case) is no longer silently skipped — it
+  inserts one unattributed PR line (empty `workOrderId`/SO), which the PO
+  create and received-qty refresh already tolerate.
+
+**Not done:** attributing the extra qty to the WO the buyer navigated from —
+the By-item page is deliberately cross-WO; the existing dedup/netting display
+already explains where the pending qty went (`n pending · n on PO`).
+
+## CR-077 — Materials grid: Purchase action with per-line qty (2026-08-31) — ✅ shipped
+
+**Asked:** "I raised the WO, I selected an item, the QTY box was disabled. I hit
+Purchase request and it directly raised a PR" — the buyer wants to pick items
+and type quantities on the WO's Materials grid and have the purchase request
+carry exactly those.
+
+**Diagnosis:** the grid's qty column is capped by the selected *movement*
+action (Reserve caps at reservable, which is 0 for a short line → disabled
+box), and the "Request purchase" button ignored the selection entirely (it
+navigates to `/wo/purchase`, whose shortfall panel raises a PR for every short
+item with auto quantities).
+
+**Shipped:** a fifth action, **Purchase**, in the grid's action selector
+(`MaterialsGrid.jsx`): the qty input is never disabled (`uncapped` — the cap
+only feeds MAX, which fills the remaining shortfall), the "Left to request"
+chip counts short lines, and Confirm posts `POST /api/wo/:id/purchase-request`
+with the ticked/typed lines instead of a stock move. Server-side CR-076 netting
+still applies (quantities already on a draft PR are deducted / fully-covered →
+409). The toolbar "Request purchase" navigation button is unchanged.
+
+## CR-076 — PO GST retry, duplicate-PR guard, pre-raise qty (2026-08-31) — ✅ shipped
+
+**Asked:** "Could not raise the purchase order: Zoho books API error: IGST has
+to be applied as this is an interstate transaction (code 3032)." Plus: (1) do
+not allow a duplicate PR if already raised for the same qty; (2) allow the qty
+to be chosen before raising the purchase request.
+
+**Shipped:**
+- **GST-direction retry** (`zoho/booksApi.js` `createPurchaseOrder`): the
+  inter/intra guess is GSTIN-based (CR-045) and reads intra when the vendor has
+  no GSTIN, but Books decides place of supply from the vendor's address. On
+  3032/3033 the PO is re-posted once with the flipped tax
+  (IGST ↔ CGST+SGST group); any other error still throws. Covers both PO paths
+  (`confirmPR`, `raiseItemPO`) at their single Books call site.
+- **Duplicate-PR guard** (`workorder/purchase.js`): `createPR` now re-nets the
+  posted lines against this WO's open draft-PR lines server-side (new shared
+  `openDraftLines` + existing `applyDraftCoverage`; the shortfall endpoint
+  reuses the same helper). Fully covered → **409 "Already requested — PR-xxxx
+  covers these quantities"**; partially covered → only the remainder is
+  requested. A double-click or stale tab can no longer duplicate a request.
+- **Editable shortfall qty** (`PurchaseTab.jsx`): the "To purchase" column is
+  now a `QtyInput` (commit on blur/Enter, amber while dirty) so the buyer sets
+  quantities before raising; zero-qty lines are dropped client-side.
+
+**Not done:** no vendor-address state lookup — the one-retry flip makes it
+redundant and needs no state-code table.
+
+## CR-075 — WO "In stock" −2: snapshot prune/write-through chain (2026-08-31) — ✅ shipped
+
+**Asked (WO-0008, item 123456789):** "Available was 10, reserved 2, instock
+shows −2. How? In stock should always show qty from Head office, main
+identified warehouse."
+
+**Diagnosis (datastore):** In stock (grid column B) *is* the Main-warehouse
+row — but three steps corrupted it. The bulk sweep returned org total 22 with
+no per-location breakdown; the `stock_on_hand > 0` shortcut trusted it and
+`writeStock`'s CR-068 prune **deleted the per-warehouse rows** including Main.
+The grid then fell back to the org total (22), so reserving 2 validated. The
+reserve TO's write-through (`txn.js adjustSnapshots`) rebuilt Main from the
+now-missing baseline: 0 − 2 = **−2** (rows verified: Main −2 / Reserve 2,
+source `writethrough`, seconds after TO 4000844000001673101).
+
+**Shipped:**
+- `writeStock` prunes stale per-warehouse rows **only when the payload carries
+  a breakdown** (`targets.length > 1`) — a total-only payload says nothing
+  about warehouses.
+- `reconcileOrg` trusts a bulk row only when it has `warehouses[]`/
+  `locations[]`; a bare total forces the item-detail call so the Main row stays
+  fresh.
+- `healStock` (grid) also heals when the **Main row** is missing while
+  `mainWarehouseId` is configured — B never silently falls back to the
+  over-promising org total for synced items.
+- `stocktargets.test.js` gains writeStock prune-rule tests (fake catalyst).
+
+**Repair:** per-item Sync on the affected item rewrites true per-location rows
+(replacing −2). If Zoho's own Main location went negative from the TO, that
+must be corrected in Zoho (redo the TO from the right location / adjust stock).
+
+**Asked:** "How do we make the sync less expensive? I updated 5 items but the
+sync consumes API for all items."
+
+**Diagnosis:** every "Sync all stock" re-pulled the whole catalog — for this
+Locations-enabled org that's one `getItemStock` detail call per item (~143),
+regardless of how few changed.
+
+**Shipped:**
+- **Incremental delta.** `listItemsWithStock(catalyst, { since })`
+  (`zoho/inventoryApi.js`) lists `sort_column=last_modified_time&sort_order=D`
+  and stops at the first item older than the cursor. `reconcileOrg`
+  (`workorder/sync.js`) reads a per-org cursor (`OrgSetting.stockSyncCursor`,
+  newest `last_modified_time` seen), pulls only the delta, processes it in one
+  request, then advances the cursor. 5 changed → ~5 calls; nothing changed → 1
+  list call, 0 detail calls.
+- **Full resync fallback.** No cursor (first run) or `?force=1` → the paged
+  full sweep (CR-067), which resets the cursor on completion. New **↻ Full
+  resync** button next to **⟳ Sync stock** on `/wo/reports`.
+- **Webhooks opened.** `internalAuth` (`index.js`) now also accepts a `?secret=`
+  query param, so a Books workflow rule can authenticate to
+  `/internal/zoho-event` from its URL when it can't send a custom header. The
+  per-item push (`handleZohoEvent` → `writeStock`, `source:"webhook"`) was
+  already built; this makes it usable. WORKORDER.md §4.6 updated with the
+  secret/fallback.
+- `maplimit.test.js` gains delta early-stop + cursor-max assertions.
+
+**Not done:** deletions aren't caught by the delta (a removed item just stops
+appearing) — a Full resync or the webhook `item` path clears stale rows. Noted
+in the plan; revisit if it bites.
+
+## CR-068 — Warehouse-stock report reads item-level on-hand (2026-08-29) — ✅ shipped
+
+**Asked:** After CR-067 the full sync ran (143 items) but AFR - AIRWIN still
+showed 0. "After sync ensure to refresh the item count of respective items."
+
+**Diagnosis (datastore):** the sync was correct — AFR - AIRWIN's org-total row
+(`warehouseId ''`) had `stockOnHand 1`. But the warehouse-stock report only read
+per-warehouse rows (`warehouseId != ''`), and this Locations-enabled org's
+breakdown for AFR - AIRWIN was three **stale 0 rows** (its 1 unit sits in a
+location the `/items` detail didn't enumerate). Two compounding bugs:
+- The item-level total (the authoritative on-hand) was never shown.
+- The per-warehouse set is 372 rows — over ZCQL's ~300-row page cap — so the
+  report was also silently truncating other items.
+
+**Shipped:**
+- `warehouseStock` (`functions/skuapi/workorder/reports.js`): default view now
+  returns one **org-total row per item** (143 rows, complete, always matches the
+  sync); a specific warehouse pick still returns that warehouse's rows.
+- `writeStock` (`functions/skuapi/workorder/sync.js`): after upserting, delete
+  per-warehouse rows the fresh payload no longer carries, so an emptied/aged
+  location can't leave a stale row behind.
+- `WorkOrderReportsPage.jsx`: warehouse dropdown fed from `/api/wo/settings`
+  (live locations) instead of the loaded rows; the filter is now server-side
+  (`?warehouseId=`).
+
+**Not done:** paginating the default view past ~300 items — `ponytail:` note on
+`warehouseStock`; the org-total set is one row per item, so it only bites when a
+single org's catalog exceeds ~300 items.
+
+## CR-067 — "Sync all stock" 408 fix: paged full sweep (2026-08-29) — ✅ shipped
+
+**Asked:** User added inventory in Books (AFR - AIRWIN, on-hand 1 at a location)
+and it never appeared in the addon after "⟳ Sync all stock", run twice.
+
+**Diagnosis (Catalyst access logs + datastore):**
+- AFR - AIRWIN was in **no** addon table (`ItemStockSnapshot`, `SKUItem`,
+  `WorkOrderLine`); the report grid shows Books' own figures live, and Books
+  reports on-hand 1 — so the data is correct upstream, the addon never captured
+  it.
+- `POST /api/wo/refresh?full=1` was still hitting **408** (~39s) intermittently
+  even after CR-066's 6-wide fan-out. A Locations-enabled org needs one
+  `getItemStock` detail call **per item in the whole catalog** (bulk `/items`
+  reports 0 with no breakdown), so the full sweep is inherently O(catalog) Zoho
+  calls — too much for a single 30s HTTP request. Concurrency capped the burst
+  but not the total. When it 408s, nothing is written, so a standalone item on
+  no open work order (only the full sweep reaches it) never lands.
+- Config lever ruled out: `advancedio`, 256 MB, no timeout override — the ceiling
+  is a gateway limit on synchronous HTTP, not CPU.
+
+**Shipped:**
+- `reconcileOrg(catalyst, orgId, {full, offset, limit})`
+  (`functions/skuapi/workorder/sync.js`) — full mode with `limit` set processes
+  `itemIds.slice(offset, offset+limit)` and returns `{total, nextOffset, done}`.
+  Non-full (cron/bounded) and full-without-limit paths unchanged.
+- `POST /api/wo/refresh` (`routes/workorder.js`) passes `offset`/`limit` through
+  (default `limit` 50) and returns the paging cursor.
+- `WorkOrderReportsPage.jsx` `syncAll()` loops chunks until `done`, showing
+  `Syncing… N/total` on the button.
+- `maplimit.test.js` gains a paging-cursor check (covers every id once,
+  terminates) across totals 0/1/49/50/51/120.
+
+**Not done:** moving the sweep to a true Catalyst async job (would let it run
+off the HTTP clock entirely). Not needed — 50-item chunks clear the ceiling with
+margin, and the client loop is stateless. Chosen over per-location bulk calls
+(`/items?location_id=`) whose stock-scoping behaviour wasn't verifiable here.
+
+## CR-066 — Stock refresh 408 fix (concurrency cap) (2026-08-29) — ✅ shipped
+
+**Asked:** Live stock sync ("⟳ Refresh stock") was failing with a generic
+"Stock sync failed" toast.
+
+**Diagnosis (Catalyst access logs):** `POST /api/wo/refresh` returned **408**
+(Request Timeout) at ~39s; earlier runs at 25–27s squeaked under the 30s
+function ceiling. `reconcileOrg` pulled each item's stock **serially** with a
+150ms sleep between calls. Because the org is Locations-enabled, the bulk
+`/items` sweep reports `stock_on_hand 0` with no breakdown, so *every* item fell
+to the per-item detail call — an O(n) serial sweep that grew past 30s. A 408
+carries no JSON body, so the toast showed its fallback string.
+
+**Shipped:**
+- `reconcileOrg` (`functions/skuapi/workorder/sync.js`) now runs the per-item
+  stock pulls and the composite refreshes through a new `mapLimit(items, 6, fn)`
+  worker-pool helper (6 concurrent) instead of a serial loop. Removed the
+  per-call `sleep`/`DELAY_MS`. ~39s sweep drops to a few seconds.
+- `maplimit.test.js` covers completeness, the concurrency cap, and empty input.
+
+**Not done:** moving the whole reconcile to a background job (returns instantly,
+runs off the 30s clock). Marked with a `ponytail:` comment at `mapLimit`; the
+upgrade path when the working set outgrows what 6-wide fits in 30s.
+
+## CR-065 — Estimate uses CRM per-line Size field (2026-08-29) — ✅ shipped
+
+**Asked:** On MSUN-Q-0040 the CRM has several same-name lines with different per-line
+SIZE (INCH) values (26"/19"/20"/21"…), but the estimate printed them all at 26" and
+collapsed to one size. It should take each line's real size.
+
+**Shipped:**
+- `buildEstimate` (`frontend/src/pages/estimateParser.js`) now reads the dedicated
+  CRM `line.Size` field as the size source (falling back to the description `Size:`
+  only when absent): `sizeVal = String(line.Size||"").trim() || specValue(specs, SIZE_KEY)`.
+  The merged same-name item now carries one row per line with its **true, distinct**
+  size, each with the line's own price. Split accepts pipe or newline; `specs`-null
+  guarded. Test 5c covers per-line-Size-wins-over-stale-description.
+
+**Why the earlier miss:** CR-062 read CRM field metadata from the **wrong org**
+(id prefix `3100593…` vs this quote's `1356653…`, org60077311410) and concluded
+there was no size field. The field exists (`Size`); this CR uses it. CR-062's
+description-`Size:` strip stays (now cosmetic).
+
+**Not done:** the `parseLineDescription` prototype format (multiple sizes in one
+description) is unchanged — those lines have no dedicated per-line Size.
+
+## CR-064 — Estimate SIZE printed once per run (2026-08-29) — ✅ shipped
+
+**Asked:** On MSUN-Q-0040, SR 11 shows 13 stacked price rows all at `26" DN 650`
+(valve + priced accessories). Same name + same size shouldn't repeat the size text;
+keep the prices, print the size once. (Same name + *different* sizes → each size once.)
+
+**Shipped:**
+- `ItemRows` (`frontend/src/pages/EstimatePage.jsx`) renders the **Size** stack entry
+  only when it's the first row or its `size|mm` differs from the row above; repeats
+  render as an empty `<li>` (keeps `min-height:2.1em` alignment). Qty/List-price/Amount
+  stacks unchanged — every price row stays.
+
+**Not done:** consecutive-run dedupe only — a non-adjacent repeat of the same size
+would print again (rows are grouped, so not an issue in practice). No price/qty
+aggregation, no merge-logic change.
+
+## CR-063 — Estimate size-value spacing (2026-08-29) — ✅ shipped
+
+**Asked:** When an item has only 2 sizes, the Size / Qty / List-price / Amount values
+have too much space between them; keep a 10px gap between values (many-size items are
+already fine).
+
+**Shipped:**
+- `ItemRows` (`frontend/src/pages/EstimatePage.jsx`) now emits **one `<tr>` per item**;
+  the Size/Qty/List-price/Amount columns each hold an `est-stack` `<ul>` of the item's
+  values with a fixed 10px gap, top-aligned in the description-driven row. Dropped the
+  per-size `<tr>` + `rowSpan` description machinery.
+- `.est-stack` CSS: flex column, `gap:10px`, uniform `min-height:2.1em` per entry so the
+  2-line Size column stays aligned row-for-row with the single-line Qty/Price columns.
+
+**Root cause:** the description cell's `rowSpan` stretched a few size rows to fill its
+height (inherent to `rowSpan`; the cells were already `vertical-align:top`). Pagination
+is height-based (measures each item's whole `<tbody>`), so collapsing to one row is safe.
+
+**Not done:** the single-line Qty/Price columns keep a slightly larger visual gap than
+10px because they must stay aligned with the 2-line Size column (unavoidable trade-off).
+
+## CR-062 — Estimate stale in-line Size fix (2026-08-29) — ✅ shipped
+
+**Asked:** Added a new estimate item with the same name but a different size; in
+the quote the size showed the same as the previous item instead of the new size.
+
+**Shipped:**
+- `parseLineDescription` (`frontend/src/pages/estimateParser.js`) now drops any
+  `Size:` spec line from the description block, mirroring the existing merge-path
+  filter (`specs.filter(([k]) => !SIZE_KEY.test(k))`). The **SIZE (INCH)** column —
+  fed by the size-row lines (`SIZE_RE`) — is the single source of truth, so a
+  same-name item whose in-line `Size:` text was left stale can no longer print the
+  previous item's size.
+- Test 1b in `estimateParser.test.js` asserts the `Size:` spec is stripped while the
+  size row still parses.
+
+**Root cause:** the `Quoted_Items` CRM subform has no dedicated size field (verified
+via CRM field metadata); both the SIZE column and the block's `Size:` line came from
+the one `Description` text, and the two representations could diverge.
+
+**Not done:** no normalization of the source `Description` text itself — the stale
+`Size:` line stays in CRM, it's just no longer displayed.
+
+## CR-061 — Warehouse-stock report (2026-08-29) — ✅ shipped
+
+**Asked:** Show warehouse-wise stock of the items, with the necessary filters,
+in the reports.
+
+**Shipped:**
+- New **Warehouse stock** tab on `/wo/reports` (`WorkOrderReportsPage.jsx`) —
+  one row per item × warehouse: Item, SKU, Warehouse, On hand, Available.
+  Reads the local `ItemStockSnapshot` cache only (zero per-item Zoho calls);
+  warehouse labels come from one live `listWarehouses`.
+- Filters: **Warehouse** dropdown + **item/SKU search** (client-side, reusing
+  `distinct` from `GridFooter`). Pager + CSV export reflect the filtered rows.
+- **⟳ Sync all stock** button → `POST /api/wo/refresh?full=1` (the existing
+  full-catalog sweep), then re-pulls the report so the whole catalog can be
+  cached on demand.
+- Backend: `reports.warehouseStock` (`workorder/reports.js`) +
+  `GET /api/wo/reports/warehouse-stock` (`routes/workorder.js`). Single-location
+  orgs (no per-warehouse breakdown) fall back to the org-total rows under one
+  "All warehouses" label.
+- `ItemStockSnapshot` gains `itemName` + `sku` (text), cached in `writeStock`
+  from the Zoho item payload so a whole-catalog report has names with no extra
+  calls. Backfill is automatic on the next full sweep.
+
+**Not done:** no pivot (warehouse-as-columns) layout — long format only; item
+names on rows synced before this change show the item id until the next sweep.
+
+## CR-060 — Estimate print polish (2026-08-29) — ✅ shipped
+
+**Asked:** Revision field should accept text (R1, R2) with the number above the
+date; SR-NO column top-aligned; remove the gap between Terms and Bank tables and
+add a separator; bold the customer contact person; customer email not showing;
+company email on its own two lines; the summary page's "Page 3" number doesn't
+line up with the other pages.
+
+**Shipped (`EstimatePage.jsx`, `EstimateTerms.jsx`, `estimateParser.js`):**
+- `RevFields`: Revision No input `number → text` (free-form R1/R2); No field
+  reordered above Date. Print header stacks Revision No above Revision Date.
+- `.est-sr { vertical-align: top }` on the SR-NO cell (flat + rowspan items).
+- Terms page: `FillTable` stretch spacer removed so the bank table sits directly
+  under the terms; a `.est-tc-sep` hairline divider separates them; FootBand
+  still bottom-pinned.
+- To block: customer contact name wrapped in `<b>` (mobile stays normal).
+- `estimateParser`: email falls back to the contact record (`c.Email`) since the
+  account often has none — verify the field against a live quote.
+- Company `E:` line split into two stacked lines.
+- CalcSheet: `PAGE nn` now a teal `est-t-band` row in the description column,
+  aligned with the item pages (shown for priced and non-priced).
+
+**Not done:** the CRM email field name is still a best-guess (`c.Email`); if the
+real field differs it needs correcting once a live `_contact` is inspected.
 
 ## CR-059 — Estimate print tweaks (2026-08-27) — ✅ shipped
 

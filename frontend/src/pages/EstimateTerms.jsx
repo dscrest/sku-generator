@@ -18,7 +18,8 @@ const COMPANY = {
     'Kothiya Kunha Road,Kunha Patiya,Ta-Daskroi,',
     'Ahmedabad, Gujarat, India',
     'M: 91-9512506161',
-    'E: sales@msunvalve.com · sales@marutivalves.com',
+    'E: sales@msunvalve.com',
+    'sales@marutivalves.com',
   ],
   gstin: '24AAQCM4066R1ZN',
   pan: 'AAQCM4066R',
@@ -166,9 +167,9 @@ export function TermsSheet({ terms, editing, onChange, defaults = DEFAULT_TERMS 
           + Add term
         </button>
       )}
-      {/* Absorbs leftover page height so the bank table and footer strip sit
-          at the page bottom. */}
-      <FillTable widths={['24%', null]} className="est-tc" />
+      {/* Bank table sits directly below the terms, with a divider between. The
+          FootBand's margin-top:auto still pins the logos to the page bottom. */}
+      <div className="est-tc-sep" />
       <table className="est-tc est-tc-bank">
         <tbody>
           {terms.bank.map((r, i) => (

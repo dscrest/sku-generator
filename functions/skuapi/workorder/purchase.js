@@ -102,13 +102,16 @@ function groupByVendor(lines) {
  * per finished good, so one raw material needed by two FGs arrives as two
  * lines; persisting both would put the same item twice on one PO and make the
  * received/billed refresh (matched by rmItemId) double-count.
+ * Keyed by (item, soNumber): lines tracing to different Sales Orders stay
+ * separate so each PO line carries exactly one SO in cf_so_no.
  */
 function collapseLines(lines) {
   const byItem = new Map();
   for (const l of lines) {
     const qty = n(l.purchaseQty) || n(l.requiredQty);
-    const cur = byItem.get(String(l.rmItemId));
-    if (!cur) byItem.set(String(l.rmItemId), { ...l, purchaseQty: qty });
+    const key = `${l.rmItemId}|${l.soNumber || ""}`;
+    const cur = byItem.get(key);
+    if (!cur) byItem.set(key, { ...l, purchaseQty: qty });
     else {
       cur.requiredQty = n(cur.requiredQty) + n(l.requiredQty);
       cur.purchaseQty += qty;
@@ -187,11 +190,46 @@ function procurementStatus(lines) {
 
 // ---- persistence ----------------------------------------------------------
 
+/**
+ * This WO's draft-PR lines not yet on a PO, each tagged with its prNumber —
+ * the coverage pool for applyDraftCoverage. Shared by the shortfall endpoint
+ * (display) and createPR (server-side dedup guard).
+ */
+async function openDraftLines(catalyst, orgId, workOrderId) {
+  const draftPrs = await byOrg(
+    catalyst, orgId, "PurchaseRequest",
+    `workOrderId = ${zStr(String(workOrderId))} AND status = 'Draft'`,
+  );
+  const prIds = inList(draftPrs.map((p) => p.ROWID));
+  if (!prIds) return [];
+  const prNo = new Map(draftPrs.map((p) => [String(p.ROWID), p.prNumber]));
+  return (await byOrg(catalyst, orgId, "PurchaseRequestLine", `purchaseRequestId IN (${prIds})`))
+    .filter((l) => !l.zohoPoId)
+    .map((l) => ({ ...l, prNumber: prNo.get(String(l.purchaseRequestId)) }));
+}
+
 async function createPR(catalyst, orgId, { workOrderId, lines }, userId) {
   const wos = await byOrg(catalyst, orgId, "WorkOrder", `ROWID = ${zStr(String(workOrderId))}`);
   if (!wos.length) { const e = new Error("Work order not found"); e.status = 404; throw e; }
   const wo = wos[0];
   if (!lines || !lines.length) { const e = new Error("Nothing to purchase"); e.status = 400; throw e; }
+
+  // Dedup guard: the client posts its (possibly stale) shortfall view, so net
+  // it against draft PRs again here — a double-click or second tab must not
+  // create a second request for quantity already requested.
+  const draft = await openDraftLines(catalyst, orgId, wo.ROWID);
+  lines = applyDraftCoverage(
+    lines.map((l) => ({ ...l, purchaseQty: n(l.purchaseQty) || n(l.requiredQty) })),
+    draft,
+  );
+  if (!lines.length) {
+    const prNumbers = [...new Set(draft.map((d) => d.prNumber).filter(Boolean))].join(", ");
+    const e = new Error(prNumbers
+      ? `Already requested — ${prNumbers} covers these quantities`
+      : "Already requested on a pending purchase request");
+    e.status = 409;
+    throw e;
+  }
 
   const s = await settings(catalyst, orgId);
   const prNumber = await nextNumber(catalyst, orgId, "PurchaseRequest", "prNumber", s.prNumberPrefix);
@@ -244,6 +282,46 @@ async function updatePRLine(catalyst, orgId, lineId, { purchaseQty, vendorId, ve
   return { id: String(lineId) };
 }
 
+async function deletePR(catalyst, orgId, prId, userId) {
+  const prs = await byOrg(catalyst, orgId, "PurchaseRequest", `ROWID = ${zStr(String(prId))}`);
+  if (!prs.length) { const e = new Error("Purchase request not found"); e.status = 404; throw e; }
+  const lines = await byOrg(catalyst, orgId, "PurchaseRequestLine", `purchaseRequestId = ${zStr(String(prId))}`);
+  if (lines.some((l) => l.zohoPoId)) {
+    const e = new Error("Lines are already on a Purchase Order — delete the PO first");
+    e.status = 409;
+    throw e;
+  }
+  const lt = catalyst.datastore().table("PurchaseRequestLine");
+  for (const l of lines) await lt.deleteRow(l.ROWID);
+  await catalyst.datastore().table("PurchaseRequest").deleteRow(prs[0].ROWID);
+  await logActivity(catalyst, orgId, "PurchaseRequest", prs[0].ROWID, "pr.delete", userId, {
+    prNumber: prs[0].prNumber, lines: lines.length,
+  });
+  return { deleted: true };
+}
+
+async function deletePRLine(catalyst, orgId, lineId, userId) {
+  const rows = await byOrg(catalyst, orgId, "PurchaseRequestLine", `ROWID = ${zStr(String(lineId))}`);
+  if (!rows.length) { const e = new Error("Purchase request line not found"); e.status = 404; throw e; }
+  if (rows[0].zohoPoId) {
+    const e = new Error("This line is already on a Purchase Order and can no longer be edited here");
+    e.status = 409;
+    throw e;
+  }
+  const line = rows[0];
+  await catalyst.datastore().table("PurchaseRequestLine").deleteRow(line.ROWID);
+  await logActivity(catalyst, orgId, "PurchaseRequest", line.purchaseRequestId, "pr.line.delete", userId, {
+    rmName: line.rmName, purchaseQty: n(line.purchaseQty),
+  });
+  // An emptied request is deleted with its last line — a lineless PR is noise.
+  const left = await byOrg(catalyst, orgId, "PurchaseRequestLine", `purchaseRequestId = ${zStr(String(line.purchaseRequestId))}`);
+  if (!left.length) {
+    await catalyst.datastore().table("PurchaseRequest").deleteRow(line.purchaseRequestId);
+    return { deleted: true, prDeleted: true };
+  }
+  return { deleted: true, prDeleted: false };
+}
+
 /**
  * Create one draft Books PO for a vendor's lines and stamp those local
  * PurchaseRequestLine rows with the PO id/number/status. Same-item lines are
@@ -261,7 +339,10 @@ async function createPoForLines(catalyst, orgId, group, { referenceNumber, notes
     lines: collapseLines(group.lines).map((l) => ({
       rmItemId: l.rmItemId,
       qty: n(l.purchaseQty),
-      description: description || undefined,
+      description: l.soNumber ? `SO ${l.soNumber}` : description || undefined,
+      // Lands on the PO line's cf_so_no item custom field (booksApi) — the
+      // field is an SO lookup, so it takes the salesorder_id.
+      soId: l.soId || undefined,
     })),
   });
   const table = catalyst.datastore().table("PurchaseRequestLine");
@@ -300,7 +381,11 @@ async function confirmPR(catalyst, orgId, prId, userId) {
   const created = [];
   const failed = [];
 
-  for (const group of groupByVendor(pending)) {
+  // Single-WO request: every line traces to the WO's one Sales Order — stamp it
+  // so the PO line carries it in cf_so_no (id for the lookup, number for text).
+  const soNumber = wo.salesOrderNumber || "";
+  const soId = wo.salesOrderId || "";
+  for (const group of groupByVendor(pending.map((l) => ({ ...l, soNumber, soId })))) {
     try {
       const { poNumber } = await createPoForLines(catalyst, orgId, group, {
         referenceNumber: wo.salesOrderNumber || "",
@@ -358,9 +443,12 @@ async function raiseItemPO(catalyst, orgId, { vendorId, vendorName, items }, use
   const localLines = [];
   for (const item of items) {
     const bd = (item.breakdown || []).filter((b) => n(b.qty) > 0);
+    const target = item.qty != null ? n(item.qty) : bd.reduce((sum, b) => sum + n(b.qty), 0);
+    if (target <= 0) continue;
+    // Draft-covered/extra order: nothing pending to attribute it to — one
+    // unattributed line (empty workOrderId/SO), same as older consolidated lines.
+    if (!bd.length) bd.push({ workOrderId: "", woNumber: "", salesOrderNumber: "", qty: target });
     const bdSum = bd.reduce((sum, b) => sum + n(b.qty), 0);
-    const target = item.qty != null ? n(item.qty) : bdSum;
-    if (target <= 0 || !bd.length) continue;
     // Scale the WO breakdown when the buyer edited the total; last WO absorbs rounding.
     let acc = 0;
     const shares = bd.map((b, i) => {
@@ -385,7 +473,13 @@ async function raiseItemPO(catalyst, orgId, { vendorId, vendorName, items }, use
         zohoPoId: "", zohoPoNumber: "", poStatus: "",
         receivedQty: 0, billedQty: 0, lastPoSyncAt: null,
       });
-      localLines.push({ ROWID: row.ROWID, rmItemId: String(item.rmItemId), rmName: item.rmName || "", purchaseQty: n(b.qty) });
+      localLines.push({
+        ROWID: row.ROWID, rmItemId: String(item.rmItemId), rmName: item.rmName || "",
+        purchaseQty: n(b.qty),
+        // Per-breakdown SO → one PO line per (item, SO) via collapseLines,
+        // each carrying its own cf_so_no. In memory only, no DB column.
+        soNumber: b.salesOrderNumber || "",
+      });
     }
   }
   if (!localLines.length) { const e = new Error("Nothing to order — every selected quantity was zero"); e.status = 400; throw e; }
@@ -450,6 +544,11 @@ function poPutBody(po, kept) {
       // Books PUT clears any line field not echoed; a GST line without tax_id fails
       // with 110802, so carry the fetched line's tax through the edit.
       tax_id: li.tax_id ? String(li.tax_id) : undefined,
+      // Same wholesale-replace rule: echo the line's custom fields (cf_so_no)
+      // or a quantity edit silently wipes them.
+      item_custom_fields: (li.item_custom_fields || []).length
+        ? li.item_custom_fields.map((cf) => ({ api_name: cf.api_name, value: cf.value }))
+        : undefined,
     });
   }
   const removedItemIds = new Set([...allItemIds].filter((id) => !keptItemIds.has(id)));
@@ -808,9 +907,9 @@ async function procStatusByWo(catalyst, orgId, workOrderId) {
 }
 
 module.exports = {
-  SETTLED_PO, shortfallLines, applyDraftCoverage, validatePR, groupByVendor, collapseLines,
+  SETTLED_PO, shortfallLines, applyDraftCoverage, openDraftLines, validatePR, groupByVendor, collapseLines,
   shortfallByItem, procurementStatus, createPoForLines, raiseItemPO, procStatusByWo,
-  createPR, updatePRLine, confirmPR, refreshPurchaseOrders, listPRs, listAllPRs,
+  createPR, updatePRLine, deletePR, deletePRLine, confirmPR, refreshPurchaseOrders, listPRs, listAllPRs,
   poPutBody, poDetail, deletePo, setPoStatus, updatePoLines, poListRow, listAllPOs,
 };
 
@@ -857,6 +956,13 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(fully[0].rmItemId, "22", "uncovered row survives untouched");
   assert.strictEqual(fully[0].prHint, undefined);
 
+  // Everything already on a draft PR → empty; createPR turns this into a 409
+  // so a double-click / stale tab cannot create a duplicate request.
+  assert.strictEqual(applyDraftCoverage(short, [
+    { rmItemId: "11", purchaseQty: 8, prNumber: "PR-0001" },
+    { rmItemId: "22", purchaseQty: 4, prNumber: "PR-0001" },
+  ]).length, 0, "all covered → nothing to request");
+
   const partly2 = applyDraftCoverage(short, [
     { rmItemId: "22", purchaseQty: 3, prNumber: "PR-0002" },
   ]);
@@ -888,6 +994,17 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(shaft.vendorId, "V1", "first line's vendor kept");
   assert.strictEqual(collapsed.find((l) => l.rmItemId === "22").purchaseQty, 4);
 
+  // One PO line per SO: same item from two Sales Orders stays on two lines,
+  // same-SO duplicates still merge (CR-019 intact).
+  const perSo = collapseLines([
+    { rmItemId: "11", purchaseQty: 5, soNumber: "SO-1" },
+    { rmItemId: "11", purchaseQty: 3, soNumber: "SO-2" },
+    { rmItemId: "11", purchaseQty: 2, soNumber: "SO-1" },
+  ]);
+  assert.strictEqual(perSo.length, 2, "two SOs → two lines for the same item");
+  assert.strictEqual(perSo.find((l) => l.soNumber === "SO-1").purchaseQty, 7, "same-SO lines still merge");
+  assert.strictEqual(perSo.find((l) => l.soNumber === "SO-2").purchaseQty, 3);
+
   // Validation.
   assert.deepStrictEqual(
     validatePR([{ rmName: "Shaft", purchaseQty: 5, vendorId: "V1" }]), [], "a complete line passes",
@@ -914,7 +1031,8 @@ if (require.main === module && process.argv.includes("--selftest")) {
   const fetchedPo = {
     location_id: "W1",
     line_items: [
-      { line_item_id: "L1", item_id: "11", quantity: 5, rate: 12.5, description: "SO SO-1" },
+      { line_item_id: "L1", item_id: "11", quantity: 5, rate: 12.5, description: "SO SO-1",
+        item_custom_fields: [{ customfield_id: "9", api_name: "cf_so_no", value: "SO-1" }] },
       { line_item_id: "L2", item_id: "22", quantity: 3, rate: 7, description: "SO SO-1" },
       { line_item_id: "L3", item_id: "11", quantity: 2, rate: 12.5, description: "SO SO-2" },
     ],
@@ -924,6 +1042,9 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(edit.body.line_items[0].quantity, 4, "kept line takes the edited quantity");
   assert.strictEqual(edit.body.line_items[0].rate, 12.5, "rate echoed from the fetched PO");
   assert.strictEqual(edit.body.location_id, "W1", "delivery location preserved");
+  assert.deepStrictEqual(edit.body.line_items[0].item_custom_fields,
+    [{ api_name: "cf_so_no", value: "SO-1" }], "line custom fields (cf_so_no) survive the edit");
+  assert.strictEqual(edit.body.line_items[1].item_custom_fields, undefined, "no CFs → field omitted");
   assert.deepStrictEqual([...edit.removedItemIds], ["22"], "only item 22 counts as removed");
 
   // Same item on two lines: dropping one line does NOT mark the item removed.

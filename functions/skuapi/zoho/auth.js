@@ -6,7 +6,7 @@
  * Until ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET are set as function env vars these
  * throw "Zoho not configured" — callers treat the push as best-effort.
  */
-const { rowList } = require("../store");
+const { rowList, zStr } = require("../store");
 
 const DC = process.env.ZOHO_DC || "com";
 const CLIENT_ID = process.env.ZOHO_CLIENT_ID;
@@ -157,6 +157,7 @@ async function saveToken(catalyst, userId, data, dc) {
     await ds.insertRow(fields);
   }
   forgetToken(catalyst, userId);
+  orgIdCache.delete(String(userId));
 }
 
 async function getAccessToken(catalyst, userId) {
@@ -195,14 +196,44 @@ async function getOrgId(catalyst, userId) {
   return (token && token.orgId) || process.env.ZOHO_ORG_ID || null;
 }
 
+
+// ponytail: 60s userId→orgId cache — requireOrg otherwise costs one ZCQL on
+// every /api request, and Dev-env concurrency is duration-scaled (CR-088).
+// saveOrg clears it so an org switch shows immediately on this instance.
+const orgIdCache = new Map(); // userId -> { orgId, t }
+function cachedOrgId(userId) {
+  const hit = orgIdCache.get(String(userId));
+  return hit && Date.now() - hit.t < 60_000 ? hit.orgId : null;
+}
+function rememberOrgId(userId, orgId) {
+  orgIdCache.set(String(userId), { orgId, t: Date.now() });
+}
+
 async function saveOrg(catalyst, userId, orgId, orgName) {
   const token = await loadToken(catalyst, userId);
   if (!token) throw new Error("Zoho not connected.");
   await catalyst.datastore().table("ZohoToken").updateRow({ ROWID: token.ROWID, orgId, orgName: orgName || null });
   forgetToken(catalyst, userId);
+  orgIdCache.delete(String(userId));
+
+  // Org registry (CR-090): every org ever selected, for the admin console —
+  // ZohoToken only keeps each user's LAST org. Best-effort: a registry miss
+  // must never block org selection.
+  try {
+    const rows = rowList(
+      await catalyst.zcql().executeZCQLQuery(`SELECT ROWID FROM Org WHERE orgId = ${zStr(String(orgId))}`),
+    );
+    const t = catalyst.datastore().table("Org");
+    if (rows.length) await t.updateRow({ ROWID: rows[0].ROWID, orgName: orgName || null });
+    else await t.insertRow({ orgId: String(orgId), orgName: orgName || null });
+  } catch (e) {
+    console.error("[Org registry] upsert failed:", e.message);
+  }
 }
 
 module.exports = {
+  cachedOrgId,
+  rememberOrgId,
   isConfigured,
   dsDate,
   dcHosts,

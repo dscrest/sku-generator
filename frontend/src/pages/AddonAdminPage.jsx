@@ -5,6 +5,7 @@ import RowDeleteButton from '../components/RowDeleteButton.jsx';
 
 const ADDON_LABELS = {
   'sku-generator': 'SKU Generator',
+  'work-order': 'Work Order',
   'reserve': 'Reserve / De-reserve',
   'cheque-printing': 'Cheque Printing',
   'label-printing': 'QR / Label Printing',
@@ -71,7 +72,12 @@ export default function AddonAdminPage() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', padding: '0 24px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-        <span style={{ fontSize: 15, fontWeight: 600 }}>Add-on entitlements</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 15, fontWeight: 600 }}>Add-on entitlements</span>
+          <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-muted)', background: 'var(--bg-card)', border: '1px solid var(--border)', padding: '4px 10px', borderRadius: 'var(--radius-sm)' }}>
+            {orgs ? `${orgs.length} org${orgs.length !== 1 ? 's' : ''}` : '…'}
+          </span>
+        </div>
         <button onClick={load} title="Refresh" style={{
           display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', fontSize: 12,
           background: 'transparent', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',

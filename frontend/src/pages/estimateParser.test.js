@@ -29,6 +29,17 @@ assert.strictEqual(parsed.groups[0].rows.length, 6);
 assert.deepStrictEqual(parsed.groups[0].rows[0], { size: '4"', mm: "100MM", qty: 4, rate: 10650 });
 assert.deepStrictEqual(parsed.groups[1].rows[1], { size: '24"', mm: "500MM", qty: 1, rate: 245000 });
 
+// 1b. A `Size:` spec line in the description is dropped from the block (the SIZE
+// column, fed by the size-row lines, is the single source of truth) — so a
+// same-name item whose Size: line went stale can't show the wrong size.
+const sizeSpecDesc = `MAKE:- MARUTI
+Size: 26" | DN 650
+DESIGN:- WAFER
+20" / 750MM QTY 1 @ 12340`;
+const parsedSz = parseLineDescription(sizeSpecDesc);
+assert(!parsedSz.specs.some(([k]) => /^size$/i.test(k)), "Size spec dropped from description block");
+assert.deepStrictEqual(parsedSz.groups[0].rows[0], { size: '20"', mm: "750MM", qty: 1, rate: 12340 });
+
 // 2. Totals reproduce the prototype's asserted numbers (13,12,800 / 3,93,840 / 9,18,960 / qty 25).
 const quote = {
   Quote_Number: "MVPL-01344/NR/BK/25-26",
@@ -92,6 +103,22 @@ assert.strictEqual(mergedEst.items[1].sr, 2, "sr renumbered after merge");
 const mt = computeTotals(mergedEst.items, null);
 assert.strictEqual(mt.totalQty, 14);
 assert.strictEqual(mt.totalA, 1 * 0 + 1 * 10 + 2 * 5 + 10 * 250);
+
+// 5c. Dedicated per-line `Size` field wins over a stale `Size:` in the
+// description — same name + different Size → one item with distinct size rows.
+const sizeFieldQuote = {
+  Quoted_Items: [
+    { Product_Name: "Wafer Nrv", Quantity: 1, List_Price: 9000, Size: '26" | DN 650', Description: sizeDesc("O-Port", '26" | DN 650') },
+    { Product_Name: "Wafer Nrv", Quantity: 1, List_Price: 12340, Size: '19" | DN 650', Description: sizeDesc("O-Port", '26" | DN 650') },
+    { Product_Name: "Wafer Nrv", Quantity: 1, List_Price: 100, Size: '20" | DN 750', Description: sizeDesc("O-Port", '26" | DN 650') },
+  ],
+};
+const sfEst = buildEstimate(sizeFieldQuote);
+assert.strictEqual(sfEst.items.length, 1, "same-name lines merge into 1 item");
+const sfRows = sfEst.items[0].groups.flatMap((g) => g.rows);
+assert.deepStrictEqual(sfRows.map((r) => `${r.size} ${r.mm}`),
+  ['26" DN 650', '19" DN 650', '20" DN 750'], "rows use the dedicated Size field, not the stale description");
+assert.deepStrictEqual(sfRows.map((r) => r.rate), [9000, 12340, 100]);
 
 // 5b. merge: false (All Item - Trading version) → no same-name collapsing,
 // one item per CRM line in original order.

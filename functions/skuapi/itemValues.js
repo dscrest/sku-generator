@@ -167,28 +167,4 @@ async function backfillItemValues(catalyst) {
   return report;
 }
 
-/**
- * Build Zoho Books custom_fields for a SKU item from its stored property values:
- * [{ api_name, value }] for every property that has a zohoCfApiName set. Returns []
- * when nothing maps. valueText is already the human display value.
- */
-async function buildZohoCustomFields(catalyst, skuItemId) {
-  const zcql = catalyst.zcql();
-  const vals = rowList(
-    await zcql.executeZCQLQuery(`SELECT propertyId, valueText FROM ${TABLE} WHERE skuItemId = ${skuItemId} AND ${orgClause(catalyst)}`),
-  ).map(out);
-  if (!vals.length) return [];
-
-  const propIds = [...new Set(vals.map((v) => v.propertyId).filter((id) => idOk(id)))];
-  if (!propIds.length) return [];
-  const props = rowList(
-    await zcql.executeZCQLQuery(`SELECT ROWID, zohoCfApiName FROM Property WHERE ROWID IN (${propIds.join(",")})`),
-  ).map(out);
-  const cfByProp = Object.fromEntries(props.filter((p) => p.zohoCfApiName).map((p) => [String(p.id), p.zohoCfApiName]));
-
-  return vals
-    .filter((v) => cfByProp[v.propertyId])
-    .map((v) => ({ api_name: cfByProp[v.propertyId], value: v.valueText }));
-}
-
-module.exports = { saveItemValues, deleteItemValues, searchItemIds, backfillItemValues, missingRequired, buildZohoCustomFields };
+module.exports = { saveItemValues, deleteItemValues, searchItemIds, backfillItemValues, missingRequired };

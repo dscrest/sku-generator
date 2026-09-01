@@ -29,7 +29,7 @@ export default function IndustriesPage() {
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
-  const [form, setForm] = useState({ name: '', skuSeparator: '' });
+  const [form, setForm] = useState({ name: '', skuSeparator: '', seriesStart: '' });
   const [sortCol, setSortCol] = useState('name');
   const [sortDir, setSortDir] = useState('asc');
   const [fName, setFName] = useState('');
@@ -64,13 +64,13 @@ export default function IndustriesPage() {
     try {
       await axios.post('/api/industries', form);
       toast.success('Industry created');
-      setShowAdd(false); setForm({ name: '', skuSeparator: '' }); load();
+      setShowAdd(false); setForm({ name: '', skuSeparator: '', seriesStart: '' }); load();
     } catch { toast.error('Failed to create industry'); }
   }
 
   function openEdit(ind) {
     setSelected(ind);
-    setForm({ name: ind.name, skuSeparator: ind.skuSeparator });
+    setForm({ name: ind.name, skuSeparator: ind.skuSeparator, seriesStart: ind.seriesStart ?? '' });
     setShowEdit(true);
   }
 
@@ -114,7 +114,7 @@ export default function IndustriesPage() {
       <div style={{ flex: 1, overflow: 'auto', padding: '20px 24px' }}>
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
           <Toolbar
-            onAdd={() => { setForm({ name: '', skuSeparator: '' }); setShowAdd(true); }}
+            onAdd={() => { setForm({ name: '', skuSeparator: '', seriesStart: '' }); setShowAdd(true); }}
             onRefresh={load}
             right={
               <div style={{ display: 'flex', gap: 8 }}>
@@ -129,12 +129,13 @@ export default function IndustriesPage() {
                 <th style={{ ...thStyle, width: 60 }} onClick={() => toggleSort('id')}>ID <SortArrow col="id" /></th>
                 <th style={thStyle} onClick={() => toggleSort('name')}>Name <SortArrow col="name" /></th>
                 <th style={thStyle} onClick={() => toggleSort('skuSeparator')}>SKU Separator <SortArrow col="skuSeparator" /></th>
+                <th style={thStyle} onClick={() => toggleSort('seriesStart')}>Numerical Series <SortArrow col="seriesStart" /></th>
                 <th style={{ ...thStyle, width: 84 }}></th>
               </tr>
             </thead>
             <tbody>
               {pageRows.length === 0 && (
-                <tr><td colSpan={4} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No industries found.</td></tr>
+                <tr><td colSpan={5} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No industries found.</td></tr>
               )}
               {pageRows.map(ind => {
                 return (
@@ -153,6 +154,7 @@ export default function IndustriesPage() {
                       >{ind.name} ›</a>
                     </td>
                     <td style={{ padding: '10px 16px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>"{ind.skuSeparator}"</td>
+                    <td style={{ padding: '10px 16px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{ind.seriesStart ? `from ${String(ind.seriesStart).padStart(4, '0')}` : '—'}</td>
                     <td style={{ padding: '8px 12px' }}>
                       <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
                         <RowEditButton onEdit={() => openEdit(ind)} title={`Edit ${ind.name}`} />
@@ -179,6 +181,10 @@ export default function IndustriesPage() {
             <label style={labelStyle}>SKU Separator</label>
             <input style={inputStyle} value={form.skuSeparator} onChange={e => setForm(f => ({ ...f, skuSeparator: e.target.value }))} placeholder='e.g. - or leave blank' onFocus={focusIn} onBlur={focusOut} />
           </div>
+          <div>
+            <label style={labelStyle}>Numerical Series</label>
+            <input style={inputStyle} type="number" min="1" step="1" value={form.seriesStart} onChange={e => setForm(f => ({ ...f, seriesStart: e.target.value }))} placeholder="e.g. 1 — blank = off" onFocus={focusIn} onBlur={focusOut} />
+          </div>
           <ModalFooter>
             <ModalBtn onClick={() => setShowAdd(false)}>Cancel</ModalBtn>
             <ModalBtn onClick={handleAdd} variant="primary">Create</ModalBtn>
@@ -195,6 +201,10 @@ export default function IndustriesPage() {
           <div>
             <label style={labelStyle}>SKU Separator</label>
             <input style={inputStyle} value={form.skuSeparator} onChange={e => setForm(f => ({ ...f, skuSeparator: e.target.value }))} onFocus={focusIn} onBlur={focusOut} />
+          </div>
+          <div>
+            <label style={labelStyle}>Numerical Series</label>
+            <input style={inputStyle} type="number" min="1" step="1" value={form.seriesStart} onChange={e => setForm(f => ({ ...f, seriesStart: e.target.value }))} placeholder="e.g. 1 — blank = off" onFocus={focusIn} onBlur={focusOut} />
           </div>
           <ModalFooter>
             <ModalBtn onClick={() => setShowEdit(false)}>Cancel</ModalBtn>

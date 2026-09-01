@@ -63,6 +63,17 @@ which defaults ON (`DEFAULT_ON` in `addons.js`) so legacy orgs need no seed rows
 | `addonKey` | string | `sku-generator` \| `reserve` \| `cheque-printing` \| `label-printing` |
 | `enabled` | bool | |
 
+### Org
+**Registry, not tenant data (CR-090):** one row per org ever selected, upserted
+best-effort by `saveOrg`. Exists because `ZohoToken` keeps only each user's
+*last* org — the admin console unions this with distinct ZohoToken orgs.
+Removed by the `DELETE /admin/orgs/:orgId` cascade.
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `orgId` | string, **unique, mandatory** | Zoho Books org id |
+| `orgName` | string? | Last-seen org name |
+
 ---
 
 ## SKU catalog
@@ -74,6 +85,7 @@ Top-level grouping; defines how a SKU string is assembled.
 |--------|------|---------|
 | `name` | string | Industry display name |
 | `skuSeparator` | string | Joined between SKU parts (e.g. `-`, `""`) |
+| `seriesStart` | int? | **Numerical series (CR-089).** Null/0 = off; N≥1 appends a per-property-combination 4-digit suffix (`sep + NNNN`) to generated SKUs, first number N. No counter — next = max existing suffix for the prefix + 1 (`skuSeries.js`) |
 | `orgId` | string | Tenant key |
 
 ### Property
@@ -160,8 +172,9 @@ Synced cache of Zoho stock numbers (grid columns B/E/F/G).
 | Column | Type | Purpose |
 |--------|------|---------|
 | `orgId`, `itemId` | string | Keys |
-| `warehouseId` | string? | Null = org-total |
-| `stockOnHand` / `poQty` / `receivedQty` / `billedQty` | number | B / E / F / G |
+| `warehouseId` | string? | Null/"" = org-total |
+| `itemName` / `sku` | string? | Item label cached from Zoho (warehouse-stock report, CR-061) |
+| `stockOnHand` / `availableStock` / `poQty` / `receivedQty` / `billedQty` | number | B / avail / E / F / G |
 | `syncedAt` | datetime | "Last sync" banner = max per org |
 
 Grid column formulas: see [WORKORDER.md](WORKORDER.md).
@@ -194,7 +207,7 @@ become a column. Read via `workorder/settings.js`.
 | Column | Type | Purpose |
 |--------|------|---------|
 | `orgId` | string | Tenant key |
-| `settingKey` | string | `mainWarehouseId`, `reserveWarehouseId`, `issueWarehouseId`, `purchaseTeamEmail`, `approverL1Email`, `approverL2Email`, `shortfallAlertDays`, `costAlertPct`, `woNumberPrefix`, `prNumberPrefix`, `txnNumberPrefix` — the full list is `SETTING_KEYS` in `workorder/store.js` |
+| `settingKey` | string | `mainWarehouseId`, `reserveWarehouseId`, `issueWarehouseId`, `purchaseTeamEmail`, `approverL1Email`, `approverL2Email`, `approvalLevels` (`0`/`1`/`2`; unset = derive from approver emails, CR-082), `shortfallAlertDays`, `costAlertPct`, `woNumberPrefix`, `prNumberPrefix`, `txnNumberPrefix` — the full list is `SETTING_KEYS` in `workorder/store.js` |
 | `settingValue` | string(255) | Always stored as text; callers coerce |
 
 > Named `settingKey`/`settingValue`, not `key`/`value` — the bare words are
@@ -211,7 +224,7 @@ The BRD's BOM header — one per Work Order, linked to a confirmed Sales Order.
 | `salesOrderId` / `salesOrderNumber` | string | Zoho SO link |
 | `customerId` / `customerName` | string | Denormalised from the SO so lists cost no API |
 | `projectName` | string? | BRD's "Project \| SO \| WO" reference |
-| `status` | string | `Draft` → `PendingApproval` (only when a 2nd-level approver is configured) → `Approved` → `MaterialAllocationPending` → `ReadyForProduction` → `InProgress` → `QualityCheck` → `Completed` → `Closed`; `Cancelled` terminal. Only the approval flow reaches `Approved` (the manual status dropdown cannot) |
+| `status` | string | `Draft` → `PendingApproval` (only when 2 approval levels apply — explicit `approvalLevels` setting, or an L2 approver email when unset; 0 levels = no approval needed, CR-082) → `Approved` → `MaterialAllocationPending` → `ReadyForProduction` → `InProgress` → `QualityCheck` → `Completed` → `Closed`; `Cancelled` terminal. Only the approval flow reaches `Approved` (the manual status dropdown cannot). Closing gates on all items issued (warn + force to override); `Closed` → `Completed` only via the admin-only `/reopen` route with a reason (CR-080) |
 | `qcStatus` | string? | `Passed` \| `Rejected` — required before `Completed` |
 | `revision` | number | Current BOM revision, starts 0 |
 | `bomImportedAt` | datetime? | Drives the shortfall alert (BOM import + `shortfallAlertDays`) |
@@ -369,7 +382,7 @@ sub-module.
 |--------|------|---------|
 | `orgId` | string | Tenant key |
 | `entityType` / `entityId` | string | What was touched |
-| `action` | string | e.g. `wo.status`, `txn.confirm`, `bom.revise` |
+| `action` | string | e.g. `wo.status`, `wo.reopen` (detail carries the reason, CR-080), `txn.confirm`, `bom.revise` |
 | `userId` | string | AppUser ROWID |
 | `loggedAt` | datetime | (`at` is reserved in some SQL dialects) |
 | `detail` | text? | JSON before/after |
@@ -396,6 +409,13 @@ Newest first. One row per applied schema change; link the CR that requested it.
 
 | Date | CR | Change | Applied |
 |------|----|--------|---------|
+| 2026-09-01 | [CR-090](CHANGES.md) | New `Org` table — `orgId` (varchar 50, unique, mandatory), `orgName` (varchar 255, nullable) — registry of every org ever selected, for the admin console. Added via Catalyst MCP (table id 69851000000233001) | ✅ live |
+| 2026-09-01 | [CR-089](CHANGES.md) | `Industry.seriesStart` (int, nullable) — numerical-series start; null/0 = off, N≥1 appends per-combination 4-digit SKU suffix. Added via Catalyst MCP (column id 69851000000234005) | ✅ live |
+| 2026-09-01 | [CR-082](CHANGES.md) | No schema change — new `OrgSetting` row `approvalLevels` (existing generic key/value table) holds the org's required approval level count (`0`/`1`/`2`; unset = derive from approver emails) | n/a |
+| 2026-08-29 | [CR-070](CHANGES.md) | No schema change — new `OrgSetting` row `stockSyncCursor` (existing generic key/value table) holds the per-org delta cursor for incremental stock sync | n/a |
+| 2026-08-29 | [CR-068](CHANGES.md) | No schema change — warehouse-stock report reads `ItemStockSnapshot` org-total rows; `writeStock` now deletes stale per-warehouse rows (same columns) | n/a |
+| 2026-08-29 | [CR-067](CHANGES.md) | No schema change — full stock sweep is paged via `reconcileOrg` offset/limit; writes the same `ItemStockSnapshot` rows | n/a |
+| 2026-08-29 | [CR-061](CHANGES.md) | `ItemStockSnapshot` + `itemName`, `sku` (text, nullable) — item label cached at sync time for the warehouse-stock report; backfilled by the next full sweep | ✅ live |
 | 2026-08-21 | [CR-031](CHANGES.md) | No schema change — `BomRevision.summary` (existing JSON text) gains an optional `note` key; `WorkOrderLine.requiredQty = 0` rows are now legal (removed-while-committed lines kept for the completion sweep) | n/a |
 | 2026-08-11 | [CR-026](CHANGES.md) | `Property.createValuesAsItems` (boolean, nullable, default false) — property-level gate: all of the property's values sync to Books as items (replaces per-value `createAsItem`) | ✅ live |
 | 2026-08-22 | [CR-038](CHANGES.md) | `SKUItem.lastPushedAt` (datetime, nullable) — last successful Books push; drives the stale-sync badge. Added via Catalyst MCP (column id 69851000000187037) | ✅ live |

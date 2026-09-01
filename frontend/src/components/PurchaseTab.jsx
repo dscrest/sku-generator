@@ -15,6 +15,7 @@ export default function PurchaseTab({ workOrderId, wo, onChanged }) {
   const [vendorErr, setVendorErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [selectedPo, setSelectedPo] = useState(null);
+  const [confirmDeletePr, setConfirmDeletePr] = useState(null); // pr → confirm modal
 
   function loadVendors() {
     setVendorErr(null);
@@ -31,7 +32,9 @@ export default function PurchaseTab({ workOrderId, wo, onChanged }) {
   async function raise() {
     setBusy(true);
     try {
-      const { data } = await axios.post(`/api/wo/${workOrderId}/purchase-request`, { lines: shortfall });
+      const lines = shortfall.filter(l => Number(l.purchaseQty) > 0);
+      if (!lines.length) { toast.error('Every quantity is zero — nothing to request'); return; }
+      const { data } = await axios.post(`/api/wo/${workOrderId}/purchase-request`, { lines });
       toast.success(`${data.prNumber} created — pick a vendor per line, then confirm`);
       setShortfall([]);
       onChanged();
@@ -46,6 +49,24 @@ export default function PurchaseTab({ workOrderId, wo, onChanged }) {
       toast.success('Line updated');
       onChanged();
     } catch (err) { toast.error(err.response?.data?.error || 'Could not update the line'); }
+  }
+
+  async function deletePr(prId) {
+    setBusy(true);
+    try {
+      await axios.delete(`/api/wo/pr/${prId}`);
+      toast.success('Purchase request deleted');
+      onChanged();
+    } catch (err) { toast.error(err.response?.data?.error || 'Could not delete the request'); }
+    finally { setBusy(false); }
+  }
+
+  async function deleteLine(lineId) {
+    try {
+      const { data } = await axios.delete(`/api/wo/pr-line/${lineId}`);
+      toast.success(data.prDeleted ? 'Last line removed — purchase request deleted' : 'Line removed');
+      onChanged();
+    } catch (err) { toast.error(err.response?.data?.error || 'Could not remove the line'); }
   }
 
   async function confirm(prId) {
@@ -92,7 +113,7 @@ export default function PurchaseTab({ workOrderId, wo, onChanged }) {
           <div style={{ padding: '10px 14px', background: '#fef2f2', display: 'flex', alignItems: 'center', gap: 12 }}>
             <b style={{ fontSize: 13, color: '#b91c1c' }}>{shortfall.length} item(s) short</b>
             <span style={{ fontSize: 12, color: '#7f1d1d' }}>
-              Quantities already on order or on a draft purchase request are excluded, so nothing gets ordered twice.
+              Quantities already on order or on a draft purchase request are excluded, so nothing gets ordered twice. Adjust a quantity before raising if needed.
             </span>
             <div style={{ flex: 1 }} />
             <button onClick={raise} disabled={busy} style={{ ...btn, background: '#dc2626', color: '#fff', borderColor: '#dc2626', fontWeight: 600 }}>
@@ -102,13 +123,18 @@ export default function PurchaseTab({ workOrderId, wo, onChanged }) {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr>{['Item', 'To purchase'].map((h, i) => <th key={h} style={{ ...thStyle, textAlign: i ? 'right' : 'left' }}>{h}</th>)}</tr></thead>
             <tbody>
-              {shortfall.map(l => (
-                <tr key={l.rmItemId} style={{ borderBottom: '1px solid var(--border)' }}>
+              {shortfall.map((l, i) => (
+                <tr key={`${l.rmItemId}-${i}`} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={cell}>
                     {l.rmName || l.rmItemId}
                     {l.prHint && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{l.prHint}</div>}
                   </td>
-                  <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{l.purchaseQty}</td>
+                  <td style={{ ...cell, textAlign: 'right' }}>
+                    <QtyInput
+                      line={l}
+                      onCommit={qty => setShortfall(s => s.map((x, j) => j === i ? { ...x, purchaseQty: qty } : x))}
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -131,15 +157,20 @@ export default function PurchaseTab({ workOrderId, wo, onChanged }) {
             <StatusChip status={pr.status} />
             <div style={{ flex: 1 }} />
             {pr.status === 'Draft' && (
-              <button onClick={() => confirm(pr.id)} disabled={busy} style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
-                Confirm → create draft POs
-              </button>
+              <>
+                <button onClick={() => setConfirmDeletePr(pr)} disabled={busy} style={{ ...btn, color: '#b91c1c', borderColor: '#fca5a5' }}>
+                  Delete request
+                </button>
+                <button onClick={() => confirm(pr.id)} disabled={busy} style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
+                  Confirm → create draft POs
+                </button>
+              </>
             )}
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr>{['Item', 'Vendor', 'Qty', 'PO', 'Received', 'Billed'].map((h, i) => (
-                <th key={h} style={{ ...thStyle, textAlign: i < 2 ? 'left' : 'right' }}>{h}</th>
+              <tr>{['Item', 'Vendor', 'Qty', 'PO', 'Received', 'Billed', ''].map((h, i) => (
+                <th key={h || 'x'} style={{ ...thStyle, textAlign: i < 2 ? 'left' : 'right' }}>{h}</th>
               ))}</tr>
             </thead>
             <tbody>
@@ -185,12 +216,38 @@ export default function PurchaseTab({ workOrderId, wo, onChanged }) {
                   </td>
                   <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{l.receivedQty}</td>
                   <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{l.billedQty}</td>
+                  <td style={{ ...cell, width: 34, textAlign: 'right' }}>
+                    {!l.poNumber && (
+                      <button
+                        onClick={() => deleteLine(l.id)}
+                        title="Remove line — the item returns to the shortfall"
+                        style={{ ...btn, padding: '2px 7px', color: '#b91c1c' }}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       ))}
+
+      {confirmDeletePr && (
+        <Modal title={`Delete ${confirmDeletePr.prNumber}?`} onClose={() => setConfirmDeletePr(null)} width={440}>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+            The purchase request and its {confirmDeletePr.lines?.length || 0} line(s) are removed and the
+            items return to this work order's shortfall. This cannot be undone.
+          </div>
+          <ModalFooter>
+            <ModalBtn onClick={() => setConfirmDeletePr(null)}>Keep it</ModalBtn>
+            <ModalBtn variant="primary" disabled={busy} onClick={() => { const id = confirmDeletePr.id; setConfirmDeletePr(null); deletePr(id); }}>
+              Delete request
+            </ModalBtn>
+          </ModalFooter>
+        </Modal>
+      )}
     </div>
   );
 }

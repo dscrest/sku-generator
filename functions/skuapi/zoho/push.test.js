@@ -12,7 +12,6 @@ booksApi.apiRequest = async (catalyst, method, path, body, service) => {
   return { composite_item: { composite_item_id: "77" } };
 };
 booksApi.getStockAccountId = async () => "acc-fg";
-booksApi.buildItemCfs = async (c, cfs) => cfs || [];
 
 const { createCompositeItem } = require("./inventoryApi");
 const { buildAssociatedItems, mergeMappedLines } = require("./push");
@@ -32,7 +31,6 @@ const catalystWith = (rowsByTable) => ({
   // --- composite create payload carries the full §3–§8 spec ---
   await createCompositeItem(catalystWith({}), {
     name: "Valve A", sku: "V-A", description: "Size: 100 MM",
-    customFields: [{ api_name: "cf_size", value: "100 MM" }],
     mappedItems: [{ rmItemId: "9", perUnitQty: 1 }],
   });
   assert.strictEqual(captured.service, "inventory");
@@ -41,11 +39,27 @@ const catalystWith = (rowsByTable) => ({
   assert.strictEqual(b.purchase_description, "Size: 100 MM");
   assert.strictEqual(b.rate, 0);
   assert.strictEqual(b.is_taxable, true);
+  // Serial by default; custom fields are never pushed (CR-087).
   assert.strictEqual(b.track_serial_number, true);
+  assert.strictEqual(b.track_batch_number, false);
+  assert.strictEqual(b.custom_fields, undefined);
   assert.strictEqual(b.inventory_valuation_method, "fifo");
   assert.strictEqual(b.inventory_account_id, "acc-fg");
-  assert.deepStrictEqual(b.custom_fields, [{ api_name: "cf_size", value: "100 MM" }]);
   assert.deepStrictEqual(b.mapped_items, [{ item_id: "9", quantity: 1 }]);
+
+  // --- CR-087 push dialog options: batch tracking + chosen account ---
+  await createCompositeItem(catalystWith({}), {
+    name: "Valve A", sku: "V-A", tracking: "batch", inventoryAccountId: "acc-x",
+  });
+  assert.strictEqual(captured.body.track_serial_number, false);
+  assert.strictEqual(captured.body.track_batch_number, true);
+  assert.strictEqual(captured.body.inventory_account_id, "acc-x");
+
+  // --- tracking "none" → neither flag ---
+  await createCompositeItem(catalystWith({}), { name: "Valve A", sku: "V-A", tracking: "none" });
+  assert.strictEqual(captured.body.track_serial_number, false);
+  assert.strictEqual(captured.body.track_batch_number, false);
+  assert.strictEqual(captured.body.inventory_account_id, "acc-fg"); // falls back to Finished Goods
 
   const item = { id: "1", industryId: "5" };
 

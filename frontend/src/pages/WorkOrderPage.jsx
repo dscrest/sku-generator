@@ -4,6 +4,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import MaterialsGrid, { Empty, Banner } from '../components/MaterialsGrid.jsx';
 import WoItemsTab from '../components/WoItemsTab.jsx';
+import PurchaseTab from '../components/PurchaseTab.jsx';
 import Modal, { ModalFooter, ModalBtn } from '../components/Modal.jsx';
 import { StatusChip, ProcChip, AccessNotice, spaced, btn, thStyle, cell } from '../components/woCommon.jsx';
 import { fmtMoney, fmtDate } from '../format.js';
@@ -14,9 +15,9 @@ import { fmtMoney, fmtDate } from '../format.js';
  * ⋯) and per-order sub-tabs. BOM and Purchase live on their own sidebar
  * pages now — this page is the order itself.
  */
-const TABS = ['Details', 'Items', 'Approvals', 'History'];
+const TABS = ['Details', 'Items', 'Purchase', 'Approvals', 'History'];
 
-export default function WorkOrderPage() {
+export default function WorkOrderPage({ user }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const [tab, setTab] = useState('Details');
@@ -28,6 +29,8 @@ export default function WorkOrderPage() {
   const [printBom, setPrintBom] = useState(null);
   const [busy, setBusy] = useState(false);
   const [qcPrompt, setQcPrompt] = useState(null); // pending status awaiting QC answer
+  const [closeWarn, setCloseWarn] = useState(null); // 409 "unissued" payload from a Close attempt
+  const [reopening, setReopening] = useState(false);
 
   function load() {
     axios.get(`/api/wo/${id}`)
@@ -49,7 +52,8 @@ export default function WorkOrderPage() {
   if (blocked) return <AccessNotice kind={blocked} />;
 
   const approvalOf = lv => wo?.approvals?.find(a => a.level === lv)?.status;
-  const bothApproved = approvalOf(1) === 'Approved' && approvalOf(2) === 'Approved';
+  const levels = wo?.requiredApprovalLevels ?? 0; // 0 = approvals disabled in settings
+  const allApproved = levels > 0 && [1, 2].slice(0, levels).every(lv => approvalOf(lv) === 'Approved');
   const nextLevel = approvalOf(1) !== 'Approved' ? 1 : 2;
   const canDelete = wo && ['Draft', 'Cancelled'].includes(wo.status);
   // Forward status moves (Cancel lives in the ⋯ menu, not the status dropdown).
@@ -66,7 +70,7 @@ export default function WorkOrderPage() {
     } finally { setBusy(false); }
   }
 
-  async function changeStatus(status, qcStatus) {
+  async function changeStatus(status, qcStatus, force) {
     // The QC gate is the one transition that needs an answer first.
     if (status === 'Completed' && !wo.qcStatus && !qcStatus) {
       setQcPrompt(status);
@@ -74,7 +78,7 @@ export default function WorkOrderPage() {
     }
     setBusy(true);
     try {
-      const { data } = await axios.post(`/api/wo/${id}/status`, { status, qcStatus });
+      const { data } = await axios.post(`/api/wo/${id}/status`, { status, qcStatus, force });
       toast.success(`Moved to ${spaced(data.status)}`);
       // Completion sweeps leftover material back to Main (CR-031) — surface
       // the Zoho Transfer Orders it created.
@@ -86,7 +90,21 @@ export default function WorkOrderPage() {
       }
       load();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Could not change the status', { duration: 6000 });
+      // Not everything issued yet — ask before closing (CR-080).
+      if (err.response?.status === 409 && err.response.data?.code === 'unissued') setCloseWarn(err.response.data);
+      else toast.error(err.response?.data?.error || 'Could not change the status', { duration: 6000 });
+    } finally { setBusy(false); }
+  }
+
+  async function reopen(reason) {
+    setBusy(true);
+    try {
+      await axios.post(`/api/wo/${id}/reopen`, { reason });
+      toast.success(`${wo.woNumber} reopened`);
+      setReopening(false);
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not reopen the work order', { duration: 6000 });
     } finally { setBusy(false); }
   }
 
@@ -167,7 +185,13 @@ export default function WorkOrderPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
                 <div style={{ flex: 1 }} />
                 <button onClick={() => setEditing(true)} style={btn}>✎ Edit</button>
-                {bothApproved ? (
+                {wo.status === 'Completed' && (
+                  <button onClick={() => changeStatus('Closed')} disabled={busy} style={btn}>Close WO</button>
+                )}
+                {wo.status === 'Closed' && user?.isAdmin && (
+                  <button onClick={() => setReopening(true)} disabled={busy} style={btn}>Reopen WO</button>
+                )}
+                {levels > 0 && (allApproved ? (
                   <button onClick={() => setTab('Approvals')} style={btn}>
                     Approved
                   </button>
@@ -176,13 +200,13 @@ export default function WorkOrderPage() {
                     style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
                     Approve
                   </button>
-                )}
+                ))}
                 <Menu
                   trigger="⋯"
                   triggerStyle={{ ...btn, fontWeight: 700 }}
                   align="right"
                   items={[
-                    ...(!bothApproved ? [{ label: `✕ Reject — Level ${nextLevel}`, tone: '#b91c1c', onClick: () => approve('Rejected') }] : []),
+                    ...(levels > 0 && !allApproved ? [{ label: `✕ Reject — Level ${nextLevel}`, tone: '#b91c1c', onClick: () => approve('Rejected') }] : []),
                     ...(wo.nextStatuses?.includes('Cancelled') ? [{ label: 'Cancel work order', tone: '#b91c1c', onClick: () => changeStatus('Cancelled') }] : []),
                     { label: '🖨 Print / PDF', onClick: printPdf },
                     {
@@ -211,6 +235,7 @@ export default function WorkOrderPage() {
             <div style={{ flex: 1, minHeight: 0 }}>
               {tab === 'Details' && <MaterialsGrid workOrderId={id} fgs={wo.fgs} onChanged={load} />}
               {tab === 'Items' && <WoItemsTab workOrderId={id} fgs={wo.fgs} status={wo.status} onChanged={load} />}
+              {tab === 'Purchase' && <PurchaseTab workOrderId={id} wo={wo} onChanged={load} />}
               {tab === 'Approvals' && <ApprovalsTab workOrderId={id} wo={wo} onChanged={load} />}
               {tab === 'History' && <HistoryTab workOrderId={id} wo={wo} />}
             </div>
@@ -233,6 +258,39 @@ export default function WorkOrderPage() {
                 </ModalFooter>
               </Modal>
             )}
+
+            {closeWarn && (
+              <Modal title={`Close ${wo.woNumber}?`} onClose={() => setCloseWarn(null)} width={460}>
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                  {closeWarn.items.length} item{closeWarn.items.length === 1 ? ' is' : 's are'} not fully issued.
+                  Closing assumes manufacturing is finished.
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 10 }}>
+                  <thead>
+                    <tr>{['Item', 'Required', 'Issued'].map((h, i) => (
+                      <th key={h} style={{ ...thStyle, textAlign: i ? 'right' : 'left' }}>{h}</th>
+                    ))}</tr>
+                  </thead>
+                  <tbody>
+                    {closeWarn.items.map((r, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={cell}>{r.name || r.sku}</td>
+                        <td style={{ ...cell, textAlign: 'right' }}>{r.required}</td>
+                        <td style={{ ...cell, textAlign: 'right' }}>{r.issued}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <ModalFooter>
+                  <ModalBtn onClick={() => setCloseWarn(null)}>Keep it open</ModalBtn>
+                  <ModalBtn variant="primary" disabled={busy} onClick={() => { setCloseWarn(null); changeStatus('Closed', undefined, true); }}>
+                    Close anyway
+                  </ModalBtn>
+                </ModalFooter>
+              </Modal>
+            )}
+
+            {reopening && <ReopenModal wo={wo} busy={busy} onClose={() => setReopening(false)} onReopen={reopen} />}
 
             {confirmDelete && (
               <Modal title={`Delete ${wo.woNumber}?`} onClose={() => setConfirmDelete(false)} width={440}>
@@ -290,6 +348,33 @@ function Menu({ trigger, triggerStyle, items, align = 'left' }) {
         </>
       )}
     </div>
+  );
+}
+
+// ---- reopen (admin only, CR-080) ------------------------------------------
+
+function ReopenModal({ wo, busy, onClose, onReopen }) {
+  const [reason, setReason] = useState('');
+  const submit = () => reason.trim() && onReopen(reason.trim());
+  return (
+    <Modal title={`Reopen ${wo.woNumber}?`} onClose={onClose} onSubmit={submit} width={460}>
+      <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+        The work order goes back to Completed. The reason is recorded in the audit trail.
+      </div>
+      <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', margin: '10px 0 4px' }}>
+        Reason for reopening
+      </label>
+      <textarea
+        value={reason} onChange={e => setReason(e.target.value)} rows={3} autoFocus
+        style={{ width: '100%', padding: '8px 11px', fontSize: 13, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)', resize: 'vertical', fontFamily: 'inherit' }}
+      />
+      <ModalFooter>
+        <ModalBtn onClick={onClose}>Cancel</ModalBtn>
+        <ModalBtn variant="primary" disabled={busy || !reason.trim()} onClick={submit}>
+          {busy ? 'Reopening…' : 'Reopen work order'}
+        </ModalBtn>
+      </ModalFooter>
+    </Modal>
   );
 }
 
@@ -406,14 +491,22 @@ function ApprovalsTab({ workOrderId, wo, onChanged }) {
     } finally { setBusy(false); }
   }
 
+  const levels = wo.requiredApprovalLevels ?? 0;
+  if (levels === 0) {
+    return (
+      <div style={{ padding: '16px 20px', maxWidth: 640 }}>
+        <Banner tone="info">Approvals are disabled in settings — this work order needs no approval.</Banner>
+      </div>
+    );
+  }
   return (
     <div style={{ padding: '16px 20px', maxWidth: 640 }}>
       <Banner tone={gate?.allowed ? 'info' : 'warn'}>
         {gate?.allowed
-          ? 'Both approvals are recorded — this work order can be invoiced.'
-          : gate?.blockedReason || 'Invoice creation is blocked until both levels approve.'}
+          ? 'All required approvals are recorded — this work order can be invoiced.'
+          : gate?.blockedReason || 'Invoice creation is blocked until every configured level approves.'}
       </Banner>
-      {[1, 2].map(level => {
+      {[1, 2].slice(0, levels).map(level => {
         const a = wo.approvals?.find(x => x.level === level);
         return (
           <div key={level} style={{ marginTop: 12, padding: 14, border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', background: 'var(--bg-card)' }}>

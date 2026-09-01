@@ -38,7 +38,10 @@ export function parseLineDescription(text) {
       groups.push(cur);
       continue;
     }
-    if (spec) specs.push([spec[1].trim(), spec[2].trim()]);
+    // Drop the `Size:` spec: it duplicates the SIZE column (fed by the size-row
+    // lines) and can go stale when a same-name item's size is changed — mirrors
+    // the merge-path filter below (line ~121).
+    if (spec) { if (!SIZE_KEY.test(spec[1].trim())) specs.push([spec[1].trim(), spec[2].trim()]); }
     else specs.push(["", line]); // continuation line, prototype style
   }
   const withRows = groups.filter((g) => g.rows.length);
@@ -108,17 +111,20 @@ export function buildEstimate(quote, { merge = true } = {}) {
       items.push({ flat: false, title, specs: parsed.specs, groups });
       continue;
     }
-    // One-CRM-line-per-size convention: same product repeated with a `Size:`
-    // spec in each description → one printed item, one size row per line,
-    // sectioned by Design/Design Type. Specs come from the first line.
+    // One-CRM-line-per-size convention: same product repeated with a per-line
+    // size → one printed item, one size row per line, sectioned by Design/Design
+    // Type. Specs come from the first line. The dedicated CRM `Size` field is the
+    // source of truth (the description's `Size:` can go stale when a same-name
+    // line's size is edited); fall back to the description only when it's absent.
     const specs = parseSpecs(line.Description);
-    const sizeVal = specs && specValue(specs, SIZE_KEY);
+    const lineSize = String(line.Size || "").trim();
+    const sizeVal = lineSize || (specs && specValue(specs, SIZE_KEY)) || "";
     if (sizeVal) {
-      const [size, mm = ""] = sizeVal.split(/\s*\|\s*/);
-      const design = specValue(specs, DESIGN_KEY).toUpperCase();
+      const [size, mm = ""] = sizeVal.split(/\s*[|\n]\s*/);
+      const design = (specs ? specValue(specs, DESIGN_KEY) : "").toUpperCase();
       let item = merge ? merged.get(title) : null;
       if (!item) {
-        item = { flat: false, title, specs: specs.filter(([k]) => !SIZE_KEY.test(k)), groups: [] };
+        item = { flat: false, title, specs: specs ? specs.filter(([k]) => !SIZE_KEY.test(k)) : [], groups: [] };
         if (merge) merged.set(title, item);
         items.push(item);
       }
@@ -148,7 +154,9 @@ export function buildEstimate(quote, { merge = true } = {}) {
         address: [a.Billing_Street, a.Billing_City, a.Billing_State, a.Billing_Code]
           .filter(Boolean).join(", "),
         phone: a.Phone || "",
-        email: a.Email || a.Email_1 || "",
+        // Contact-person email (printed on the contact line). The company/
+        // account email is hidden for now per CR-060 follow-up.
+        email: c.Email || "",
         gstin: a.GST_No || a.GSTIN || a.GST_NO || "",
         contact: lookupName(quote.Contact_Name) || c.Full_Name || "",
         mobile: c.Mobile || c.Phone || "",

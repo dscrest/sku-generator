@@ -20,6 +20,14 @@ async function getStockAccountId(catalyst, accountName) {
 }
 const getFinishedGoodsAccountId = (catalyst) => getStockAccountId(catalyst, "finished goods");
 
+// All stock accounts in the org — the push dialog's Inventory Account dropdown.
+async function listStockAccounts(catalyst) {
+  const data = await apiRequest(catalyst, "GET", "/chartofaccounts");
+  return (data.chartofaccounts || [])
+    .filter((a) => a.account_type === "stock")
+    .map((a) => ({ id: String(a.account_id), name: a.account_name }));
+}
+
 // GST tax id by percentage, resolved per Books org and cached. In the India GST
 // edition every transaction *line* needs its own tax (else Books rejects the whole
 // doc with 110802 "Specify either a Tax or Tax Exemption or Reverse Charge" — the
@@ -97,62 +105,6 @@ async function getContactGstStateCode(catalyst, contactId) {
   }
 }
 
-// Item custom-field metadata per org: which api_names exist at all, plus
-// api_name -> [option label] for dropdown fields.
-const _itemCfOptionsCache = new Map(); // orgId -> { apiNames: Set, options: Map(api_name -> string[]) }
-async function getItemCfOptions(catalyst) {
-  const orgId = await getOrgId(catalyst);
-  if (_itemCfOptionsCache.has(orgId)) return _itemCfOptionsCache.get(orgId);
-  const data = await apiRequest(catalyst, "GET", "/settings/fields?entity=item");
-  const fields = data.fields || data.customfields || [];
-  const apiNames = new Set();
-  const options = new Map();
-  for (const f of fields) {
-    if (!f.api_name) continue;
-    apiNames.add(f.api_name);
-    if (Array.isArray(f.values) && f.values.length) {
-      options.set(f.api_name, f.values.map((v) => v.name).filter(Boolean));
-    }
-  }
-  const meta = { apiNames, options };
-  _itemCfOptionsCache.set(orgId, meta);
-  return meta;
-}
-
-// Books rejects a dropdown value that isn't byte-identical to an option, and options
-// already used by transactions can't be renamed to match — so map each pushed value
-// to the exact option label, matched loosely (case + all whitespace ignored). This
-// keeps app data clean while absorbing Books' label quirks (typos, stray spaces).
-// Unmatched or ambiguous values pass through unchanged so Books surfaces a real error
-// rather than us silently sending the wrong option.
-// Fields whose api_name doesn't exist in the connected org are dropped (with a
-// warn), not sent — Books rejects the whole item over one unknown field, and
-// other clients' orgs won't have our defaults or every mapped property field.
-const _loose = (s) => String(s).toLowerCase().replace(/\s+/g, "");
-async function normalizeCustomFields(catalyst, customFields) {
-  if (!customFields || !customFields.length) return customFields;
-  let meta;
-  try {
-    meta = await getItemCfOptions(catalyst);
-  } catch (err) {
-    // Metadata fetch failed (e.g. missing scope) — don't fail the push over it.
-    console.warn(`custom-field metadata fetch failed, sending fields unfiltered: ${err.message}`);
-    return customFields;
-  }
-  const skipped = customFields.filter((cf) => !meta.apiNames.has(cf.api_name));
-  if (skipped.length) {
-    console.warn(`skipping custom fields not in Books org: ${skipped.map((cf) => cf.api_name).join(", ")}`);
-  }
-  return customFields
-    .filter((cf) => meta.apiNames.has(cf.api_name))
-    .map((cf) => {
-      const opts = meta.options.get(cf.api_name);
-      if (!opts || opts.includes(cf.value)) return cf; // non-dropdown, or already exact
-      const hit = opts.filter((o) => _loose(o) === _loose(cf.value));
-      return hit.length === 1 ? { ...cf, value: hit[0] } : cf;
-    });
-}
-
 // service: "books" (v3) | "inventory" (v1) — both APIs share auth, org param
 // and the { code, message } response envelope.
 async function apiRequest(catalyst, method, path, body, service = "books") {
@@ -178,33 +130,18 @@ async function apiRequest(catalyst, method, path, body, service = "books") {
   return data;
 }
 
-// §3 constants (field-mapping spec). Books custom-field *default values* only fire on
-// UI creation, not API create, so we push these explicitly. Values must equal the
-// dropdown option labels exactly ("In-House", not "In-house"). Orgs that lack any
-// of these fields are fine: normalizeCustomFields drops unknown api_names.
-const ITEM_DEFAULT_CFS = [
-  { api_name: "cf_item_type", value: "Finished Goods" },
-  { api_name: "cf_item_criticality", value: "Critical" },
-  { api_name: "cf_item_source", value: "In-House Manufacturing" },
-];
-
-// customFields: [{ api_name, value }] — property values destined for Books item custom fields.
 // The generated property breakdown goes into both description boxes Books shows on
 // an item: `description` (Sales Information) and `purchase_description` (Purchase).
-// Field-mapping spec defaults: §1 Units=Pcs, §2 Inventory Tracking (serial + Finished
-// Goods + FIFO), §3 constants (ITEM_DEFAULT_CFS), §4 params ride in `customFields`.
+// Custom fields are never pushed — the client maintains them in Books by hand.
 // Tracking method + inventory account are immutable once the item has transactions,
 // so they're only set here (create), never in updateItem.
-// ponytail: serial key is `track_serial_number` per Books v3; verify against the org
-// on first live push and adjust if the response omits it.
-// Default CFs + dropdown-label normalization in one step — shared by the plain
-// item path here and the composite path in inventoryApi.js.
-const buildItemCfs = (catalyst, customFields) =>
-  normalizeCustomFields(catalyst, [...ITEM_DEFAULT_CFS, ...(customFields || [])]);
-
-async function createItem(catalyst, name, sku, description, customFields) {
-  const inventoryAccountId = await getFinishedGoodsAccountId(catalyst);
-  const cfs = await buildItemCfs(catalyst, customFields);
+// opts: { tracking: 'none'|'serial'|'batch', inventoryAccountId } from the push
+// dialog; defaults (serial + Finished Goods) keep non-dialog paths unchanged.
+// ponytail: serial/batch keys are `track_serial_number`/`track_batch_number` per
+// Books v3; verify against the org on first live push.
+async function createItem(catalyst, name, sku, description, opts = {}) {
+  const inventoryAccountId = opts.inventoryAccountId || (await getFinishedGoodsAccountId(catalyst));
+  const tracking = opts.tracking || "serial";
   // Default tax so India-GST orgs get a line-level tax on every transaction built
   // from this item (null on non-GST orgs → field omitted). See getGstTaxId.
   const taxId = await getDefaultTaxId(catalyst);
@@ -218,22 +155,21 @@ async function createItem(catalyst, name, sku, description, customFields) {
     unit: "pcs",
     is_taxable: true,
     tax_id: taxId || undefined,
-    track_serial_number: true,
+    track_serial_number: tracking === "serial",
+    track_batch_number: tracking === "batch",
     inventory_valuation_method: "fifo",
     inventory_account_id: inventoryAccountId || undefined,
     rate: 0,
-    custom_fields: cfs,
   });
   return data.item;
 }
 
-async function updateItem(catalyst, zohoItemId, name, sku, description, customFields) {
+async function updateItem(catalyst, zohoItemId, name, sku, description) {
   const body = { name, sku, unit: "pcs" };
   if (description !== undefined) {
     body.description = description;
     body.purchase_description = description;
   }
-  if (customFields && customFields.length) body.custom_fields = await normalizeCustomFields(catalyst, customFields);
   const data = await apiRequest(catalyst, "PUT", `/items/${zohoItemId}`, body);
   return data.item;
 }
@@ -278,8 +214,8 @@ async function findItemBySku(catalyst, sku) {
 }
 
 // Minimal raw-material item for a BOM component (CR-028). Deliberately NOT
-// createItem: that one stamps Finished Goods custom fields, serial tracking and
-// the Finished Goods account — all wrong for a component. Uses the Books
+// createItem: that one stamps serial tracking and the Finished Goods account —
+// all wrong for a component. Uses the Books
 // default "Inventory Asset" stock account; if the org lacks it, Books' own
 // error names the missing field.
 async function createComponentItem(catalyst, name, sku) {
@@ -381,7 +317,10 @@ async function listVendors(catalyst) {
  * originating Sales Order and delivered into the Reserve warehouse, so received
  * stock lands already allocated to the project.
  *
- * lines: [{ rmItemId, qty, rate?, description? }]
+ * lines: [{ rmItemId, qty, rate?, description?, soId? }] — soId lands on the
+ * line's cf_so_no item custom field so each line names its Sales Order. The
+ * field is a LOOKUP to Sales Orders: the value must be the salesorder_id, a
+ * plain SO number string is silently dropped by Zoho.
  */
 async function createPurchaseOrder(catalyst, { vendorId, date, referenceNumber, warehouseId, lines, notes }) {
   // India GST edition rejects a line without its own tax (110802); the header tax
@@ -394,8 +333,7 @@ async function createPurchaseOrder(catalyst, { vendorId, date, referenceNumber, 
     getContactGstStateCode(catalyst, vendorId),
   ]);
   const interState = !!(orgState && vendorState && orgState !== vendorState);
-  const taxId = await getGstTaxId(catalyst, 18, { interState });
-  const data = await apiRequest(catalyst, "POST", "/purchaseorders", {
+  const body = (taxId, withCfs = true) => ({
     vendor_id: String(vendorId),
     date,
     // The SO number, so the PO is traceable back to the project from Books.
@@ -416,8 +354,35 @@ async function createPurchaseOrder(catalyst, { vendorId, date, referenceNumber, 
       description: l.description || undefined,
       location_id: warehouseId ? String(warehouseId) : undefined,
       tax_id: taxId || undefined,
+      // SO per line via the org's cf_so_no item custom field (SO lookup — value
+      // is the salesorder_id). Orgs lacking the field get a retry without CFs
+      // below — a missing field must not block a PO.
+      item_custom_fields: withCfs && l.soId
+        ? [{ api_name: "cf_so_no", value: String(l.soId) }]
+        : undefined,
     })),
   });
+  const hasCfs = lines.some((l) => l.soId);
+  const post = async (withCfs) => {
+    try {
+      return await apiRequest(catalyst, "POST", "/purchaseorders",
+        body(await getGstTaxId(catalyst, 18, { interState }), withCfs));
+    } catch (err) {
+      // Books decides place of supply from the vendor's address; our GSTIN-only
+      // guess can point the wrong way (a vendor with no GSTIN reads as intra).
+      // 3032 = needs IGST, 3033 = needs CGST+SGST — retry once, flipped.
+      if (err.zohoCode !== 3032 && err.zohoCode !== 3033) throw err;
+      return apiRequest(catalyst, "POST", "/purchaseorders",
+        body(await getGstTaxId(catalyst, 18, { interState: err.zohoCode === 3032 }), withCfs));
+    }
+  };
+  let data;
+  try {
+    data = await post(true);
+  } catch (err) {
+    if (!hasCfs) throw err;
+    data = await post(false);
+  }
   return data.purchaseorder;
 }
 
@@ -449,7 +414,7 @@ async function getOrganizations(catalyst) {
 module.exports = {
   apiRequest,
   getStockAccountId,
-  buildItemCfs,
+  listStockAccounts,
   createItem,
   updateItem,
   getOrganizations,

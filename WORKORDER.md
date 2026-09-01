@@ -85,7 +85,11 @@ so the reconcile is **mandatory, not optional**.
 6. **Register the Books webhooks** — Books → Settings → Automation → Workflow
    Rules. One rule per module, action = webhook, method POST, URL:
    `https://<domain>/server/skuapi/internal/zoho-event?type=<type>&orgId=<orgId>`
-   header `X-Sync-Secret: <SYNC_SECRET>`.
+   header `X-Sync-Secret: <SYNC_SECRET>`. If the rule can't send a custom header,
+   append `&secret=<SYNC_SECRET>` to the URL instead (accepted as a fallback) —
+   without one or the other the endpoint returns 401. Enabling these makes stock
+   changes push in real time (one item each), so the manual sync is only a
+   backstop.
 
    | Rule on | `type=` | Fires when |
    |---------|---------|-----------|

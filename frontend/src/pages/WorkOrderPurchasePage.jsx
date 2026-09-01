@@ -206,21 +206,24 @@ function ByItemView({ onRaised }) {
   }, []);
 
   const { pageRows, pager } = usePager(items || []);
-  const pending = (items || []).filter(i => i.totalQty > 0);
-  const chosen = pending.filter(i => checked[i.rmItemId]);
+  const all = items || [];
+  const chosen = all.filter(i => checked[i.rmItemId]);
   const orderQty = i => { const v = qty[i.rmItemId]; return v === undefined || v === '' ? i.totalQty : Number(v) || 0; };
   const totalUnits = chosen.reduce((s, i) => s + orderQty(i), 0);
-  const allOn = pending.length > 0 && pending.every(i => checked[i.rmItemId]);
+  const allOn = all.length > 0 && all.every(i => checked[i.rmItemId]);
 
   async function raise() {
     if (!vendorId) return toast.error('Pick a vendor');
     if (!chosen.length) return toast.error('Select at least one item');
+    // Covered rows default to 0 — order only the lines the buyer actually typed.
+    const toOrder = chosen.filter(i => orderQty(i) > 0);
+    if (!toOrder.length) return toast.error('Every selected quantity is zero');
     const vendor = vendors.find(v => String(v.id) === String(vendorId));
     setRaising(true);
     try {
       const { data } = await axios.post('/api/wo/purchase/raise', {
         vendorId, vendorName: vendor?.name || '',
-        items: chosen.map(i => ({
+        items: toOrder.map(i => ({
           rmItemId: i.rmItemId, rmName: i.rmName, qty: orderQty(i),
           breakdown: (i.breakdown || []).filter(b => b.status === 'Pending'),
         })),
@@ -245,7 +248,7 @@ function ByItemView({ onRaised }) {
             <tr>
               <th style={{ ...th, width: 34 }}>
                 <input type="checkbox" checked={allOn}
-                  onChange={e => setChecked(e.target.checked ? Object.fromEntries(pending.map(i => [i.rmItemId, true])) : {})} />
+                  onChange={e => setChecked(e.target.checked ? Object.fromEntries(all.map(i => [i.rmItemId, true])) : {})} />
               </th>
               <th style={th}>Item</th>
               <th style={th}>Work order</th>
@@ -292,11 +295,10 @@ function RowGroup({ item, checked, qty, open, onCheck, onQty, onToggle }) {
   const pendingCount = bd.filter(b => b.status === 'Pending').length;
   const onPoCount = bd.length - pendingCount;
   const poNumbers = [...new Set(bd.map(b => b.poNumber).filter(Boolean))].join(', ');
-  const canOrder = item.totalQty > 0;
   return (
     <>
       <tr className="list-row" style={{ borderBottom: '1px solid var(--border)' }}>
-        <td style={td}><input type="checkbox" checked={checked} disabled={!canOrder} onChange={e => onCheck(e.target.checked)} /></td>
+        <td style={td}><input type="checkbox" checked={checked} onChange={e => onCheck(e.target.checked)} /></td>
         <td style={{ ...td, fontWeight: 600 }}>{item.rmName || item.rmItemId}</td>
         <td style={td}>
           <button onClick={onToggle} style={{ ...btn, padding: '3px 8px', fontSize: 12 }}>
@@ -304,11 +306,11 @@ function RowGroup({ item, checked, qty, open, onCheck, onQty, onToggle }) {
           </button>
         </td>
         <td style={{ ...td, textAlign: 'right' }}>
-          {canOrder ? (
-            <input type="number" min="0" step="any" value={qty ?? item.totalQty}
-              onChange={e => onQty(e.target.value)}
-              style={{ width: 80, padding: '4px 6px', fontSize: 13, textAlign: 'right', fontFamily: 'var(--font-mono)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }} />
-          ) : '—'}
+          {/* Always editable (CR): a draft-covered row defaults to 0 so the buyer
+              can still order extra instead of hitting a locked '—'. */}
+          <input type="number" min="0" step="any" value={qty ?? item.totalQty}
+            onChange={e => onQty(e.target.value)}
+            style={{ width: 80, padding: '4px 6px', fontSize: 13, textAlign: 'right', fontFamily: 'var(--font-mono)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }} />
         </td>
         <td style={{ ...td, fontSize: 12, color: 'var(--text-secondary)' }}>
           {[pendingCount && `${pendingCount} pending`, onPoCount && `${onPoCount} on PO`].filter(Boolean).join(' · ')}

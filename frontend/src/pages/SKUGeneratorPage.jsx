@@ -23,7 +23,7 @@ const T = {
   border: '#e2e8f0',
   borderStrong: '#cbd5e1',
   mono: "'JetBrains Mono', ui-monospace, monospace",
-  sans: "'Manrope', ui-sans-serif, sans-serif",
+  sans: "'Inter', ui-sans-serif, sans-serif",
 };
 
 const shadowSm = '0 1px 2px rgba(15,23,42,0.04), 0 1px 4px rgba(15,23,42,0.04)';
@@ -146,13 +146,9 @@ export default function SKUGeneratorPage() {
     try {
       const { data: props } = await axios.get(`/api/industries/${industry.id}/properties`);
       setProperties(props);
-      const valMap = {};
-      await Promise.all(props.map(async p => {
-        if (p.valueType === 'Manual') {
-          const { data: vals } = await axios.get(`/api/properties/${p.id}/values`);
-          valMap[p.id] = vals;
-        }
-      }));
+      // One batched request ({propId: [values]}) — the old per-property fan-out
+      // (20+ parallel calls) tripped Catalyst's function-concurrency limit (429).
+      const { data: valMap } = await axios.get(`/api/industries/${industry.id}/property-values`);
       setPropertyValues(valMap);
       const initSels = {};
       props.forEach(p => {
@@ -229,13 +225,15 @@ export default function SKUGeneratorPage() {
           toast.success(`SKU "${preview.sku}" updated${editItem.zohoItemId ? ' · synced to Zoho Books' : ''}`);
         }
       } else {
-        await axios.post('/api/sku/create-item', {
+        // Toast the server's sku — with a numerical series it may differ from
+        // the preview when another user saved the same combination first.
+        const { data } = await axios.post('/api/sku/create-item', {
           name: preview.name, sku: preview.sku,
           description: preview.description, type: itemType,
           industryId: selectedIndustry.id,
           selectedValues: selections,
         });
-        toast.success(`SKU "${preview.sku}" created`);
+        toast.success(`SKU "${data.sku || preview.sku}" created`);
       }
       navigate('/sku/items'); // land on the list with the (new) SKU visible
     } catch (err) {
@@ -404,6 +402,25 @@ export default function SKUGeneratorPage() {
                       </span>
                     );
                   })}
+                  {/* Numerical series chip (CR-089): server-issued, shown once
+                      the preview computes it. */}
+                  {!loadingProps && activeProps.length > 0 && Number(selectedIndustry.seriesStart) > 0 && (() => {
+                    const suffix = preview?.sku?.match(/\d{4}$/)?.[0];
+                    return (
+                      <span
+                        title="Numerical series"
+                        style={{
+                          padding: '2px 8px', borderRadius: 8,
+                          border: `1.5px ${suffix ? 'solid' : 'dashed'} ${suffix ? 'transparent' : T.borderStrong}`,
+                          background: suffix ? 'transparent' : T.bgSubtle,
+                          color: suffix ? T.ink : T.ink4,
+                          userSelect: 'none',
+                        }}
+                      >
+                        {suffix || '····'}
+                      </span>
+                    );
+                  })()}
                 </div>
 
                 {/* Name */}
@@ -439,6 +456,7 @@ export default function SKUGeneratorPage() {
                       {prop.valueType === 'Range' ? (
                         <input
                           type="number"
+                          tabIndex={0}
                           value={val}
                           onChange={e => handleSelect(prop.id, e.target.value)}
                           min={prop.rangeMin ?? undefined}
@@ -447,7 +465,10 @@ export default function SKUGeneratorPage() {
                           style={ctrlStyle}
                         />
                       ) : (
-                        <select value={val} onChange={e => handleSelect(prop.id, e.target.value)} style={{ ...ctrlStyle, cursor: 'pointer' }}>
+                        // tabIndex: macOS Safari/Chrome skip selects on Tab unless the OS
+                        // "full keyboard access" pref is on — explicit tabindex overrides that,
+                        // so Tab walks the property fields top to bottom.
+                        <select tabIndex={0} value={val} onChange={e => handleSelect(prop.id, e.target.value)} style={{ ...ctrlStyle, cursor: 'pointer' }}>
                           <option value="">— select —</option>
                           {(propertyValues[prop.id] || []).map(v => (
                             <option key={v.id} value={String(v.id)}>{v.sku} — {v.displayValue}</option>

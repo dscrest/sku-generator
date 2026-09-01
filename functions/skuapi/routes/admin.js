@@ -3,19 +3,27 @@
 /** OCTFIS super-admin: per-customer-org add-on entitlements. */
 const express = require("express");
 const { rowList, zStr } = require("../store");
-const { ADDON_KEYS, DEFAULT_ON } = require("../addons");
+const { ADDON_KEYS, DEFAULT_ON, clearAddonCache } = require("../addons");
 
 const router = express.Router();
 
-// Every org we've ever seen (distinct orgs across ZohoToken rows) merged with
-// its OrgAddon rows -> [{ orgId, orgName, addons: { key: bool } }]
+// Pure union: Org registry rows (every org ever selected, CR-090) + legacy
+// distinct ZohoToken orgs (each user's last org — backfills orgs selected
+// before the registry existed) -> Map(orgId -> orgName). Org's name wins.
+function orgUnion(orgRows, tokenRows) {
+  const orgs = new Map();
+  for (const t of tokenRows) if (t.orgId) orgs.set(String(t.orgId), t.orgName || null);
+  for (const o of orgRows) if (o.orgId) orgs.set(String(o.orgId), o.orgName || null);
+  return orgs;
+}
+
+// Every org we've ever seen (Org registry ∪ ZohoToken) merged with its
+// OrgAddon rows -> [{ orgId, orgName, addons: { key: bool } }]
 router.get("/orgs", async (req, res) => {
   try {
     const tokens = rowList(await req.catalyst.zcql().executeZCQLQuery("SELECT orgId, orgName FROM ZohoToken"));
-    const orgs = new Map();
-    for (const t of tokens) {
-      if (t.orgId) orgs.set(String(t.orgId), t.orgName || null);
-    }
+    const orgRows = rowList(await req.catalyst.zcql().executeZCQLQuery("SELECT orgId, orgName FROM Org"));
+    const orgs = orgUnion(orgRows, tokens);
     const rows = rowList(await req.catalyst.zcql().executeZCQLQuery("SELECT orgId, addonKey, enabled FROM OrgAddon"));
     const explicit = new Map(); // orgId -> Map(addonKey -> bool)
     for (const r of rows) {
@@ -53,6 +61,7 @@ router.post("/org-addons", async (req, res) => {
     } else {
       await table.insertRow({ orgId: String(orgId), addonKey, enabled: Boolean(enabled) });
     }
+    clearAddonCache(orgId);
     res.json({ ok: true, orgId: String(orgId), addonKey, enabled: Boolean(enabled) });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -63,6 +72,7 @@ router.post("/org-addons", async (req, res) => {
 // org's users (their AppUser logins survive; they can reconnect elsewhere).
 const ORG_TABLES = [
   "OrgAddon",
+  "Org",
   "SKUItemValue",
   "SKUItem",
   "PropertyValue",
@@ -102,3 +112,19 @@ router.delete("/orgs/:orgId", async (req, res) => {
 });
 
 module.exports = router;
+module.exports.orgUnion = orgUnion;
+
+// ponytail self-check: `node functions/skuapi/routes/admin.js --selftest`
+if (require.main === module && process.argv.includes("--selftest")) {
+  const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const m = (map) => Object.fromEntries(map);
+  console.assert(eq(m(orgUnion([{ orgId: "1", orgName: "A" }], [])), { 1: "A" }), "registry-only org appears");
+  console.assert(eq(m(orgUnion([], [{ orgId: "2", orgName: "B" }])), { 2: "B" }), "legacy token-only org appears");
+  console.assert(
+    eq(m(orgUnion([{ orgId: "1", orgName: "New" }], [{ orgId: "1", orgName: "Old" }, { orgId: "2", orgName: "B" }])), { 1: "New", 2: "B" }),
+    "registry name wins on overlap",
+  );
+  console.assert(eq(m(orgUnion([{ orgId: null }], [{ orgName: "x" }])), {}), "null orgIds skipped");
+  console.assert(eq(m(orgUnion([], [])), {}), "empty inputs -> empty map");
+  console.log("admin.js self-check passed");
+}

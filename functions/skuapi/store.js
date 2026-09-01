@@ -8,7 +8,7 @@ function rowList(zcqlRows) {
 }
 
 // Columns that must surface as JS numbers (Data Store may hand them back as strings).
-const NUM_COLS = new Set(["skuPosition", "rangeMin", "rangeMax"]);
+const NUM_COLS = new Set(["skuPosition", "rangeMin", "rangeMax", "seriesStart"]);
 // Columns that must surface as JS booleans (Data Store may hand them back as "true"/"false").
 const BOOL_COLS = new Set(["required", "createAsItem", "createValuesAsItems"]);
 // Tri-state booleans: null stays null so callers can tell "never set" from "set false".

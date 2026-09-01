@@ -1,7 +1,7 @@
 "use strict";
 
 /** Zoho Inventory v1 calls for the work-order / reserve add-ons (needs ZohoInventory scope). */
-const { apiRequest, getStockAccountId, buildItemCfs } = require("./booksApi");
+const { apiRequest, getStockAccountId } = require("./booksApi");
 
 // BOM: composite_item.mapped_items[] = { item_id, name, sku, quantity }
 async function getCompositeItem(catalyst, itemId) {
@@ -31,14 +31,15 @@ async function listCompositeItems(catalyst) {
 
 // Zoho requires the composite to be inventory-tracked (code 13084 otherwise):
 // item_type "inventory" + a stock account. A composite is a finished good, so
-// prefer the org's "Finished Goods" account, falling back to the Books default
-// "Inventory Asset". Anything else the org demands surfaces verbatim.
-// description/customFields are optional (CR-029 Manufacturing push sends them;
-// the work-order BOM screens don't) — a composite is a finished good, so it
-// gets the same defaults as booksApi.createItem: descriptions in both boxes,
-// default CFs, rate 0, Taxable, serial tracking, FIFO.
-async function createCompositeItem(catalyst, { name, sku, description, customFields, mappedItems }) {
-  const inventoryAccountId = (await getStockAccountId(catalyst, "finished goods"))
+// honor the dialog's inventoryAccountId when given, else prefer the org's
+// "Finished Goods" account, falling back to the Books default "Inventory
+// Asset". Anything else the org demands surfaces verbatim. Custom fields are
+// never pushed — the client maintains them in Books by hand. tracking:
+// 'none'|'serial'|'batch' from the push dialog; serial default matches
+// booksApi.createItem.
+async function createCompositeItem(catalyst, { name, sku, description, mappedItems, tracking = "serial", inventoryAccountId }) {
+  const accountId = inventoryAccountId
+    || (await getStockAccountId(catalyst, "finished goods"))
     || (await getStockAccountId(catalyst, "inventory asset"));
   const data = await apiRequest(catalyst, "POST", "/compositeitems", {
     name,
@@ -50,20 +51,18 @@ async function createCompositeItem(catalyst, { name, sku, description, customFie
     product_type: "goods",
     rate: 0,
     is_taxable: true,
-    track_serial_number: true,
+    track_serial_number: tracking === "serial",
+    track_batch_number: tracking === "batch",
     inventory_valuation_method: "fifo",
-    inventory_account_id: inventoryAccountId || undefined,
-    custom_fields: customFields ? await buildItemCfs(catalyst, customFields) : undefined,
+    inventory_account_id: accountId || undefined,
     mapped_items: (mappedItems || []).map((m) => ({ item_id: String(m.rmItemId), quantity: Number(m.perUnitQty) || 0 })),
   }, "inventory");
   return data.composite_item;
 }
 
-// Top-level field update (name/sku/descriptions/custom_fields) WITHOUT
-// mapped_items — a re-push must never clobber a BOM refined on the Composite
-// BOM page. Custom fields are normalized here; everything else passes through.
+// Top-level field update (name/sku/descriptions) WITHOUT mapped_items — a
+// re-push must never clobber a BOM refined on the Composite BOM page.
 async function updateCompositeItemFields(catalyst, itemId, body) {
-  if (body.custom_fields) body = { ...body, custom_fields: await buildItemCfs(catalyst, body.custom_fields) };
   const data = await apiRequest(catalyst, "PUT", `/compositeitems/${itemId}`, body, "inventory");
   return data.composite_item;
 }
@@ -97,16 +96,34 @@ async function getItemStock(catalyst, itemId) {
 }
 
 /**
- * Bulk stock read for the nightly reconcile: 200 items per call instead of one
- * call per item. `warehouses[]` is present on the list payload for
- * inventory-enabled orgs; callers fall back to the org total when it is not.
+ * Bulk stock read for the reconcile: 200 items per call instead of one call per
+ * item. `warehouses[]` is present on the list payload for inventory-enabled
+ * orgs; callers fall back to the org total when it is not.
+ *
+ * `since` (a Zoho last_modified_time string) turns this into a delta pull: list
+ * newest-first and stop at the first item older than the cursor, so an
+ * incremental sync only sees what changed. Items with no last_modified_time are
+ * kept (degrades to a full pull rather than dropping them) — verify the field is
+ * present on the first live run.
  */
-async function listItemsWithStock(catalyst) {
+async function listItemsWithStock(catalyst, { since } = {}) {
+  const ms = (s) => (s ? new Date(s).getTime() : 0);
+  const sortQ = since ? "&sort_column=last_modified_time&sort_order=D" : "";
   const items = [];
   let page = 1;
   for (;;) {
-    const data = await apiRequest(catalyst, "GET", `/items?page=${page}&per_page=200`, null, "inventory");
-    items.push(...(data.items || []));
+    const data = await apiRequest(catalyst, "GET", `/items?page=${page}&per_page=200${sortQ}`, null, "inventory");
+    const batch = data.items || [];
+    if (since) {
+      let hitOlder = false;
+      for (const it of batch) {
+        if (it.last_modified_time && ms(it.last_modified_time) < ms(since)) { hitOlder = true; break; }
+        items.push(it);
+      }
+      if (hitOlder) break;
+    } else {
+      items.push(...batch);
+    }
     if (!data.page_context || !data.page_context.has_more_page) break;
     page++;
   }
@@ -182,8 +199,12 @@ async function availableSerialsBatches(catalyst, itemId, fromWarehouseId, qty, n
  * lines: [{ rmItemId, qty, name }]
  * numberHint: a Transfer Order number to fall back on if the org has auto-
  *   numbering OFF (Zoho then demands one, code 6) — auto-numbered orgs never see it.
+ * soId: the originating Sales Order's Zoho id, published to the org's cf_so_no
+ *   Transfer Order custom field. That field is a LOOKUP to Sales Orders, so its
+ *   value must be the salesorder_id — a plain "SO-00029" string is silently
+ *   dropped by Zoho (verified against the live org).
  */
-async function createTransferOrder(catalyst, { date, fromWarehouseId, toWarehouseId, lines, reason, numberHint }) {
+async function createTransferOrder(catalyst, { date, fromWarehouseId, toWarehouseId, lines, reason, numberHint, soId }) {
   const line_items = await Promise.all(lines.map(async (l) => ({
     item_id: String(l.rmItemId),
     name: l.name || String(l.rmItemId),
@@ -204,21 +225,34 @@ async function createTransferOrder(catalyst, { date, fromWarehouseId, toWarehous
     // name and quantity_transfer are the documented required line fields —
     // plain `quantity` is ignored and `name` missing is rejected (code 4).
     line_items,
+    // SO traceability: rides on the org's cf_so_no TO custom field (a Sales
+    // Order lookup — value is the salesorder_id). An org without the field gets
+    // a retry without custom_fields below — a missing custom field must never
+    // block a stock move.
+    custom_fields: soId ? [{ api_name: "cf_so_no", value: String(soId) }] : undefined,
+  };
+  const post = async (b) => {
+    try {
+      const data = await apiRequest(catalyst, "POST", "/transferorders", b, "inventory");
+      return data.transfer_order;
+    } catch (err) {
+      // Auto-numbering off → Zoho demands the number (code 6). Supply one only
+      // then, so orgs that auto-number keep their own sequence.
+      if (err.zohoCode === 6 && numberHint) {
+        const data = await apiRequest(
+          catalyst, "POST", "/transferorders",
+          { ...b, transfer_order_number: String(numberHint) }, "inventory",
+        );
+        return data.transfer_order;
+      }
+      throw err;
+    }
   };
   try {
-    const data = await apiRequest(catalyst, "POST", "/transferorders", body, "inventory");
-    return data.transfer_order;
+    return await post(body);
   } catch (err) {
-    // Auto-numbering off → Zoho demands the number (code 6). Supply one only
-    // then, so orgs that auto-number keep their own sequence.
-    if (err.zohoCode === 6 && numberHint) {
-      const data = await apiRequest(
-        catalyst, "POST", "/transferorders",
-        { ...body, transfer_order_number: String(numberHint) }, "inventory",
-      );
-      return data.transfer_order;
-    }
-    throw err;
+    if (!body.custom_fields) throw err;
+    return post({ ...body, custom_fields: undefined });
   }
 }
 

@@ -2,6 +2,7 @@
 const express = require("express");
 const { rowList, out, idOk, zStr, orgClause, ownsRow, findSkuRowId } = require("../store");
 const { pushToZoho } = require("../zoho/push");
+const { listStockAccounts } = require("../zoho/booksApi");
 const { importFromBooks } = require("../zoho/import");
 const { searchItemIds, deleteItemValues, backfillItemValues } = require("../itemValues");
 
@@ -32,6 +33,15 @@ router.get("/", async (req, res) => {
     const q = `SELECT * FROM ${TABLE} WHERE ${where.join(" AND ")} ORDER BY CREATEDTIME DESC`;
     const items = rowList(await req.catalyst.zcql().executeZCQLQuery(q)).map(out);
     res.json(await withIndustry(req.catalyst, items));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Stock accounts for the push dialog's Inventory Account dropdown.
+router.get("/stock-accounts", async (req, res) => {
+  try {
+    res.json(await listStockAccounts(req.catalyst));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -201,7 +211,12 @@ router.post("/:id/push-zoho", async (req, res) => {
     );
     if (!rows.length) return res.status(404).json({ error: "SKU item not found" });
     const item = out(rows[0]);
-    const result = await pushToZoho(req.catalyst, item, item.description);
+    // Push dialog options (CR-087): tracking + inventory account, create-only.
+    const { tracking, inventoryAccountId } = req.body || {};
+    const result = await pushToZoho(req.catalyst, item, item.description, {
+      tracking: ["none", "serial", "batch"].includes(tracking) ? tracking : undefined,
+      inventoryAccountId: inventoryAccountId ? String(inventoryAccountId) : undefined,
+    });
     const updated = rowList(await req.catalyst.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE ROWID = ${id}`));
     res.json({ success: true, zohoItemId: out(updated[0]).zohoItemId, item: result });
   } catch (err) {

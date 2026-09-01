@@ -71,6 +71,14 @@ export default function WorkOrderSettingsPage() {
                   <option key={w.id} value={w.id}>{w.name}{w.isPrimary ? ' (primary)' : ''}</option>
                 ))}
               </select>
+            ) : k.type === 'select' ? (
+              <select
+                value={draft[k.key] ?? ''}
+                onChange={e => setDraft(d => ({ ...d, [k.key]: e.target.value }))}
+                style={input}
+              >
+                {k.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
             ) : (
               <input
                 type={k.type === 'number' ? 'number' : k.type === 'email' ? 'email' : 'text'}

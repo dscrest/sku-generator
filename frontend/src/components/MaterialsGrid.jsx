@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
@@ -26,6 +25,10 @@ const ACTIONS = [
     move: 'Reserve → Issue warehouse', help: 'Send reserved material to production.' },
   { key: 'return', label: 'Return', verb: 'Return', gerund: 'Returning', capKey: 'issued',
     move: 'Issue → Main warehouse', help: 'Send unused issued material back to stock.' },
+  // uncapped: any quantity may be requested — the cap only feeds MAX (what is
+  // still short). Confirm raises a purchase request instead of a stock move.
+  { key: 'purchase', label: 'Purchase', verb: 'Request', gerund: 'Requesting', capKey: 'shortfallQty', uncapped: true,
+    move: 'Creates a purchase request — no stock moves', help: 'Raise a purchase request for the typed quantities. MAX fills what is still short.' },
 ];
 
 // The four core columns (Needed / In stock / Reserved / Issued) and the coverage
@@ -66,7 +69,6 @@ const th = {
 };
 
 export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
-  const navigate = useNavigate();
   const [fgId, setFgId] = useState(fgs[0]?.id || null);
   const [action, setAction] = useState('reserve');
   const [grid, setGrid] = useState(null);
@@ -156,7 +158,6 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
     [qty],
   );
   const enteredUnits = entered.reduce((s, e) => s + e.qty, 0);
-  const missingUnits = rows.reduce((s, r) => s + (r.short ? r.shortfallQty : 0), 0);
 
   // Fill the most each line can take — the "reserve everything I can" case. Scoped
   // to whatever the user is looking at: ticked rows if any, else the current filter.
@@ -169,7 +170,7 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
       if (cap > 0) { next[r.itemId] = String(cap); any = true; }
     }
     setQty(next);
-    if (!any) toast(`Nothing can be ${act.verb.toLowerCase()}d on these lines yet`);
+    if (!any) toast(`Nothing to ${act.verb.toLowerCase()} on these lines yet`);
   }
 
   const toggleRow = useCallback((itemId) => {
@@ -186,10 +187,34 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
     });
   }
 
+  // Flip to Purchase mode with the shortfall prefilled — ticked rows if any,
+  // else every short line. The PR itself is raised by the confirm bar.
+  function requestPurchase() {
+    if (action !== 'purchase' && entered.length
+      && !window.confirm('Switching to Purchase clears the quantities you typed. Continue?')) return;
+    const target = sel.size ? rows.filter(r => sel.has(r.itemId)) : rows.filter(r => r.shortfallQty > 0);
+    const next = {};
+    for (const r of target) if (r.shortfallQty > 0) next[r.itemId] = String(r.shortfallQty);
+    setAction('purchase');
+    setQty(next);
+    if (!Object.keys(next).length) toast('Nothing is short — tick rows or type quantities to request extra');
+  }
+
   async function confirm() {
     if (!entered.length) return toast.error('Enter a quantity on at least one line');
     setBusy(true);
     try {
+      if (action === 'purchase') {
+        const lines = entered.map(({ itemId, qty: q }) => {
+          const r = rows.find(x => x.itemId === itemId);
+          return { rmItemId: itemId, rmName: r?.name || '', requiredQty: q, purchaseQty: q };
+        });
+        const { data } = await axios.post(`/api/wo/${workOrderId}/purchase-request`, { lines });
+        toast.success(`${data.prNumber} created — pick a vendor per line on the Purchase page, then confirm`);
+        setQty({}); setSel(new Set());
+        onChanged?.();
+        return;
+      }
       const { data } = await axios.post(`/api/wo/${workOrderId}/txn`, {
         fgId, type: action, requested: entered, confirm: true,
       });
@@ -260,6 +285,11 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
         </div>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{act.move}</span>
         <div style={{ flex: 1 }} />
+        <button
+          onClick={requestPurchase}
+          style={{ ...btn, background: '#b45309', borderColor: '#b45309', color: '#fff', fontWeight: 600 }}>
+          Request purchase
+        </button>
         <button onClick={syncStock} disabled={syncing} style={btn}>{syncing ? 'Syncing…' : '⟳ Refresh stock'}</button>
         <div style={{ position: 'relative' }}>
           <button onClick={() => setDraftCfg(draftCfg ? null : colCfg)} title="Columns" aria-label="Columns"
@@ -324,30 +354,6 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
           Warehouses are not configured yet — material cannot be moved. Set the Main, Reserve and Issue
           warehouses in <b>Settings</b> (account menu, top right).
         </Banner>
-      )}
-
-      {/* shortage warning bar — what can't be fully reserved, and the way out */}
-      {grid?.shortCount > 0 && (
-        <div style={{
-          margin: '10px 20px 0', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12,
-          background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-md)',
-        }}>
-          <span style={{ fontSize: 16 }} aria-hidden>⚠️</span>
-          <div style={{ flex: 1, fontSize: 13, color: '#92400e' }}>
-            <b>{grid.shortCount} item{grid.shortCount === 1 ? '' : 's'} can’t be fully reserved — {missingUnits.toLocaleString()} units missing.</b>{' '}
-            You can still reserve what’s available now.
-          </div>
-          <button
-            onClick={() => setFilter('short')}
-            style={{ ...btn, background: 'var(--bg-card)', borderColor: '#fcd34d', color: '#92400e' }}>
-            Show short items
-          </button>
-          <button
-            onClick={() => navigate('/wo/purchase')}
-            style={{ ...btn, background: '#b45309', borderColor: '#b45309', color: '#fff', fontWeight: 600 }}>
-            Request purchase
-          </button>
-        </div>
       )}
 
       {/* filter chips + search + bulk fill */}
@@ -451,7 +457,10 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
 // the whole grid — matters on multi-hundred-line BOMs.
 const GridRow = memo(function GridRow({ r, act, visibleCols, qtyVal, ticked, onToggle, onQty }) {
   const cap = r[act.capKey];
-  const over = Number(qtyVal || 0) > cap;
+  // Uncapped action (Purchase): the input is always open — the cap only says
+  // what MAX would fill, it is not a limit on what may be requested.
+  const locked = !act.uncapped && cap <= 0;
+  const over = !act.uncapped && Number(qtyVal || 0) > cap;
   return (
     <tr style={{ borderBottom: '1px solid var(--border)' }}>
       <td style={{ textAlign: 'center' }}>
@@ -474,24 +483,26 @@ const GridRow = memo(function GridRow({ r, act, visibleCols, qtyVal, ticked, onT
       <td style={{ padding: '4px 8px' }}>
         <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', alignItems: 'center' }}>
           <input
-            type="number" min="0" max={cap} step="any"
+            type="number" min="0" max={act.uncapped ? undefined : cap} step="any"
             value={qtyVal}
             onChange={e => onQty(r.itemId, e.target.value)}
-            placeholder={cap > 0 ? '0' : '—'}
-            disabled={cap <= 0}
-            title={cap > 0 ? `Up to ${cap}` : `Nothing to ${act.verb.toLowerCase()} on this line`}
+            placeholder={locked ? '—' : '0'}
+            disabled={locked}
+            title={act.uncapped
+              ? (cap > 0 ? `Short by ${cap} — any quantity may be requested` : 'Not short — request extra if you need it')
+              : cap > 0 ? `Up to ${cap}` : `Nothing to ${act.verb.toLowerCase()} on this line`}
             style={{
               width: 72, padding: '5px 8px', fontSize: 13, textAlign: 'right',
               fontFamily: 'var(--font-mono)', borderRadius: 'var(--radius-sm)',
               border: `1px solid ${over ? '#dc2626' : 'var(--border)'}`,
-              background: cap <= 0 ? 'var(--bg-page)' : 'var(--bg-card)',
+              background: locked ? 'var(--bg-page)' : 'var(--bg-card)',
               color: over ? '#dc2626' : 'inherit',
             }}
           />
           <button
             onClick={() => cap > 0 && onQty(r.itemId, String(cap))}
             disabled={cap <= 0}
-            title={cap > 0 ? `Fill the most this line can take (${cap})` : 'Nothing available'}
+            title={cap > 0 ? (act.uncapped ? `Fill what is still short (${cap})` : `Fill the most this line can take (${cap})`) : 'Nothing available'}
             style={{ ...maxBtn, opacity: cap <= 0 ? 0.4 : 1, cursor: cap <= 0 ? 'not-allowed' : 'pointer' }}>
             MAX
           </button>

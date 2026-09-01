@@ -80,7 +80,7 @@ const CSS = `
 .est-hdr .est-offer-no { color: #0F7576; font-weight: 800; }
 .est-hdr .est-hdr-lbl { font-weight: 400; color: #555; }
 .est-grid { margin-top: 6px; }
-.est-grid th, .est-grid td { border: 1px solid #D8E5E4; padding: 3px 6px; vertical-align: middle; }
+.est-grid th, .est-grid td { border: 1px solid #D8E5E4; padding: 3px 6px; vertical-align: top; }
 .est-grid th { background: #0F7576; color: #fff; border-color: #0F7576; font-size: 11px;
   font-weight: 700; text-transform: uppercase; letter-spacing: .8px; }
 .est-grid tbody { break-inside: avoid; page-break-inside: avoid; }
@@ -90,6 +90,12 @@ const CSS = `
 .est-specs { list-style: none; margin: 4px 0 0; padding: 0; }
 .est-specs li { line-height: 1.5; }
 .est-specs .est-k { font-weight: 700; }
+/* Size/Qty/Price stack: fixed 10px gaps, top-aligned in the (description-driven)
+   row so a few values don't stretch apart. Uniform min-height keeps the 2-line
+   Size column aligned row-for-row with the single-line Qty/Price columns.
+   ponytail: 2.1em assumes Size wraps to at most 2 lines (inch + DN). */
+.est-stack { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.est-stack > li { min-height: 2.1em; line-height: 1.05; }
 .est-grid .est-t-lbl { font-weight: 700; text-align: center; text-transform: uppercase; white-space: nowrap; background: #EFF5F4; }
 .est-grid .est-t-final { font-weight: 800; }
 /* Grand-total band, as the Sales Order template's totals-grand-row. */
@@ -99,6 +105,7 @@ const CSS = `
 .est-tc .est-tc-lbl { font-weight: 700; text-decoration: underline; width: 24%; background: #EFF5F4; }
 .est-tc-bank td { width: 25%; text-align: center; }
 .est-tc-bank .est-tc-lbl { text-decoration: none; }
+.est-tc-sep { margin-top: 10px; border-top: 1px solid #D8E5E4; }
 /* Stretch-to-footer. A flex-stretched multi-row table distributes extra
    height across ALL its rows (percentage row heights can't resolve), so the
    stretch lives in a dedicated single-row filler table between the main table
@@ -146,20 +153,17 @@ function SheetChrome({ h, title, onLogoLoad }) {
             <td style={{ width: '58%' }}>
               <div className="est-to-name" style={{ whiteSpace: 'nowrap' }}>To, {h.to.name}</div>
               {h.to.address && <div>{h.to.address}</div>}
-              {(h.to.phone || h.to.email) && <div>{[h.to.phone, h.to.email].filter(Boolean).join(' · ')}</div>}
+              {h.to.phone && <div>{h.to.phone}</div>}
               {h.to.gstin && <div><b>GSTIN:</b> {h.to.gstin}</div>}
-              {h.to.contact && <div>{[h.to.contact, h.to.mobile].filter(Boolean).join(' | ')}</div>}
+              {h.to.contact && (
+                <div><b>{h.to.contact}</b>{[h.to.mobile, h.to.email].filter(Boolean).map((s) => ` | ${s}`).join('')}</div>
+              )}
             </td>
             <td style={{ width: '42%' }}>
               <div><span className="est-hdr-lbl">Our Offer No :</span> <span className="est-offer-no">{h.offerNo}</span></div>
               <div style={{ marginTop: 4 }}><span className="est-hdr-lbl">Offer Preparation Date :</span> <b>{h.date}</b></div>
-              {(h.revNo || h.revDate) && (
-                <div style={{ marginTop: 4 }}>
-                  {h.revNo && <><span className="est-hdr-lbl">Revision No :</span> <b>{h.revNo}</b></>}
-                  {h.revNo && h.revDate && ' '}
-                  {h.revDate && <><span className="est-hdr-lbl">Revision Date :</span> <b>{ddmmyyyy(h.revDate)}</b></>}
-                </div>
-              )}
+              {h.revNo && <div style={{ marginTop: 4 }}><span className="est-hdr-lbl">Revision No :</span> <b>{h.revNo}</b></div>}
+              {h.revDate && <div style={{ marginTop: 4 }}><span className="est-hdr-lbl">Revision Date :</span> <b>{ddmmyyyy(h.revDate)}</b></div>}
             </td>
           </tr>
         </tbody>
@@ -202,7 +206,7 @@ function EstimateSheet({ estimate, items, priced, pageNo, onLogoLoad }) {
           <tbody key={it.sr} data-item>
             {it.flat ? (
               <tr>
-                <td className="est-ctr">{it.sr}</td>
+                <td className="est-ctr est-sr">{it.sr}</td>
                 <td>
                   <div className="est-item-title">{it.title}</div>
                   {it.text && <div style={{ whiteSpace: 'pre-wrap' }}>{it.text}</div>}
@@ -299,9 +303,17 @@ function CalcSheet({ estimates, pages, priced, pageNo }) {
       <table className="est-grid" style={{ marginTop: 0 }}>
         <Cols widths={widths} />
         <tbody>
+          {/* Priced sheets carry PAGE nn on the Final Basic Amount strip below;
+              non-priced sheets have no such strip, so keep a standalone band. */}
+          {!priced && (
+            <tr className="est-t-band">
+              <td />
+              <td className="est-ctr est-t-final">PAGE {pageNo}</td>
+              <td />
+            </tr>
+          )}
           <tr>
-            {/* Non-priced sheets have no teal band below, so PAGE nn lives here. */}
-            {priced ? <td /> : <td className="est-ctr" style={bold}>PAGE {pageNo}</td>}
+            <td />
             <td className="est-t-lbl" style={{ textAlign: 'right' }}>Total Qty &amp; Amount</td>
             <td className="est-ctr" style={bold}>{grand.totalQty}</td>
             {priced && <td className="est-num" style={bold}>{inr.format(grand.totalA)}</td>}
@@ -415,10 +427,11 @@ function EstimatePages({ estimates, priced, version }) {
   );
 }
 
-// Structured item: first size row carries Sr.No + description over every row
-// (rowspan). Design group headers are not rendered — only the size rows.
+// Structured item: one row per item. Size/Qty/Price stack vertically inside their
+// cells (est-stack, fixed 10px gaps) instead of one <tr> per size — a rowspan
+// description used to stretch a few size rows apart to fill its height. Design
+// group headers are not rendered, so all groups' rows flatten into one list.
 function ItemRows({ item, priced }) {
-  const bodyRowCount = item.groups.reduce((n, g) => n + g.rows.length, 0);
   const descCell = (
     <>
       <div className="est-item-title">{item.title}</div>
@@ -429,35 +442,28 @@ function ItemRows({ item, priced }) {
       </ul>
     </>
   );
-  // Sr + description rowspan cells must ride on the very first emitted row —
-  // a design header row included — or every later row shifts one column right
-  // and the rowspan spills into the totals rows.
-  let first = true;
-  const lead = () => {
-    if (!first) return null;
-    first = false;
-    return (
-      <>
-        <td className="est-ctr" rowSpan={bodyRowCount}>{item.sr}</td>
-        <td rowSpan={bodyRowCount}>{descCell}</td>
-      </>
-    );
-  };
-  const rows = [];
-  for (const g of item.groups) {
-    for (const [ri, r] of g.rows.entries()) {
-      rows.push(
-        <tr key={`${g.design}-${r.size}-${ri}`}>
-          {lead()}
-          <td className="est-ctr">{r.size}{r.mm && <><br />{r.mm}</>}</td>
-          <td className="est-ctr">{r.qty}</td>
-          {priced && <td className="est-num">{inr.format(r.rate)}</td>}
-          {priced && <td className="est-num">{inr.format(r.qty * r.rate)}</td>}
-        </tr>
-      );
-    }
-  }
-  return rows;
+  const rows = item.groups.flatMap((g) => g.rows);
+  const sizeKey = (r) => `${r.size}|${r.mm}`;
+  const stack = (render) => (
+    <ul className="est-stack">
+      {rows.map((r, i) => <li key={i}>{render(r, i)}</li>)}
+    </ul>
+  );
+  return (
+    <tr>
+      <td className="est-ctr est-sr">{item.sr}</td>
+      <td>{descCell}</td>
+      {/* Size printed once per run — blank when it repeats the row above, so a
+          valve + its same-size accessory lines don't repeat "26\" DN 650". */}
+      <td className="est-ctr">{stack((r, i) =>
+        (i === 0 || sizeKey(r) !== sizeKey(rows[i - 1]))
+          ? <>{r.size}{r.mm && <><br />{r.mm}</>}</>
+          : null)}</td>
+      <td className="est-ctr">{stack((r) => r.qty)}</td>
+      {priced && <td className="est-num">{stack((r) => inr.format(r.rate))}</td>}
+      {priced && <td className="est-num">{stack((r) => inr.format(r.qty * r.rate))}</td>}
+    </tr>
+  );
 }
 
 // Revision metadata for a quote — edited in the toolbar, printed in the
@@ -469,11 +475,11 @@ function RevFields({ value, onChange, label }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
       {label && <b style={{ fontSize: 12 }}>{label}</b>}
+      <label style={{ fontSize: 12 }}>Revision No{' '}
+        <input type="text" style={{ width: 80 }} value={v.revNo || ''} onChange={(e) => set({ revNo: e.target.value })} />
+      </label>
       <label style={{ fontSize: 12 }}>Revision Date{' '}
         <input type="date" value={v.revDate || ''} onChange={(e) => set({ revDate: e.target.value })} />
-      </label>
-      <label style={{ fontSize: 12 }}>Revision No{' '}
-        <input type="number" min="1" step="1" style={{ width: 60 }} value={v.revNo || ''} onChange={(e) => set({ revNo: e.target.value })} />
       </label>
     </span>
   );

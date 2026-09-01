@@ -13,10 +13,10 @@ const { dsDate } = require("../zoho/auth");
 const {
   getSalesOrder, listSalesOrders, listVendors, findItemByName, findItemBySku, createComponentItem, searchItems,
 } = require("../zoho/booksApi");
-const { getUserById } = require("../session");
+const { getUserById, requireAdmin } = require("../session");
 const { updateCompositeItem, listCompositeItems, createCompositeItem } = require("../zoho/inventoryApi");
 const {
-  SETTING_KEYS, settings, setSetting, nextNumber, logActivity, byOrg, inList, creatableSalesOrders, requiredLevelsMet,
+  SETTING_KEYS, settings, setSetting, nextNumber, logActivity, byOrg, inList, creatableSalesOrders, requiredLevelsMet, approvalLevelCount,
 } = require("../workorder/store");
 const bom = require("../workorder/bom");
 const { buildGrid, buildGridsBulk } = require("../workorder/grid");
@@ -399,6 +399,10 @@ router.get("/reports/item-pipeline", ok(async (req, res) => {
   }));
 }));
 
+router.get("/reports/warehouse-stock", ok(async (req, res) => {
+  res.json(await reports.warehouseStock(req.catalyst, req.orgId));
+}));
+
 // ---- material transactions (ids are not work-order ids → before /:id) ------
 
 router.post("/txn/:txnId/confirm", ok(async (req, res) => {
@@ -413,8 +417,16 @@ router.put("/pr-line/:lineId", ok(async (req, res) => {
   res.json(await purchase.updatePRLine(req.catalyst, req.orgId, req.params.lineId, req.body || {}));
 }));
 
+router.delete("/pr-line/:lineId", ok(async (req, res) => {
+  res.json(await purchase.deletePRLine(req.catalyst, req.orgId, req.params.lineId, req.userId));
+}));
+
 router.post("/pr/:prId/confirm", ok(async (req, res) => {
   res.json(await purchase.confirmPR(req.catalyst, req.orgId, req.params.prId, req.userId));
+}));
+
+router.delete("/pr/:prId", ok(async (req, res) => {
+  res.json(await purchase.deletePR(req.catalyst, req.orgId, req.params.prId, req.userId));
 }));
 
 // ---- purchase orders (live Books detail + actions) ------------------------
@@ -529,7 +541,7 @@ router.post("/", ok(async (req, res) => {
 
 router.get("/:id", ok(async (req, res) => {
   const wo = await loadWo(req);
-  const [fgs, prs, txns, approvals, procMap] = await Promise.all([
+  const [fgs, prs, txns, approvals, procMap, values] = await Promise.all([
     byOrg(req.catalyst, req.orgId, "WorkOrderFG", `workOrderId = ${zStr(String(wo.ROWID))}`),
     purchase.listPRs(req.catalyst, req.orgId, wo.ROWID),
     txn.listTxns(req.catalyst, req.orgId, wo.ROWID),
@@ -538,6 +550,7 @@ router.get("/:id", ok(async (req, res) => {
       `entityType = 'WorkOrder' AND entityId = ${zStr(String(wo.ROWID))}`, "approvalLevel",
     ),
     purchase.procStatusByWo(req.catalyst, req.orgId, wo.ROWID),
+    settings(req.catalyst, req.orgId),
   ]);
   res.json({
     id: String(wo.ROWID),
@@ -565,6 +578,7 @@ router.get("/:id", ok(async (req, res) => {
       id: String(a.ROWID), level: n(a.approvalLevel), status: a.status,
       approverEmail: a.approverEmail, actedAt: a.actedAt || null, remarks: a.remarks || null,
     })),
+    requiredApprovalLevels: approvalLevelCount(values),
   });
 }));
 
@@ -653,6 +667,21 @@ router.post("/:id/status", ok(async (req, res) => {
   }
   // QC rejected sends the job back to production rather than forward (§6.1.4).
   const status = qcStatus === "Rejected" ? "InProgress" : to;
+  // Closing means manufacturing consumed the material — warn when items are not
+  // fully issued; the client resends with force:true to close anyway (CR-080).
+  const force = Boolean((req.body || {}).force);
+  if (status === "Closed" && !force) {
+    const fgs = await byOrg(req.catalyst, req.orgId, "WorkOrderFG", `workOrderId = ${zStr(String(wo.ROWID))}`);
+    const grids = await buildGridsBulk(req.catalyst, req.orgId, fgs.map((fg) => ({ wo, fg })));
+    const short = reports.unissuedRows(grids.flatMap((g) => g.rows));
+    if (short.length) {
+      return res.status(409).json({
+        code: "unissued",
+        error: `${short.length} item${short.length === 1 ? " is" : "s are"} not fully issued`,
+        items: short.map((r) => ({ sku: r.sku, name: r.name, required: r.bom, issued: r.issued })),
+      });
+    }
+  }
   // Production is over: whatever still sits in the Reserve/Issue warehouses for
   // this WO goes back to Main (CR-031). A Zoho failure aborts the transition —
   // a retry only sweeps the remainder, since confirmed txns update balances.
@@ -663,8 +692,33 @@ router.post("/:id/status", ok(async (req, res) => {
   const fields = { ROWID: String(wo.ROWID), status };
   if (qcStatus) fields.qcStatus = qcStatus;
   await req.catalyst.datastore().table("WorkOrder").updateRow(fields);
-  await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.status", req.userId, { from: wo.status, to: status, qcStatus, transferOrders });
+  await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.status", req.userId, {
+    from: wo.status, to: status, qcStatus, transferOrders, ...(status === "Closed" && force ? { forced: true } : {}),
+  });
   res.json({ ok: true, status, qcStatus: qcStatus || wo.qcStatus || null, transferOrders });
+}));
+
+/**
+ * Admin-only: reopen a Closed work order back to Completed, reason required
+ * (CR-080). Deliberately NOT in FLOW — Closed stays terminal for the generic
+ * status endpoint, so only this guarded route can reopen.
+ */
+router.post("/:id/reopen", requireAdmin, ok(async (req, res) => {
+  const wo = await loadWo(req);
+  if (String(wo.status) !== "Closed") {
+    const e = new Error(`${wo.woNumber} is ${wo.status} — only a Closed work order can be reopened`);
+    e.status = 400;
+    throw e;
+  }
+  const reason = String((req.body || {}).reason || "").trim();
+  if (!reason) {
+    const e = new Error("A reason is required to reopen a work order");
+    e.status = 400;
+    throw e;
+  }
+  await req.catalyst.datastore().table("WorkOrder").updateRow({ ROWID: String(wo.ROWID), status: "Completed" });
+  await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.reopen", req.userId, { reason, from: "Closed", to: "Completed" });
+  res.json({ ok: true, status: "Completed" });
 }));
 
 // ---- BOM ------------------------------------------------------------------
@@ -929,17 +983,7 @@ router.get("/:id/shortfall", ok(async (req, res) => {
   const lines = grids.flatMap((grid) => purchase.shortfallLines(grid));
   // Draft PRs are not on a PO yet (poSums can't see them) — deduct their
   // quantities here so raising again never duplicates a pending request.
-  const draftPrs = await byOrg(
-    req.catalyst, req.orgId, "PurchaseRequest",
-    `workOrderId = ${zStr(String(wo.ROWID))} AND status = 'Draft'`,
-  );
-  const prIds = inList(draftPrs.map((p) => p.ROWID));
-  const prNo = new Map(draftPrs.map((p) => [String(p.ROWID), p.prNumber]));
-  const draftLines = prIds
-    ? (await byOrg(req.catalyst, req.orgId, "PurchaseRequestLine", `purchaseRequestId IN (${prIds})`))
-        .filter((l) => !l.zohoPoId)
-        .map((l) => ({ ...l, prNumber: prNo.get(String(l.purchaseRequestId)) }))
-    : [];
+  const draftLines = await purchase.openDraftLines(req.catalyst, req.orgId, wo.ROWID);
   res.json(purchase.applyDraftCoverage(lines, draftLines));
 }));
 
@@ -957,16 +1001,16 @@ router.post("/:id/approve", ok(async (req, res) => {
   if (![1, 2].includes(level)) { const e = new Error("Approval level must be 1 or 2"); e.status = 400; throw e; }
   if (!["Approved", "Rejected"].includes(status)) { const e = new Error("Status must be Approved or Rejected"); e.status = 400; throw e; }
 
-  // Level 2 is required only when an L2 approver is configured (else L1 is enough).
-  const values = await settings(req.catalyst, req.orgId);
-  const l2Required = Boolean(String(values.approverL2Email || "").trim());
+  // The org's settings decide how many levels are required (0, 1 or 2).
+  const levels = approvalLevelCount(await settings(req.catalyst, req.orgId));
+  if (levels === 0) { const e = new Error("Approvals are disabled in settings"); e.status = 409; throw e; }
+  if (level > levels) { const e = new Error("Only one approval level is configured — first-level approval is sufficient"); e.status = 409; throw e; }
 
   const existing = await byOrg(
     req.catalyst, req.orgId, "Approval",
     `entityType = 'WorkOrder' AND entityId = ${zStr(String(wo.ROWID))}`,
   );
   if (level === 2) {
-    if (!l2Required) { const e = new Error("A second-level approver is not configured — first-level approval is sufficient"); e.status = 409; throw e; }
     const l1 = existing.find((a) => n(a.approvalLevel) === 1 && a.status === "Approved");
     if (!l1) { const e = new Error("Level 1 must approve before level 2"); e.status = 409; throw e; }
   }
@@ -992,37 +1036,36 @@ router.post("/:id/approve", ok(async (req, res) => {
       existing.filter((a) => a.status === "Approved" && n(a.approvalLevel) !== level).map((a) => n(a.approvalLevel)),
     );
     approvedLevels.add(level);
-    const next = requiredLevelsMet(approvedLevels, l2Required)
+    const next = requiredLevelsMet(approvedLevels, levels)
       ? "Approved"
-      : (l2Required && approvedLevels.has(1) ? "PendingApproval" : woStatus);
+      : (levels === 2 && approvedLevels.has(1) ? "PendingApproval" : woStatus);
     if (next !== woStatus) {
       await req.catalyst.datastore().table("WorkOrder").updateRow({ ROWID: String(wo.ROWID), status: next });
       await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.status", req.userId, { from: woStatus, to: next });
       woStatus = next;
     }
   }
-  res.json({ ok: true, level, status, woStatus, l2Required });
+  res.json({ ok: true, level, status, woStatus, requiredLevels: levels });
 }));
 
 /**
- * Invoice gate: both levels approved. The UI calls this before offering to
- * raise an invoice, so the block is visible rather than a surprise.
+ * Invoice gate: every configured approval level approved (none configured =
+ * always open). The UI calls this before offering to raise an invoice, so the
+ * block is visible rather than a surprise.
  */
 router.get("/:id/invoice-gate", ok(async (req, res) => {
   const wo = await loadWo(req);
-  const values = await settings(req.catalyst, req.orgId);
-  const l2Required = Boolean(String(values.approverL2Email || "").trim());
+  const levels = approvalLevelCount(await settings(req.catalyst, req.orgId));
   const approvals = await byOrg(
     req.catalyst, req.orgId, "Approval", `entityType = 'WorkOrder' AND entityId = ${zStr(String(wo.ROWID))}`,
   );
   const approved = [1, 2].filter((lv) => approvals.some((a) => n(a.approvalLevel) === lv && a.status === "Approved"));
-  const needed = l2Required ? [1, 2] : [1];
+  const needed = [1, 2].slice(0, levels);
   const missing = needed.filter((l) => !approved.includes(l));
   res.json({
     allowed: missing.length === 0,
     approvedLevels: approved,
     requiredLevels: needed,
-    l2Required,
     blockedReason: missing.length === 0 ? null : `Awaiting level ${missing.join(" and ")} approval`,
   });
 }));
@@ -1032,8 +1075,14 @@ router.get("/:id/invoice-gate", ok(async (req, res) => {
 router.post("/refresh", ok(async (req, res) => {
   // ?full=1 sweeps the whole catalog (incl. items on no open WO) so a Zoho
   // adjustment / opening stock reflects; default stays bounded to open WOs.
+  // full is incremental by default (only items changed since the cursor);
+  // ?force=1 re-pulls everything. A forced/first sweep is paged (?offset=&limit=)
+  // so each call clears the 30s ceiling — the client loops until done.
   const full = req.query.full === "1" || req.query.full === "true";
-  res.json({ ok: true, ...(await reconcileOrg(req.catalyst, req.orgId, { full })) });
+  const force = req.query.force === "1" || req.query.force === "true";
+  const limit = full ? Number(req.query.limit) || 50 : null;
+  const offset = Number(req.query.offset) || 0;
+  res.json({ ok: true, ...(await reconcileOrg(req.catalyst, req.orgId, { full, force, offset, limit })) });
 }));
 
 // Instant per-item stock sync (static path — keep above /:id). Reflects a Zoho
