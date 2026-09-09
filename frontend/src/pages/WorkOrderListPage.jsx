@@ -5,8 +5,8 @@ import toast from 'react-hot-toast';
 import Modal from '../components/Modal.jsx';
 import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
 import { Empty } from '../components/MaterialsGrid.jsx';
-import { StatusChip, ProcChip, AccessNotice } from '../components/woCommon.jsx';
-import { fmtDate } from '../format.js';
+import { StatusChip, ProcChip, DueDays, AccessNotice, WO_PRIORITIES } from '../components/woCommon.jsx';
+import { fmtDate, dueDays } from '../format.js';
 
 /** Work order list + the "new work order from a sales order" flow. */
 export default function WorkOrderListPage() {
@@ -17,6 +17,7 @@ export default function WorkOrderListPage() {
   const [status, setStatus] = useState(searchParams.get('status') || '');
   const [customer, setCustomer] = useState(searchParams.get('customer') || '');
   const [proc, setProc] = useState(searchParams.get('proc') || '');
+  const [priority, setPriority] = useState(searchParams.get('priority') || '');
   const [q, setQ] = useState(searchParams.get('q') || '');
   const [creating, setCreating] = useState(false);
   const [blocked, setBlocked] = useState(null);
@@ -24,12 +25,12 @@ export default function WorkOrderListPage() {
   useEffect(() => {
     setSearchParams(prev => {
       const p = new URLSearchParams(prev);
-      for (const [k, v] of [['status', status], ['customer', customer], ['proc', proc], ['q', q]]) {
+      for (const [k, v] of [['status', status], ['customer', customer], ['proc', proc], ['priority', priority], ['q', q]]) {
         v ? p.set(k, v) : p.delete(k);
       }
       return p;
     }, { replace: true });
-  }, [status, customer, proc, q, setSearchParams]);
+  }, [status, customer, proc, priority, q, setSearchParams]);
 
   function load() {
     axios.get('/api/wo')
@@ -48,6 +49,7 @@ export default function WorkOrderListPage() {
     (!status || r.status === status) &&
     (!customer || r.customerName === customer) &&
     (!proc || r.procStatus === proc) &&
+    (!priority || r.priority === priority) &&
     (!q || [r.woNumber, r.salesOrderNumber, r.customerName, r.projectName]
       .some(v => String(v || '').toLowerCase().includes(q.toLowerCase()))),
   );
@@ -61,15 +63,16 @@ export default function WorkOrderListPage() {
           aria-label="Search work orders"
           style={{ padding: '7px 11px', fontSize: 13, minWidth: 240, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)' }}
         />
-        <FilterSelect label="statuses" value={status} onChange={setStatus} options={distinct(rows || [], 'status')} />
-        <FilterSelect label="procurement" value={proc} onChange={setProc} options={distinct(rows || [], 'procStatus')} />
-        <FilterSelect label="customers" value={customer} onChange={setCustomer} options={distinct(rows || [], 'customerName')} />
-        {(status || customer || proc || q) && (
-          <button onClick={() => { setStatus(''); setCustomer(''); setProc(''); setQ(''); }} style={btn}>✕ Clear</button>
+        <FilterSelect label="Statuses" value={status} onChange={setStatus} options={distinct(rows || [], 'status')} />
+        <FilterSelect label="Procurement" value={proc} onChange={setProc} options={distinct(rows || [], 'procStatus')} />
+        <FilterSelect label="Customers" value={customer} onChange={setCustomer} options={distinct(rows || [], 'customerName')} />
+        <FilterSelect label="Priorities" value={priority} onChange={setPriority} options={distinct(rows || [], 'priority')} />
+        {(status || customer || proc || priority || q) && (
+          <button onClick={() => { setStatus(''); setCustomer(''); setProc(''); setPriority(''); setQ(''); }} style={btn}>✕ Clear</button>
         )}
         <div style={{ flex: 1 }} />
         <button onClick={() => setCreating(true)} style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
-          + New work order
+          + New Work Order
         </button>
       </div>
 
@@ -77,10 +80,10 @@ export default function WorkOrderListPage() {
         {!rows ? <Empty>Loading…</Empty> : !filtered.length ? (
           <Empty>{rows.length ? 'No work orders match these filters.' : 'No work orders yet — create one from a sales order.'}</Empty>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+          <table className="grid-table" style={{ width: '100%', marginTop: 12 }}>
             <thead>
-              <tr>{['Work order', 'Date', 'Sales order', 'Customer', 'Finished goods', 'Rev', 'Status', 'Procurement'].map((h, i) => (
-                <th key={h} style={{ ...thStyle, textAlign: i === 5 ? 'right' : 'left' }}>{h}</th>
+              <tr>{['Work Order', 'Date', 'Sales Order', 'Customer', 'Finished Goods', 'Due Date', 'Due Days', 'Rev', 'Status', 'Procurement'].map((h, i) => (
+                <th key={h} style={{ ...thStyle, textAlign: i === 7 ? 'right' : 'left' }}>{h}</th>
               ))}</tr>
             </thead>
             <tbody>
@@ -91,11 +94,16 @@ export default function WorkOrderListPage() {
                   className="list-row"
                   style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
                 >
-                  <td style={{ ...cell, fontWeight: 600, color: 'var(--blue)' }}>{r.woNumber}</td>
+                  <td style={{ ...cell, fontWeight: 600, color: 'var(--blue)' }}>
+                    {r.attention && <span title="New progress — a PO receipt landed since this was last opened" style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#dc2626', marginRight: 6 }} />}
+                    {r.woNumber}
+                  </td>
                   <td style={{ ...cell, color: 'var(--text-muted)' }}>{fmtDate(r.woDate)}</td>
                   <td style={cell}>{r.salesOrderNumber}</td>
-                  <td style={cell}>{r.customerName}{r.projectName && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.projectName}</div>}</td>
+                  <td style={{ ...cell, fontWeight: 600 }}>{r.customerName}{r.projectName && <div style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)' }}>{r.projectName}</div>}</td>
                   <td style={cell}>{r.fgs.map(f => `${f.name} × ${f.qty}`).join(', ') || '—'}</td>
+                  <td style={{ ...cell, fontWeight: 600, color: dueDays(r.dueDate) !== null && dueDays(r.dueDate) < 4 ? '#dc2626' : 'var(--text-muted)' }}>{fmtDate(r.dueDate)}</td>
+                  <td style={cell}><DueDays date={r.dueDate} /></td>
                   <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{r.revision}</td>
                   <td style={cell}><StatusChip status={r.status} /></td>
                   <td style={cell}><ProcChip status={r.procStatus} /></td>
@@ -113,12 +121,16 @@ export default function WorkOrderListPage() {
 }
 
 /** Pick a sales order, tick which lines are finished goods, create. */
+const hdrField = { padding: '6px 8px', fontSize: 13, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)', width: '100%', boxSizing: 'border-box' };
+
 function CreateModal({ onClose, onCreated }) {
   const [q, setQ] = useState('');
   const [sos, setSos] = useState(null);
   const [so, setSo] = useState(null);
   const [picked, setPicked] = useState({});
   const [projectName, setProjectName] = useState('');
+  // Header fields (CR-113): prefilled from the SO custom fields, user-editable.
+  const [hdr, setHdr] = useState({ dueDate: '', priority: '', machiningDoneDate: '', fittingDoneDate: '' });
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -136,6 +148,10 @@ function CreateModal({ onClose, onCreated }) {
       setSo(data);
       // Default to every line — most sales orders are all finished goods.
       setPicked(Object.fromEntries(data.lineItems.map(l => [l.itemId, l.quantity])));
+      setHdr({
+        dueDate: data.dueDate || '', priority: data.priority || '',
+        machiningDoneDate: data.machiningDoneDate || '', fittingDoneDate: data.fittingDoneDate || '',
+      });
     }).catch(err => toast.error(err.response?.data?.error || 'Could not load that sales order'));
   }
 
@@ -144,7 +160,7 @@ function CreateModal({ onClose, onCreated }) {
     if (!fgLines.length) return toast.error('Tick at least one finished good');
     setBusy(true);
     try {
-      const { data } = await axios.post('/api/wo', { salesOrderId: so.id, projectName, fgLines });
+      const { data } = await axios.post('/api/wo', { salesOrderId: so.id, projectName, fgLines, ...hdr });
       toast.success(`${data.woNumber} created — ${data.seeded.length} BOM(s) seeded from Zoho`);
       (data.problems || []).forEach(p => toast.error(p, { duration: 7000 }));
       onCreated(data.id);
@@ -154,7 +170,7 @@ function CreateModal({ onClose, onCreated }) {
   }
 
   return (
-    <Modal title="New work order" onClose={onClose} width={620}>
+    <Modal title="New Work Order" onClose={busy ? () => {} : onClose} width={620}>
       {!so ? (
         <>
           <input
@@ -182,6 +198,26 @@ function CreateModal({ onClose, onCreated }) {
             value={projectName} onChange={e => setProjectName(e.target.value)} placeholder="Project name (optional)"
             style={{ width: '100%', padding: '8px 11px', fontSize: 13, marginBottom: 10, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}
           />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginBottom: 10 }}>
+            {[
+              ['WO Due Date', <input type="date" value={hdr.dueDate} onChange={e => setHdr(h => ({ ...h, dueDate: e.target.value }))} style={hdrField} />],
+              ['WO Due Days', <input
+                type="number" min="0" value={dueDays(hdr.dueDate) ?? ''} placeholder="—"
+                onChange={e => setHdr(h => ({ ...h, dueDate: e.target.value === '' ? '' : new Date(Date.now() + Number(e.target.value) * 864e5).toISOString().slice(0, 10) }))}
+                style={hdrField}
+              />],
+              ['Priority', <select value={hdr.priority} onChange={e => setHdr(h => ({ ...h, priority: e.target.value }))} style={hdrField}>
+                <option value=""></option>
+                {WO_PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>],
+              ['Machining Completion', <input type="date" value={hdr.machiningDoneDate} onChange={e => setHdr(h => ({ ...h, machiningDoneDate: e.target.value }))} style={hdrField} />],
+              ['Fitting Completion', <input type="date" value={hdr.fittingDoneDate} onChange={e => setHdr(h => ({ ...h, fittingDoneDate: e.target.value }))} style={hdrField} />],
+            ].map(([label, input]) => (
+              <label key={label} style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {label}{input}
+              </label>
+            ))}
+          </div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
             Which lines are finished goods to manufacture? Each one's BOM is pulled from its Zoho composite item.
           </div>
@@ -206,10 +242,15 @@ function CreateModal({ onClose, onCreated }) {
               </label>
             ))}
           </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
-            <button onClick={onClose} style={btn}>Cancel</button>
+          <div style={{ display: 'flex', gap: 8, marginTop: 14, alignItems: 'center', justifyContent: 'flex-end' }}>
+            {busy && (
+              <span style={{ flex: 1, fontSize: 12, color: 'var(--text-muted)' }}>
+                Creating the work order and seeding BOMs from Zoho — this can take a moment…
+              </span>
+            )}
+            <button onClick={onClose} disabled={busy} style={{ ...btn, opacity: busy ? 0.5 : 1 }}>Cancel</button>
             <button onClick={create} disabled={busy} style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
-              {busy ? 'Creating…' : 'Create work order'}
+              {busy ? <><span className="spinner" />Creating…</> : 'Create Work Order'}
             </button>
           </div>
         </>

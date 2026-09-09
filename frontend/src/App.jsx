@@ -13,6 +13,7 @@ const PropertiesPage = lazy(() => import('./pages/PropertiesPage.jsx'));
 const BooksLinkedValuesPage = lazy(() => import('./pages/BooksLinkedValuesPage.jsx'));
 const SKUGeneratorPage = lazy(() => import('./pages/SKUGeneratorPage.jsx'));
 const SKUItemsPage = lazy(() => import('./pages/SKUItemsPage.jsx'));
+const ImportItemsPage = lazy(() => import('./pages/ImportItemsPage.jsx'));
 const AddonAdminPage = lazy(() => import('./pages/AddonAdminPage.jsx'));
 const ReservePage = lazy(() => import('./pages/ReservePage.jsx'));
 const EstimatePage = lazy(() => import('./pages/EstimatePage.jsx'));
@@ -22,6 +23,14 @@ const WorkOrderSettingsPage = lazy(() => import('./pages/WorkOrderSettingsPage.j
 const WorkOrderReportsPage = lazy(() => import('./pages/WorkOrderReportsPage.jsx'));
 const CompositeBomPage = lazy(() => import('./pages/CompositeBomPage.jsx'));
 const WorkOrderPurchasePage = lazy(() => import('./pages/WorkOrderPurchasePage.jsx'));
+const RecipeWizardPage = lazy(() => import('./pages/RecipeWizardPage.jsx'));
+const RecipeQuotationsPage = lazy(() => import('./pages/RecipeQuotationsPage.jsx'));
+const RecipeSnapshotPage = lazy(() => import('./pages/RecipeSnapshotPage.jsx'));
+const RecipeMfgPage = lazy(() => import('./pages/RecipeMfgPage.jsx'));
+const RecipeListPage = lazy(() => import('./pages/RecipeListPage.jsx'));
+const RecipeBuilderPage = lazy(() => import('./pages/RecipeBuilderPage.jsx'));
+const RecipeMaterialsPage = lazy(() => import('./pages/RecipeMaterialsPage.jsx'));
+const RecipeCostMasterPage = lazy(() => import('./pages/RecipeCostMasterPage.jsx'));
 
 const PageLoading = () => (
   <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
@@ -70,7 +79,7 @@ function navItemStyle({ isActive }, collapsed) {
     justifyContent: collapsed ? 'center' : 'flex-start',
     borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: 13,
     color: isActive ? 'var(--blue)' : 'var(--text-secondary)',
-    background: isActive ? 'var(--blue-light)' : 'transparent',
+    background: isActive ? 'var(--blue-mid)' : 'transparent',
     fontWeight: isActive ? 500 : 400, marginBottom: 1, textDecoration: 'none',
     transition: 'background 0.12s, color 0.12s',
     whiteSpace: 'nowrap',
@@ -184,7 +193,7 @@ function HeaderBar({ zoho, addons, onLogout, onSwitchOrg }) {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
                 </svg>
-                Submit to helpdesk
+                Submit to Helpdesk
               </button>
               <button
                 style={menuItem}
@@ -195,7 +204,7 @@ function HeaderBar({ zoho, addons, onLogout, onSwitchOrg }) {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
                 </svg>
-                Switch organization
+                Switch Organization
               </button>
               <button
                 style={{ ...menuItem, cursor: loggingOut ? 'wait' : 'pointer' }}
@@ -207,7 +216,7 @@ function HeaderBar({ zoho, addons, onLogout, onSwitchOrg }) {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
                 </svg>
-                {loggingOut ? 'Logging out…' : 'Log out'}
+                {loggingOut ? 'Logging out…' : 'Log Out'}
               </button>
             </div>
           </>
@@ -227,13 +236,22 @@ const NAV_LINKS = [
     children: [
       { to: '/wo', label: 'Work Orders' },
       { to: '/wo/bom', label: 'BOM' },
-      { to: '/wo/purchase', label: 'Purchase request' },
+      { to: '/wo/purchase', label: 'Purchase Request' },
       { to: '/wo/reports', label: 'Reports' },
     ] },
   { to: '/reserve', addon: 'reserve', label: 'Reserve / De-reserve', icon: <><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></> },
+  // Product-first order: build the recipe, then configure & quote it.
+  { to: '/recipe/recipes', match: '/recipe', addon: 'recipe-engine', label: 'Recipe Engine', icon: <><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></>,
+    children: [
+      { to: '/recipe/recipes', label: 'Recipes' },
+      { to: '/recipe/materials', label: 'Materials' },
+      { to: '/recipe/costs', label: 'Cost Master' },
+      { to: '/recipe/configure', label: 'Configure & Quote' },
+      { to: '/recipe/quotations', label: 'Quotations' },
+    ] },
   // OCTFIS super-admin only (user.isAdmin)
   { section: 'Admin', adminOnly: true },
-  { to: '/admin/addons', adminOnly: true, label: 'Customer add-ons', icon: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></> },
+  { to: '/admin/addons', adminOnly: true, label: 'Customer Add-ons', icon: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></> },
 ];
 
 // Tab order follows the setup flow: Properties → generate SKUs. Industries
@@ -242,8 +260,9 @@ const NAV_LINKS = [
 // page (/sku/generator is its "New" sub-page, kept as a route for permalinks).
 const SKU_TABS = [
   { to: '/sku/properties', label: 'Properties' },
-  { to: '/sku/books-items', label: 'Books items' },
+  { to: '/sku/books-items', label: 'Books Items' },
   { to: '/sku/items', label: 'SKU Generator' },
+  { to: '/sku/import', label: 'Import' },
 ];
 
 function TabBar({ tabs }) {
@@ -287,6 +306,25 @@ function WorkOrderLayout({ user }) {
   );
 }
 
+// Recipe Engine (CR-104): sales wizard + quotations + admin recipes/materials.
+function RecipeLayout() {
+  return (
+    <div style={{ flex: 1, minHeight: 0 }}>
+      <Routes>
+        <Route path="configure" element={<RecipeWizardPage />} />
+        <Route path="quotations" element={<RecipeQuotationsPage />} />
+        <Route path="quotations/:id" element={<RecipeSnapshotPage />} />
+        <Route path="quotations/:id/mfg" element={<RecipeMfgPage />} />
+        <Route path="recipes" element={<RecipeListPage />} />
+        <Route path="recipes/:id" element={<RecipeBuilderPage />} />
+        <Route path="materials" element={<RecipeMaterialsPage />} />
+        <Route path="costs" element={<RecipeCostMasterPage />} />
+        <Route path="*" element={<Navigate to="recipes" replace />} />
+      </Routes>
+    </div>
+  );
+}
+
 function SkuLayout() {
   return (
     <>
@@ -295,6 +333,7 @@ function SkuLayout() {
         <Routes>
           <Route path="generator" element={<SKUGeneratorPage />} />
           <Route path="items" element={<SKUItemsPage />} />
+          <Route path="import" element={<ImportItemsPage />} />
           <Route path="industries" element={<IndustriesPage />} />
           <Route path="industries/:id/properties" element={<PropertyManagerPage />} />
           <Route path="properties" element={<PropertiesPage />} />
@@ -437,6 +476,7 @@ function AppShell({ user, refreshUser, onLogout }) {
           {/* Deep link from Zoho Books custom button: /app/#/reserve?soId=… ;
               backend 403s if the addon is off — the page shows a clear notice. */}
           <Route path="/wo/*" element={<WorkOrderLayout user={user} />} />
+          <Route path="/recipe/*" element={<RecipeLayout />} />
           <Route path="/reserve" element={<ReservePage />} />
           {/* Deep link from a CRM deal: /#/estimate?dealId=… — no sidebar entry */}
           <Route path="/estimate" element={<EstimatePage />} />
@@ -490,6 +530,8 @@ export default function App() {
     const cbParams = new URLSearchParams(window.location.search);
     const code = cbParams.get('code');
     if (code) {
+      let widgetToken = null; // session token for the CRM widget handoff
+      let widgetErr = null; // why there is no token, forwarded so the widget can show it
       fetch(`${API}/auth/zoho/exchange`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -499,7 +541,13 @@ export default function App() {
       })
         .then(async r => {
           const data = await r.json().catch(() => ({}));
-          if (!r.ok) { setAuthError(data.error || 'Zoho sign-in failed.'); return false; }
+          if (!r.ok) {
+            widgetErr = data.error || `exchange failed (${r.status})`;
+            setAuthError(data.error || 'Zoho sign-in failed.');
+            return false;
+          }
+          if (data.token) widgetToken = data.token;
+          else widgetErr = 'exchange ok but no session token in response';
           if (data.needsConsent) {
             // Zoho didn't issue a refresh token (grant exists but we have no
             // stored token) — re-run OAuth with the consent screen forced.
@@ -508,9 +556,29 @@ export default function App() {
           }
           return false;
         })
-        .catch(() => { setAuthError('Network error during Zoho sign-in.'); return false; })
+        .catch(() => {
+          widgetErr = 'network error during exchange';
+          setAuthError('Network error during Zoho sign-in.');
+          return false;
+        })
         .then(navigating => {
           if (navigating) return;
+          // CRM widget auth: the widget opens this OAuth flow in an iframe or
+          // popup named 'sku-auth' (window.name survives cross-origin
+          // redirects). Third-party cookies never reach the widget, so hand it
+          // the session token — but only after an origin-verified handshake:
+          // announce readiness, wait for the widget's hello, and send the
+          // token solely to a trusted Zoho-hosted origin. Never broadcast it.
+          if (window.name === 'sku-auth') {
+            const TRUSTED = /(\.zappsusercontent\.(com|in|eu)|\.zohousercontent\.(com|in|eu)|\.zohopublic\.(com|in|eu)|\.zoho\.(com|in|eu|com\.au|jp)|\.catalystserverless\.com)$|^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+            window.addEventListener('message', (e) => {
+              if (!e.data || e.data.type !== 'sku-auth-hello' || !TRUSTED.test(e.origin)) return;
+              e.source.postMessage({ type: 'sku-auth-token', token: widgetToken, error: widgetErr }, e.origin);
+              setTimeout(() => window.close(), 100); // no-op inside the silent iframe
+            });
+            (window.opener || window.parent).postMessage({ type: 'sku-auth-ready' }, '*');
+            return;
+          }
           // The OAuth roundtrip loses the hash (redirect_uri is the SPA root);
           // restore the deep link stashed before the auto-redirect.
           const returnTo = sessionStorage.getItem('returnTo');

@@ -10,7 +10,7 @@
  */
 const { rowList, zStr } = require("../store");
 const { dsDate } = require("../zoho/auth");
-const { createTransferOrder } = require("../zoho/inventoryApi");
+const { createTransferOrder, listWarehouses } = require("../zoho/inventoryApi");
 const { validateLine, applyToBalance, TXN_TYPES } = require("./formulas");
 const { routeFor, nextNumber, logActivity, byOrg, settings, inList } = require("./store");
 const { buildGrid, indexRows } = require("./grid");
@@ -71,7 +71,7 @@ function planLines(type, gridRows, requested) {
 
 // ---- draft ----------------------------------------------------------------
 
-async function createDraft(catalyst, orgId, { workOrderId, workOrderFgId, type, requested, notes }, userId) {
+async function createDraft(catalyst, orgId, { workOrderId, workOrderFgId, type, requested, notes, fromWarehouseId, toWarehouseId }, userId) {
   const { wo, fg } = await loadContext(catalyst, orgId, workOrderId, workOrderFgId);
   const grid = await buildGrid(catalyst, orgId, wo, fg);
   const { lines, errors } = planLines(type, grid.rows, requested);
@@ -79,7 +79,25 @@ async function createDraft(catalyst, orgId, { workOrderId, workOrderFgId, type, 
 
   const s = await settings(catalyst, orgId);
   const txnNumber = await nextNumber(catalyst, orgId, "MaterialTxn", "txnNumber", s.txnNumberPrefix);
-  const route = await routeFor(catalyst, orgId, type);
+  let route = await routeFor(catalyst, orgId, type);
+  // Optional per-txn warehouse override (Haresh item 3), gated by the
+  // allowWarehouseSelect setting. Ids are checked against live Zoho warehouses
+  // so a stale id fails here with a clear message, not at TO-post time.
+  // ponytail: the grid's reservable cap still assumes Main as the source —
+  // fine while the setting is opt-in; re-cap per source warehouse if it hurts.
+  if (fromWarehouseId && toWarehouseId) {
+    if (s.allowWarehouseSelect !== "true") {
+      const e = new Error("Warehouse selection is disabled — enable it in Settings first"); e.status = 400; throw e;
+    }
+    const known = new Set((await listWarehouses(catalyst)).map((w) => String(w.warehouse_id)));
+    for (const id of [fromWarehouseId, toWarehouseId]) {
+      if (!known.has(String(id))) { const e = new Error(`Unknown warehouse id ${id} — refresh and pick again`); e.status = 400; throw e; }
+    }
+    if (String(fromWarehouseId) === String(toWarehouseId)) {
+      const e = new Error("Source and target warehouse must differ"); e.status = 400; throw e;
+    }
+    route = { fromWarehouseId: String(fromWarehouseId), toWarehouseId: String(toWarehouseId) };
+  }
 
   const txn = await catalyst.datastore().table("MaterialTxn").insertRow({
     orgId: String(orgId),
@@ -143,7 +161,12 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
   );
   if (errors.length) { const e = new Error(errors.join("\n")); e.status = 409; e.details = errors; throw e; }
 
-  const route = await routeFor(catalyst, orgId, txn.type);
+  // The draft row stored its route at create time (including any per-txn
+  // warehouse override) — recomputing from settings here would silently drop
+  // the override.
+  const route = (txn.fromWarehouseId && txn.toWarehouseId)
+    ? { fromWarehouseId: String(txn.fromWarehouseId), toWarehouseId: String(txn.toWarehouseId) }
+    : await routeFor(catalyst, orgId, txn.type);
   let to;
   try {
     to = await createTransferOrder(catalyst, {
@@ -161,6 +184,19 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
     throw friendlyTransferError(err);
   }
 
+  // Batch/serial numbers the TO consumed, kept on the txn notes (Haresh item
+  // 13.1) so an issue slip can show which batch went out.
+  const batchNote = (to.pickedLines || [])
+    .map((li) => {
+      const parts = [
+        ...(li.batches || []).map((b) => `${b.batch_number} × ${b.quantity_transfer}`),
+        ...(li.serial_numbers || []),
+      ];
+      return parts.length ? `${li.name}: ${parts.join(", ")}` : null;
+    })
+    .filter(Boolean)
+    .join("\n");
+
   await catalyst.datastore().table("MaterialTxn").updateRow({
     ROWID: String(txn.ROWID),
     status: "Confirmed",
@@ -171,6 +207,7 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
     zohoStatus: String(to.status || ""),
     confirmedBy: userId ? String(userId) : "",
     confirmedAt: dsDate(Date.now()),
+    ...(batchNote ? { notes: [txn.notes, batchNote].filter(Boolean).join("\n") } : {}),
   });
 
   await applyBalances(catalyst, orgId, wo, fg, txn.type, lines);

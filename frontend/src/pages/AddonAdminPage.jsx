@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
-import RowDeleteButton from '../components/RowDeleteButton.jsx';
+import RowMenu from '../components/RowMenu.jsx';
 
 const ADDON_LABELS = {
   'sku-generator': 'SKU Generator',
@@ -121,7 +121,7 @@ export default function AddonAdminPage() {
                       </td>
                     ))}
                     <td style={{ padding: '8px 12px' }}>
-                      <RowDeleteButton onDelete={() => deleteOrg(org)} title={`Delete ${org.orgName || org.orgId} and all its data`} />
+                      <RowMenu deleteLabel="Delete org" onDelete={() => deleteOrg(org)} />
                     </td>
                   </tr>
                 ))}

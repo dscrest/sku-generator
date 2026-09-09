@@ -7,7 +7,7 @@ import axios from 'axios';
 // Lives in the SKU tab bar; ⌘K opens it from any SKU page.
 const CAP = 6;
 
-const mono = "'JetBrains Mono', ui-monospace, monospace";
+const mono = 'var(--font-mono)';
 
 export default function GlobalSearch() {
   const [open, setOpen] = useState(false);

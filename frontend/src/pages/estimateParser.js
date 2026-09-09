@@ -91,6 +91,16 @@ export function ddmmyyyy(iso) {
   return d && m && y ? `${d}-${m}-${y}` : "";
 }
 
+// Template 2's "Valid Until": offer date + 15 days (mirrors the "15 Days From
+// The Date Of Submission" validity term). dd-mm-yyyy in and out.
+export function validUntil(ddmmyyyyStr, days = 15) {
+  const [d, m, y] = String(ddmmyyyyStr).split("-").map(Number);
+  if (!d || !m || !y) return "";
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(dt.getUTCDate())}-${p(dt.getUTCMonth() + 1)}-${dt.getUTCFullYear()}`;
+}
+
 // merge: false ("All Item - Trading") keeps every CRM line as its own item —
 // same-name size-row lines are not collapsed into one printed item.
 export function buildEstimate(quote, { merge = true } = {}) {

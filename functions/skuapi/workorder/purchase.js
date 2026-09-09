@@ -282,6 +282,32 @@ async function updatePRLine(catalyst, orgId, lineId, { purchaseQty, vendorId, ve
   return { id: String(lineId) };
 }
 
+// Ad-hoc line on a draft PR (CR: Haresh item 10): the purchase user adds an
+// item that was never short — requiredQty 0 marks it as an extra, not shortfall.
+async function addPRLine(catalyst, orgId, prId, { rmItemId, rmName, purchaseQty, vendorId, vendorName }, userId) {
+  const prs = await byOrg(catalyst, orgId, "PurchaseRequest", `ROWID = ${zStr(String(prId))}`);
+  if (!prs.length) { const e = new Error("Purchase request not found"); e.status = 404; throw e; }
+  if (prs[0].status !== "Draft") { const e = new Error("Only draft purchase requests can take new lines"); e.status = 409; throw e; }
+  if (!rmItemId || n(purchaseQty) <= 0) { const e = new Error("Pick an item and a quantity above zero"); e.status = 400; throw e; }
+  const row = await catalyst.datastore().table("PurchaseRequestLine").insertRow({
+    orgId: String(orgId),
+    purchaseRequestId: String(prId),
+    workOrderId: prs[0].workOrderId ? String(prs[0].workOrderId) : "",
+    rmItemId: String(rmItemId),
+    rmName: rmName || "",
+    requiredQty: 0,
+    purchaseQty: n(purchaseQty),
+    vendorId: vendorId ? String(vendorId) : "",
+    vendorName: vendorName || "",
+    zohoPoId: "", zohoPoNumber: "", poStatus: "",
+    receivedQty: 0, billedQty: 0, lastPoSyncAt: null,
+  });
+  await logActivity(catalyst, orgId, "PurchaseRequest", prId, "pr.line.add", userId, {
+    rmName: rmName || String(rmItemId), purchaseQty: n(purchaseQty),
+  });
+  return { id: String(row.ROWID) };
+}
+
 async function deletePR(catalyst, orgId, prId, userId) {
   const prs = await byOrg(catalyst, orgId, "PurchaseRequest", `ROWID = ${zStr(String(prId))}`);
   if (!prs.length) { const e = new Error("Purchase request not found"); e.status = 404; throw e; }
@@ -902,14 +928,24 @@ async function procStatusByWo(catalyst, orgId, workOrderId) {
     byWo.get(woId).push(l);
   }
   const out = new Map();
-  for (const [woId, ls] of byWo) out.set(woId, procurementStatus(ls));
+  // Piggybacked on the same scan (Haresh item 20): when material last arrived
+  // per WO — max lastPoSyncAt across lines with anything received. Carried as a
+  // property on the returned Map so the two existing callers stay untouched.
+  out.receiptAt = new Map();
+  for (const [woId, ls] of byWo) {
+    out.set(woId, procurementStatus(ls));
+    const seen = ls
+      .filter((l) => n(l.receivedQty) > 0 && l.lastPoSyncAt)
+      .reduce((max, l) => (String(l.lastPoSyncAt) > max ? String(l.lastPoSyncAt) : max), "");
+    if (seen) out.receiptAt.set(woId, seen);
+  }
   return out;
 }
 
 module.exports = {
   SETTLED_PO, shortfallLines, applyDraftCoverage, openDraftLines, validatePR, groupByVendor, collapseLines,
   shortfallByItem, procurementStatus, createPoForLines, raiseItemPO, procStatusByWo,
-  createPR, updatePRLine, deletePR, deletePRLine, confirmPR, refreshPurchaseOrders, listPRs, listAllPRs,
+  createPR, updatePRLine, addPRLine, deletePR, deletePRLine, confirmPR, refreshPurchaseOrders, listPRs, listAllPRs,
   poPutBody, poDetail, deletePo, setPoStatus, updatePoLines, poListRow, listAllPOs,
 };
 

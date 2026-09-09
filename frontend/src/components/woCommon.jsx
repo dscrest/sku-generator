@@ -1,12 +1,15 @@
 // Shared Work Order bits: status chip, access notice and the small style
 // constants every /wo page uses. Extracted from WorkOrderPage (CR-018).
+import { dueDays } from '../format.js';
 
 export const STATUS_TONE = {
   Draft: '#64748b', PendingApproval: '#b45309', Approved: '#0369a1', MaterialAllocationPending: '#b45309',
   ReadyForProduction: '#0d9488', InProgress: '#2563eb', QualityCheck: '#7c3aed',
   Completed: '#15803d', Closed: '#334155', Cancelled: '#b91c1c',
 };
-export const spaced = s => String(s || '').replace(/([a-z])([A-Z])/g, '$1 $2');
+// Display renames that the camelCase split can't produce (CR: MaterialAllocationPending → "Pending Allocation").
+const LABEL_OVERRIDE = { MaterialAllocationPending: 'Pending Allocation' };
+export const spaced = s => LABEL_OVERRIDE[s] || String(s || '').replace(/([a-z])([A-Z])/g, '$1 $2');
 
 // Procurement status (CR-023) — a dimension separate from the manufacturing
 // status above, derived from a work order's purchase-request lines. Friendly
@@ -38,6 +41,20 @@ export function StatusChip({ status }) {
 export function ProcChip({ status }) {
   if (!status) return null;
   return <Chip tone={PROC_TONE[status] || '#64748b'} label={PROC_LABEL[status] || spaced(status)} />;
+}
+
+// WO priority options (CR-113) — shared by the Create and Edit modals.
+export const WO_PRIORITIES = ['Low', 'Medium', 'High', 'Urgent'];
+
+// Days until the WO due date (CR-110): red once overdue, — when no due date.
+export function DueDays({ date }) {
+  const d = dueDays(date);
+  if (d === null) return '—';
+  return (
+    <span style={{ fontFamily: 'var(--font-mono)', color: d < 0 ? '#dc2626' : undefined, fontWeight: d < 0 ? 600 : 400 }}>
+      {d < 0 ? `${-d} overdue` : d}
+    </span>
+  );
 }
 
 export function AccessNotice({ kind }) {
@@ -73,7 +90,7 @@ export function AccessNotice({ kind }) {
 // Purchase and BOM pages (CR-019, moved from WorkOrderReportsPage).
 export function Table({ head, rows, rightFrom }) {
   return (
-    <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+    <table className="grid-table" style={{ width: '100%', marginTop: 12 }}>
       <thead>
         <tr>{head.map((h, i) => <th key={h} style={{ ...thStyle, textAlign: i >= rightFrom ? 'right' : 'left' }}>{h}</th>)}</tr>
       </thead>

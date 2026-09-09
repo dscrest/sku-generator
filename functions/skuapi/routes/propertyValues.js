@@ -52,7 +52,7 @@ router.get("/property-values/linked", async (req, res) => {
 });
 
 router.post("/property-values", async (req, res) => {
-  const { displayValue, name, sku, description, propertyId, createAsItem } = req.body;
+  const { displayValue, name, sku, description, propertyId, createAsItem, isDefault } = req.body;
   if (!displayValue || !name || !sku || !propertyId) {
     return res.status(400).json({ error: "displayValue, name, sku, propertyId are required" });
   }
@@ -66,9 +66,12 @@ router.post("/property-values", async (req, res) => {
       description: description || null,
       propertyId: String(propertyId),
       createAsItem: createAsItem ? "true" : "false",
+      isDefault: isDefault ? "true" : "false",
       orgId: req.orgId,
     });
     const value = out(row);
+    // Only one default per property — clear the flag on the siblings.
+    if (isDefault) await clearOtherDefaults(req.catalyst, propertyId, value.id);
     // Gate: a value becomes a Books item only when its parent property is
     // flagged. Best-effort — a Books failure must never fail the value save.
     if (await propertyMakesItems(req.catalyst, propertyId)) await createBooksItem(req.catalyst, value);
@@ -77,6 +80,21 @@ router.post("/property-values", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// One default per property: clear isDefault on every other value of the same
+// property. Enforced here (not per caller) — Data Store has no partial-unique
+// index. A property has few values, so a per-row updateRow loop is fine.
+async function clearOtherDefaults(catalyst, propertyId, keepId) {
+  const others = rowList(
+    await catalyst.zcql().executeZCQLQuery(
+      `SELECT ROWID FROM ${TABLE} WHERE propertyId = ${propertyId} AND isDefault = true AND ${orgClause(catalyst)}`,
+    ),
+  );
+  const ds = catalyst.datastore().table(TABLE);
+  for (const o of others) {
+    if (String(o.ROWID) !== String(keepId)) await ds.updateRow({ ROWID: o.ROWID, isDefault: "false" });
+  }
+}
 
 // Property-level gate (CR-026): true when this property's values should sync to
 // Books as items. Replaces the old per-value createAsItem checkbox.
@@ -105,19 +123,22 @@ router.put("/property-values/:id", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
   if (!(await ownsRow(req.catalyst, TABLE, id))) return res.status(404).json({ error: "Not found" });
-  const { displayValue, name, sku, description, createAsItem } = req.body;
+  const { displayValue, name, sku, description, createAsItem, isDefault } = req.body;
   const data = { ROWID: id };
   if (displayValue) data.displayValue = displayValue;
   if (name) data.name = name;
   if (sku) data.sku = sku;
   if (description !== undefined) data.description = description;
   if (createAsItem !== undefined) data.createAsItem = createAsItem ? "true" : "false";
+  if (isDefault !== undefined) data.isDefault = isDefault ? "true" : "false";
   try {
     await req.catalyst.datastore().table(TABLE).updateRow(data);
     // Re-read the full row so the Books push has name/description/existing link.
     const full = rowList(
       await req.catalyst.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE ROWID = ${id} AND ${orgClause(req.catalyst)}`),
     ).map(out)[0];
+    // Only one default per property — clear the flag on the siblings.
+    if (isDefault && full) await clearOtherDefaults(req.catalyst, full.propertyId, id);
     if (full && !full.zohoItemId && (await propertyMakesItems(req.catalyst, full.propertyId))) await createBooksItem(req.catalyst, full);
     res.json(full);
   } catch (err) {

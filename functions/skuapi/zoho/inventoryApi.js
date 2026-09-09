@@ -33,11 +33,12 @@ async function listCompositeItems(catalyst) {
 // item_type "inventory" + a stock account. A composite is a finished good, so
 // honor the dialog's inventoryAccountId when given, else prefer the org's
 // "Finished Goods" account, falling back to the Books default "Inventory
-// Asset". Anything else the org demands surfaces verbatim. Custom fields are
-// never pushed — the client maintains them in Books by hand. tracking:
+// Asset". Anything else the org demands surfaces verbatim. customFields
+// ([{api_name, value}], from Property.zohoCfApiName mappings) go into the
+// item's custom fields; omitted when empty. tracking:
 // 'none'|'serial'|'batch' from the push dialog; serial default matches
 // booksApi.createItem.
-async function createCompositeItem(catalyst, { name, sku, description, mappedItems, tracking = "serial", inventoryAccountId }) {
+async function createCompositeItem(catalyst, { name, sku, description, mappedItems, customFields, tracking = "serial", inventoryAccountId }) {
   const accountId = inventoryAccountId
     || (await getStockAccountId(catalyst, "finished goods"))
     || (await getStockAccountId(catalyst, "inventory asset"));
@@ -56,6 +57,7 @@ async function createCompositeItem(catalyst, { name, sku, description, mappedIte
     inventory_valuation_method: "fifo",
     inventory_account_id: accountId || undefined,
     mapped_items: (mappedItems || []).map((m) => ({ item_id: String(m.rmItemId), quantity: Number(m.perUnitQty) || 0 })),
+    custom_fields: customFields && customFields.length ? customFields : undefined,
   }, "inventory");
   return data.composite_item;
 }
@@ -248,12 +250,16 @@ async function createTransferOrder(catalyst, { date, fromWarehouseId, toWarehous
       throw err;
     }
   };
+  let to;
   try {
-    return await post(body);
+    to = await post(body);
   } catch (err) {
     if (!body.custom_fields) throw err;
-    return post({ ...body, custom_fields: undefined });
+    to = await post({ ...body, custom_fields: undefined });
   }
+  // The batch/serial picks made for each line (Haresh item 13) — the caller
+  // records them on the transaction notes. Not part of Zoho's response.
+  return { ...to, pickedLines: line_items };
 }
 
 async function getTransferOrder(catalyst, transferOrderId) {

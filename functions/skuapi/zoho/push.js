@@ -52,6 +52,25 @@ async function buildAssociatedItems(catalyst, item) {
   return mapped;
 }
 
+// Outbound half of the Property.zohoCfApiName mapping: every selected value
+// whose property maps to a Books custom field becomes an {api_name, value}
+// entry on the item create/update body. Mirror of the import read-back
+// (import.js propByCf). Empty array when the industry maps nothing.
+async function buildCustomFields(catalyst, item) {
+  const zcql = catalyst.zcql();
+  const mapped = rowList(
+    await zcql.executeZCQLQuery(`SELECT ROWID, zohoCfApiName FROM Property WHERE industryId = ${item.industryId} AND ${orgClause(catalyst)}`),
+  ).map(out).filter((p) => p.zohoCfApiName);
+  if (!mapped.length) return [];
+  const vals = rowList(
+    await zcql.executeZCQLQuery(`SELECT propertyId, valueText FROM SKUItemValue WHERE skuItemId = ${item.id} AND ${orgClause(catalyst)}`),
+  ).map(out);
+  const textByProp = Object.fromEntries(vals.map((v) => [String(v.propertyId), v.valueText]));
+  return mapped
+    .filter((p) => textByProp[String(p.id)] !== undefined && textByProp[String(p.id)] !== null && String(textByProp[String(p.id)]) !== "")
+    .map((p) => ({ api_name: p.zohoCfApiName, value: String(textByProp[String(p.id)]) }));
+}
+
 /**
  * Merge a composite's existing BOM with the current property-derived lines
  * (CR-030). `poolIds` is the set of item ids the generator owns (every
@@ -100,13 +119,14 @@ async function syncMappedItems(catalyst, item, desired) {
 // plain-item id, so the composite update 404s — if that plain item still
 // exists, delete it first or the composite create collides on SKU. Books
 // refuses to delete an item with transactions; that error surfaces verbatim.
-async function pushManufacturing(catalyst, item, description, opts = {}) {
+async function pushManufacturing(catalyst, item, description, opts = {}, customFields = []) {
   if (item.zohoItemId) {
     try {
       const updated = await updateCompositeItemFields(catalyst, item.zohoItemId, {
         name: item.name,
         sku: item.sku,
         ...(description !== undefined ? { description, purchase_description: description } : {}),
+        ...(customFields.length ? { custom_fields: customFields } : {}),
       });
       await syncMappedItems(catalyst, item, await buildAssociatedItems(catalyst, item));
       return updated;
@@ -119,7 +139,7 @@ async function pushManufacturing(catalyst, item, description, opts = {}) {
   }
   const mappedItems = await buildAssociatedItems(catalyst, item);
   const comp = await createCompositeItem(catalyst, {
-    name: item.name, sku: item.sku, description, mappedItems,
+    name: item.name, sku: item.sku, description, mappedItems, customFields,
     tracking: opts.tracking, inventoryAccountId: opts.inventoryAccountId,
   });
   const compId = comp && (comp.composite_item_id || comp.item_id);
@@ -132,7 +152,7 @@ async function pushManufacturing(catalyst, item, description, opts = {}) {
 /**
  * Best-effort push of a SKU item to Zoho Books. No-op (returns null) until Zoho
  * credentials are configured. `item` is the API-shaped row (item.id = ROWID).
- * Custom fields are never pushed — the client maintains them in Books by hand.
+ * Properties mapped via zohoCfApiName are pushed as Books custom fields.
  * Manufacturing items become composite (assembly) items; Trading items stay
  * plain inventory items. `item.type` tells which Books API the stored
  * zohoItemId belongs to — safe because type locks after first push.
@@ -145,18 +165,19 @@ async function pushToZoho(catalyst, item, description, opts = {}) {
     return null;
   }
   let result;
+  const customFields = await buildCustomFields(catalyst, item);
   if (item.type === "Manufacturing") {
-    result = await pushManufacturing(catalyst, item, description, opts);
+    result = await pushManufacturing(catalyst, item, description, opts, customFields);
   } else {
     if (item.zohoItemId) {
       try {
-        result = await updateItem(catalyst, item.zohoItemId, item.name, item.sku, description);
+        result = await updateItem(catalyst, item.zohoItemId, item.name, item.sku, description, customFields);
       } catch (e) {
         if (!isGone(e)) throw e; // stale link: item was deleted in Books → re-create below
       }
     }
     if (result === undefined) {
-      result = await createItem(catalyst, item.name, item.sku, description, opts);
+      result = await createItem(catalyst, item.name, item.sku, description, opts, customFields);
       if (result && result.item_id) {
         await catalyst.datastore().table("SKUItem").updateRow({ ROWID: item.id, zohoItemId: String(result.item_id) });
       }

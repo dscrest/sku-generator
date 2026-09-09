@@ -104,7 +104,7 @@ export default function CompositeBomPage() {
         <button onClick={() => sheet.fileRef.current?.click()} disabled={busy} style={btn}>⬆ Import Books export</button>
         <input ref={sheet.fileRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" onChange={sheet.onFile} style={{ display: 'none' }} />
         <button onClick={() => setSelected('new')} style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
-          + New composite item
+          + New Composite Item
         </button>
       </div>
 
@@ -261,7 +261,7 @@ function CompositeDetail({ item, onBack }) {
       <div style={{ flex: 1, overflow: 'auto', padding: '14px 20px 24px' }}>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
           <button onClick={() => sheet.fileRef.current?.click()} disabled={busy} style={btn}>⬆ Upload BOM (Excel / CSV)</button>
-          <button onClick={() => sheet.setPasting(p => !p)} disabled={busy} style={btn}>Paste from spreadsheet</button>
+          <button onClick={() => sheet.setPasting(p => !p)} disabled={busy} style={btn}>Paste from Spreadsheet</button>
           <button onClick={downloadBooksSample} style={btn}>⬇ Download sample</button>
           <button onClick={() => load(true)} disabled={busy} style={btn}>⟳ Refresh from Zoho</button>
           <input ref={sheet.fileRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" onChange={sheet.onFile} style={{ display: 'none' }} />
@@ -307,7 +307,7 @@ function CompositeDetail({ item, onBack }) {
         {!bom ? <Empty>Loading…</Empty> : !bom.lines.length ? (
           <Empty>No components yet. Upload a BOM file or paste from a spreadsheet.</Empty>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+          <table className="grid-table" style={{ width: '100%' }}>
             <thead>
               <tr>
                 {['Component', 'SKU', 'UOM', 'Qty'].map((h, i) => (
@@ -373,7 +373,7 @@ function NewComposite({ onBack, onCreated }) {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '10px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
         <button onClick={onBack} style={btn}>← All BOMs</button>
-        <b style={{ fontSize: 14 }}>New composite item</b>
+        <b style={{ fontSize: 14 }}>New Composite Item</b>
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', padding: '14px 20px 24px', maxWidth: 720 }}>
@@ -383,7 +383,7 @@ function NewComposite({ onBack, onCreated }) {
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
           <button onClick={() => sheet.fileRef.current?.click()} disabled={busy} style={btn}>⬆ Upload BOM (Excel / CSV)</button>
-          <button onClick={() => sheet.setPasting(p => !p)} disabled={busy} style={btn}>Paste from spreadsheet</button>
+          <button onClick={() => sheet.setPasting(p => !p)} disabled={busy} style={btn}>Paste from Spreadsheet</button>
           <button onClick={downloadBooksSample} style={btn}>⬇ Download sample</button>
           <input ref={sheet.fileRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" onChange={sheet.onFile} style={{ display: 'none' }} />
         </div>
@@ -392,7 +392,7 @@ function NewComposite({ onBack, onCreated }) {
 
         {rows?.length > 0 && (
           <>
-            <table style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', marginBottom: 14 }}>
+            <table className="grid-table" style={{ width: '100%', marginBottom: 14 }}>
               <thead>
                 <tr>
                   {['SKU', 'Name', 'Qty'].map((h, i) => (

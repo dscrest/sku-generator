@@ -10,11 +10,124 @@ Related docs: [CHANGES.md](CHANGES.md) (change requests + shipped log),
 [SCHEMA.md](SCHEMA.md) (DB), [ARCHITECTURE.md](ARCHITECTURE.md) (system),
 [ZOHO_AUTH.md](ZOHO_AUTH.md) (OAuth setup).
 
-Last updated: 2026-09-01.
+Last updated: 2026-09-09 (CR-112).
 
 ---
 
 ## In progress
+
+### CR-112 — MSUN UI polish batch (branch `feat/zoho-field-mapping`)
+- [x] `.grid-table` rounded tables (11 sites) + `CloseX` bare red ✕ (4 sites) + darker active nav/rail (`--blue-mid`)
+- [x] WO header: subtitle removed, Project in grid, red due date < 4 days (header + list; list customer/due bold)
+- [x] Rail: sticky search + Status/Priority filters, fmtDate'd dates
+- [x] Title Case label sweep (headers, VIEWS/tabs + comparisons, buttons, filter labels, CSV maps)
+- [ ] Live verify: rounded corners everywhere, rail filters, hover-bold ✕, MSUN eyeball pass
+
+### CR-111 — CRM widget: open filter panel (branch `feat/zoho-field-mapping`)
+- [x] 6-col parameter grid above the panes (select per List property, text for Range); N/M counter, param search, Clear all, collapse
+- [x] Batched `GET /api/industries/:id/property-values` replaces lazy per-property loads (2 requests per industry pick)
+- [x] Deployed to Dev
+- [ ] Live verify: 24 params render 6-wide, options visible, select → chip → search narrows, create card unaffected
+
+### CR-110 — MSUN WO: SO-derived header panel + list due/priority (branch `feat/zoho-field-mapping`)
+- [x] 8 `WorkOrder` columns via Catalyst MCP (`woPriority` — `priority` reserved)
+- [x] `workorder/soFields.js` label-matched CF extraction + test; create capture; detail-open re-sync folded into the `lastViewedAt` write; list/detail serialization
+- [x] Detail header 13-field grid; list Due date/Due days columns + priorities filter; `dueDays()`/`<DueDays>`
+- [ ] Live verify against a real MSUN SO — confirm the six custom-field labels match `CF_MAP` (adjust one-liners if not)
+
+### CR-109 — CRM quote widget: SKU Studio redesign + create-in-Books (branch `feat/zoho-field-mapping`)
+- [x] Reskin per `SKU Widget.dc.html` mock (header + steps, chips, results, quote-line cards); popup `Resize` 1320×780
+- [x] Cart: Disc % + reorder + Clear; `Discount` amount in standard-subform write-back, disc aliases for custom subforms
+- [x] Create flow: generate → create-item → push-zoho (NEW IN BOOKS / PUSH PENDING badges); manual path kept for filterless create
+- [x] `crm-widget/app/widget.html` → redirect stub (legacy — widget is CRM-hosted "External", no zip upload needed)
+- [x] Deployed to Dev (`catalyst deploy --only functions`); live at `/server/skuapi/widget`
+- [ ] Config: enable `showInWidget` on the **Size** property (+ other wanted filters) per org
+- [ ] Live verify: resize honored, create-and-add lands item in Books + line on quote, push-failure path shows PUSH PENDING
+
+### CR-108 — CRM quote widget: property search + dual-subform add (branch `feat/zoho-field-mapping`)
+- [x] `Property.showInWidget` column (MCP) + backend + Property Manager checkbox
+- [x] Search returns per-item property values (`withValues`); widget redesigned (chips + two panes); metadata-driven write to standard + custom Quotes subforms; rate prefill from CRM Product `Unit_Price`
+- [ ] Live verify on a real Quote: `ZOHO.CRM.META.getFields` response shape (SDK v1.2), custom subform discovered, empty-quote add lands rows in both subforms, existing rows preserved
+- [ ] Flag the client's search properties (`showInWidget`) and confirm the filter menu shows exactly those
+
+### CR-107 — Fotedar bug batch (branch `feat/zoho-field-mapping`)
+- [x] Data: Fotedar Demo `seriesPad=3` + 6 SKUs renamed to 3-digit suffixes (MCP, 2026-09-09)
+- [x] Series chip uses the industry's `seriesPad` (was hardcoded `\d{4}`)
+- [x] `zohoCfApiName` mapping pushed to Books custom fields (plain + composite paths)
+- [ ] Re-push `PKNMULA001` (Fotedar Demo) so the Books item sku drops the extra zero
+- [ ] Live verify: pad-3 org shows series chip; mapped custom field lands in Books on push
+
+### CR-104 — Recipe Engine add-on (branch `feat/zoho-field-mapping`)
+Full module built: 6 tables (Catalyst MCP, Dev), `/api/recipe` routes with
+draft-guarded immutability + snapshot freeze, 7 frontend pages (wizard,
+quotations/snapshot/mfg, recipe list/builder, materials master). Detail in
+[CHANGES.md](CHANGES.md); tables in [SCHEMA.md](SCHEMA.md).
+- [x] Tables + columns via MCP; `recipe-engine` addon key; calc selftest green; frontend builds
+- [x] `recipe-engine` enabled for OCTFIS test org 743418751 (OrgAddon row via MCP, 2026-09-05)
+- [x] Deployed to Catalyst Dev (`catalyst deploy`, 2026-09-05); `/api/recipe/*` mounted (401 without auth, not 404)
+- [ ] Live verify: `POST /api/recipe/seed-demo` → builder shows RAVS150 → new
+      version → publish (old → Superseded) → wizard ×10 WCB/CF8 → QTN created →
+      change a rate in Materials → snapshot unchanged, fresh calc shows new rate →
+      convert → mfg totals (cast wt × qty, grade chips)
+- [ ] Later (deferred): nested components UI, qty override in wizard, WO/MRP hook
+
+### CR-099 — Work Order batch from Haresh's feedback (branch `feat/zoho-field-mapping`)
+All 17 actionable items implemented (multi-FG grid, warehouse selection + settings
+redesign, purchase-flow upgrades, wording, batch notes, issue slip, cross history,
+red dot). Full detail in [CHANGES.md](CHANGES.md). Remaining:
+- [x] Deploy backend + rebuilt frontend to Catalyst (`frontend/dist` → `catalyst deploy`, 2026-09-04)
+- [ ] Live verify: multi-FG WO reserve across 2 FGs → 2 TOs; warehouse override
+      lands on the Zoho TO; by-WO raise with 2 vendors → 2 POs; red dot appears
+      after a PO receipt and clears on open; issue slip prints batch notes
+- [ ] "User and Roles" from the same doc — **not scoped**; needs requirements from Haresh
+
+### CR-096 — CRM widget: SKU picker on Quote pages (branch `feat/zoho-field-mapping`)
+Realizes the Quotes half of CR-012. Full detail in [CHANGES.md](CHANGES.md).
+- [x] `crm-widget/` zet project — `plugin-manifest.json` + vanilla-JS `app/widget.html`
+      (search → cart → quick-create → `ZOHO.CRM.API` find-or-create Products +
+      read-merge-write Quote line subform); `zet validate && zet pack` pass
+- [x] Backend CORS: origin-reflecting suffix allowlist + `Allow-Credentials`
+      ([index.js](functions/skuapi/index.js))
+- [x] `App.jsx` OAuth finisher: `window.name === 'sku-auth'` → postMessage + close
+- [x] Deleted obsolete `frontend/public/crm-widget.html` (SPA-redirect bootstrap)
+- [x] Deploy backend + rebuilt frontend to Catalyst (2026-09-04)
+- [ ] **CRM console (Dhiraj), per CR-097 (supersedes the zip upload):** edit the
+      "SKU Picker" widget → Hosting **External**, Base URL
+      `https://sku-gen-octfis-925638796.development.catalystserverless.com/server/skuapi/widget`;
+      Quotes → Links & Buttons → View Page button "Add SKU Items" (~900×600).
+      Delete `crm-widget/` once live-verified
+- [ ] Live verify: silent/popup sign-in, search, quick-create 409, add-to-quote on a
+      throwaway Quote **with existing lines** (proves replace semantics; repeat SKU →
+      no duplicate Product); confirm real widget Origin in DevTools → tighten `CORS_OK`
+- [ ] Deals flow — still blocked on the CR-012 custom subform decision
+
+### CR-095 — Estimate "Template 2" print design (branch `feat/zoho-field-mapping`)
+- [x] `EstimatePage.jsx` — Design toggle (Classic | Template 2), `CSS2` (`est2-` scoped, Arial per the PDF's embedded ArialMT/Arial-BoldMT), `EstimateSheet2` + `Sheet2Chrome` + `ClosingSheet2`, pagination engine reused via existing hooks
+- [x] `estimateParser.js` — `validUntil()` (offer date + 15 days) + self-check cases; fixed stale contact-email assertion
+- [ ] Verify in dev against a real quote: Classic unchanged, Template 2 matches mockup, multi-page repeat header/footer, Priced/Technical toggle, Print/Save PDF geometry
+
+### CR-094 — Literal series format + default value per property (branch `feat/zoho-field-mapping`)
+- [x] `PropertyValue.isDefault` column added via Catalyst MCP (id 69851000000256009); `store.js` `BOOL_COLS` += `isDefault`
+- [x] `routes/propertyValues.js` — `POST`/`PUT` accept + persist `isDefault`; `clearOtherDefaults` enforces one-per-property
+- [x] `IndustriesPage.jsx` — "Leading zeros" number input replaced by "Number format" text field (`seriesPad = digits.length`)
+- [x] `PropertyManagerPage.jsx` — "Set as default value" checkbox in value form, `DEFAULT` badge in value grid
+- [x] `SKUGeneratorPage.jsx` — `loadProperties` seeds `initSels` from each property's default (permalink/edit still override)
+- [ ] Verify after deploy (Dev): type `00001` → SKUs 5-digit; mark a value default → badge + pre-selected in generator; second default clears the first
+
+### CR-093 — SKU series settings: enable checkbox + leading zeros (branch `feat/zoho-field-mapping`)
+- [x] `Industry.seriesPad` column added via Catalyst MCP (id 69851000000260038)
+- [x] `skuSeries.js` — `pad` width threaded through `nextSuffix`/`nextSeriesSku`/`stripSuffix`, start always 1; `skuSeries.test.js` green
+- [x] `routes/sku.js` + `importItems.js` — derive `pad = seriesPad || 4`; `routes/industries.js` + `store.js` read/write/coerce `seriesPad`
+- [x] `IndustriesPage.jsx` — "Allow numerical series" checkbox + "Leading zeros" input with live preview (shared `seriesFields`); row shows first number at width
+- [ ] Verify after deploy (Dev): edit industry → check series, leading zeros = 2 → preview `001`, save → generate SKU ends `001`, next `002`; set 3 → new SKUs use `0001`; uncheck → suffix gone
+
+### CR-092 — Bulk item import (branch `feat/zoho-field-mapping`)
+- [x] `skuBuild.js` — shared `assemble()` (SKU/Name/Description), `routes/sku.js` `/generate` refactored to use it
+- [x] `importItems.js` — `buildResolver` (row → selectedValues, case-insensitive display-value lookup) + `processImport` (sequential, per-row results)
+- [x] `routes/skuItems.js` — `POST /api/sku-items/import {industryId, rows}`
+- [x] `importItems.test.js` — resolveRow + assemble cases; `node functions/skuapi/importItems.test.js` green
+- [x] `ImportItemsPage.jsx` + `/sku/import` route + "Import" SKU tab; frontend build passes
+- [ ] Verify after deploy (Dev): Yarn template download → fill 2 spec rows → upload → SKUs match `YNBOCB10RD00` etc.; unknown-value + out-of-range rows fail with typed errors; 20-row series import produces contiguous suffixes, no 409s; then "Push all unsynced" creates them in Books
 
 ### CR-090 — Admin console org registry (branch `feat/zoho-field-mapping`)
 - [x] Catalyst — new `Org` table (`orgId` varchar 50 unique mandatory, `orgName` varchar 255) via MCP
@@ -381,6 +494,9 @@ Last updated: 2026-09-01.
 - [x] `SKUItemsPage` pagination folded onto shared `GridFooter`/`usePager`
 
 ### CR-012 — CRM Deal → SKU master item picker (specified, blocked)
+**Update (CR-096):** the picker itself now exists as the Quotes widget in
+`crm-widget/` — the Deal flow below is a map entry + subform key away once the
+CRM-side subform is created.
 Widget in a CRM Deal → search SKU master → multi-select → rows land in the
 deal's item grid. Full spec + verified CRM metadata in [CHANGES.md](CHANGES.md).
 No new OAuth scope needed (widget acts as the signed-in CRM user).

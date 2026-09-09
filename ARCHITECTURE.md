@@ -43,6 +43,22 @@ Catalyst API Gateway ──► Advanced I/O Function "skuapi" (Express)
    └─ OAuth redirect ─► Zoho Accounts ──► Zoho Books API (item sync)
 ```
 
+### CRM quote widget (CR-108/109)
+
+One real widget file: `functions/skuapi/widget.html`, served at `GET /widget`
+with a `frame-ancestors` CSP (Zoho DCs only — Catalyst static hosting stamps
+`X-Frame-Options: DENY`, functions don't). The CRM widget is configured with
+hosting **External** pointing straight at that URL — widget changes go live on
+`catalyst deploy`, no CRM upload. `crm-widget/` (the old zip-upload plugin) is
+**legacy/unused**; its `app/widget.html` is kept only as a `location.replace`
+stub to the hosted URL in case a packed widget ever comes back (never wrap it
+in an iframe — the Zoho SDK handshakes with `window.parent`). Auth is
+cookie-free (`?t=` session token via postMessage handoff). Widget item-create
+routes through the generator engine
+(`/api/sku/generate` → `/api/sku/create-item` → `/api/sku-items/:id/push-zoho`)
+so property values persist and the item lands in Books; the CRM Product is
+created at push-to-quote time via the JS SDK.
+
 ---
 
 ## Database
@@ -166,7 +182,7 @@ ROWID (List props) or a raw number string (Range props).
 | POST | `/api/wo/composites` | Create a new Books composite item from a sheet |
 | POST | `/api/wo/composites/import` | Bulk import of a Books composite-items export — update matched composites, create unknown ones |
 | GET/POST | `/api/wo` | List work orders / create from an SO (seeds each FG's BOM from its composite item) |
-| GET/PUT | `/api/wo/:id` | Work order with FGs, purchase requests, transactions, approvals |
+| GET/PUT | `/api/wo/:id` | Work order with FGs, purchase requests, transactions, approvals. GET also re-syncs the SO-derived header fields (`soFields.js`, CR-110) from Books into the row — one Books call, stored values serve if it fails |
 | POST | `/api/wo/:id/status` | Status transition, incl. the QC gate (Rejected → back to In Progress). On `Completed` it first auto-returns leftover material to Main via `txn.autoReturnOnComplete` — a Zoho failure aborts the transition (CR-031) |
 | POST | `/api/wo/:id/lines` | Single-op item edit during production (CR-031): `add`/`setQty`/`remove`/`replace` + reason. Internal only — never writes to the composite item or SO; committed lines are kept at qty 0 for the completion sweep; locked at Completed/Closed/Cancelled |
 | GET | `/api/wo/:id/bom` | Frozen BOM lines + revision history |
@@ -204,6 +220,30 @@ guarded. Setup procedure: [WORKORDER.md](WORKORDER.md).
 `POST /internal/sync-stock` (in `index.js`, `X-Sync-Secret` header = `SYNC_SECRET`) syncs all reserve-enabled orgs — the future cron target.
 
 Old-scope tokens (pre-Inventory) make reserve endpoints return `409 {error:"reauth_required"}` — the UI offers a Zoho reconnect; SKU flows keep working.
+
+### Recipe Engine — `routes/recipe.js` (mounted `/api/recipe`, gated by `requireAddon("recipe-engine")`, CR-104)
+Reusable recipe/configuration engine — recipes (versioned, Draft-only writable)
+compose a main ERP product from components with selectable materials and
+configurable cost elements; quotations freeze an immutable JSON snapshot.
+Costing math lives in `recipe/calc.js` (pure, `--selftest`); demo data in
+`recipe/seedData.js`. Server owns all pricing — the UI never computes cost.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| CRUD | `/api/recipe/materials(/:id)` | Rates master (delete 409s when referenced; use Inactive) |
+| GET | `/api/recipe/cost-elements` | Per-org cost columns (lazy-seeds CASTING/MACHINING/DRILLING/ASSEMBLY) |
+| GET | `/api/recipe/products` | Thin SKUItem list for the wizard (independent of sku-generator gate) |
+| CRUD | `/api/recipe/recipes(/:id)` + `/components` + `/options` | Recipe builder; every write `assertDraft`-guarded (published = immutable 409) |
+| PUT | `/api/recipe/recipes/:id/component-order` | Drag-and-drop reorder |
+| POST | `/api/recipe/recipes/:id/publish` \| `/new-version` · GET `/versions` | Publish supersedes prior published of same code; new-version deep-copies to Draft |
+| POST | `/api/recipe/recipes/:id/calculate` | Cost/price for a selection (wizard review + builder Test tab; nothing saved) |
+| GET/POST | `/api/recipe/quotations(/:id)` · POST `/:id/convert` | Create = recompute + freeze snapshot + `QTN-` number; convert → `Order` |
+| POST | `/api/recipe/seed-demo` | Idempotent RAVS150 demo (12 materials + published recipe) |
+
+Frontend: `/recipe/*` (`RecipeLayout` in `App.jsx`) — `configure` (5-step sales
+wizard), `quotations` (+ `/:id` snapshot, `/:id/mfg` manufacturing requirement),
+`recipes` (+ `/:id` builder: Components / Materials & costing / Test / Versions),
+`materials`.
 
 ### Zoho OAuth — `routes/zohoAuth.js` (mounted `/auth/zoho`)
 | Method | Path | Purpose |

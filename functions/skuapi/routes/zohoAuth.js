@@ -6,6 +6,7 @@ const { getOrganizations } = require("../zoho/booksApi");
 const {
   requireAuth,
   currentUserId,
+  makeSession,
   setSessionCookie,
   findUserByEmail,
   findUserByZuid,
@@ -88,7 +89,11 @@ router.post("/exchange", async (req, res) => {
   if (!code) return res.status(400).json({ error: "no_code" });
   try {
     const result = await completeZohoLogin(req, res, code, location);
-    res.json({ ok: true, ...result });
+    // Token in-band for the CRM widget: its iframe never gets third-party
+    // cookies, so App.jsx forwards this to the widget via postMessage and the
+    // widget authenticates with an Authorization: Bearer header instead.
+    const uid = req.catalyst.__userId;
+    res.json({ ok: true, ...result, ...(uid ? { token: makeSession(uid) } : {}) });
   } catch (err) {
     console.error("Zoho exchange error:", err);
     res.status(400).json({ error: err.message });

@@ -5,7 +5,7 @@
  * report costs **zero** Zoho API calls no matter how many projects it spans —
  * which is the whole reason the read model exists.
  */
-const { zStr } = require("../store");
+const { zStr, rowList } = require("../store");
 const { byOrg, byOrgAll, inList, settings } = require("./store");
 const { buildGridsBulk } = require("./grid");
 
@@ -294,17 +294,37 @@ async function warehouseStock(catalyst, orgId) {
 // The work order's own History tab feed: material movements + BOM revisions +
 // approvals, newest first, already merged.
 async function history(catalyst, orgId, workOrderId) {
+  // Scope to THIS work order's documents (Haresh item 16): the WO row itself,
+  // its material txns and its purchase requests — the old "every MaterialTxn in
+  // the org" clause dragged other WOs' movements into the trail.
+  const woId = String(workOrderId);
+  const [txns, prs] = await Promise.all([
+    byOrg(catalyst, orgId, "MaterialTxn", `workOrderId = ${zStr(woId)}`),
+    byOrg(catalyst, orgId, "PurchaseRequest", `workOrderId = ${zStr(woId)}`),
+  ]);
+  const ids = inList([woId, ...txns.map((t) => t.ROWID), ...prs.map((p) => p.ROWID)]);
   const rows = await byOrg(
     catalyst, orgId, "ActivityLog",
-    `entityId = ${zStr(String(workOrderId))} OR entityType = 'MaterialTxn'`,
+    `entityId IN (${ids})`,
     "loggedAt DESC",
   );
-  return rows.slice(0, 200).map((r) => ({
+  const top = rows.slice(0, 200);
+  // Resolve actor names in one query (webhook entries have no userId).
+  const userIds = inList([...new Set(top.map((r) => r.userId).filter(Boolean))]);
+  const names = {};
+  if (userIds) {
+    const users = rowList(await catalyst.zcql().executeZCQLQuery(
+      `SELECT ROWID, name, email FROM AppUser WHERE ROWID IN (${userIds})`,
+    ));
+    for (const u of users) names[String(u.ROWID)] = u.name || u.email || null;
+  }
+  return top.map((r) => ({
     at: r.loggedAt,
     action: r.action,
     entityType: r.entityType,
     entityId: String(r.entityId),
     userId: r.userId || null,
+    userName: r.userId ? names[String(r.userId)] || null : null,
     detail: r.detail || null,
   }));
 }

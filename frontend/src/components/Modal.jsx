@@ -1,5 +1,10 @@
 import { useEffect } from 'react';
 
+// Bare red close glyph (CR-112) — shared by Modal, WO header, PO detail, SKU detail.
+export function CloseX({ onClick, title = 'Close' }) {
+  return <button type="button" className="close-x" onClick={onClick} title={title}>✕</button>;
+}
+
 // Pass `onSubmit` to make Enter in any field trigger the primary action —
 // the children render inside a <form> with a hidden submit button.
 export default function Modal({ title, onClose, onSubmit, children, width = 480 }) {
@@ -37,22 +42,7 @@ export default function Modal({ title, onClose, onSubmit, children, width = 480 
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
           <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{title}</span>
-          <button
-            onClick={onClose}
-            style={{
-              width: 28, height: 28,
-              border: '1px solid var(--border)',
-              background: 'var(--bg-secondary)',
-              borderRadius: 'var(--radius-sm)',
-              cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: 'var(--text-secondary)',
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
+          <CloseX onClick={onClose} />
         </div>
         {onSubmit ? (
           <form

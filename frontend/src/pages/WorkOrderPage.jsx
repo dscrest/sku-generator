@@ -5,9 +5,10 @@ import toast from 'react-hot-toast';
 import MaterialsGrid, { Empty, Banner } from '../components/MaterialsGrid.jsx';
 import WoItemsTab from '../components/WoItemsTab.jsx';
 import PurchaseTab from '../components/PurchaseTab.jsx';
-import Modal, { ModalFooter, ModalBtn } from '../components/Modal.jsx';
-import { StatusChip, ProcChip, AccessNotice, spaced, btn, thStyle, cell } from '../components/woCommon.jsx';
-import { fmtMoney, fmtDate } from '../format.js';
+import Modal, { ModalFooter, ModalBtn, CloseX } from '../components/Modal.jsx';
+import { FilterSelect, distinct } from '../components/GridFooter.jsx';
+import { StatusChip, ProcChip, DueDays, AccessNotice, spaced, btn, thStyle, cell } from '../components/woCommon.jsx';
+import { fmtMoney, fmtDate, dueDays } from '../format.js';
 
 /**
  * One work order, Zoho Books style (CR-018): compact list of work orders on
@@ -27,18 +28,24 @@ export default function WorkOrderPage({ user }) {
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [printBom, setPrintBom] = useState(null);
+  const [printTxn, setPrintTxn] = useState(null); // material txn → issue slip print
   const [busy, setBusy] = useState(false);
   const [qcPrompt, setQcPrompt] = useState(null); // pending status awaiting QC answer
   const [closeWarn, setCloseWarn] = useState(null); // 409 "unissued" payload from a Close attempt
   const [reopening, setReopening] = useState(false);
+  // Rail filters (CR-112): client-side only, reset on leaving the page.
+  const [railQ, setRailQ] = useState('');
+  const [railStatus, setRailStatus] = useState('');
+  const [railPri, setRailPri] = useState('');
 
   function load() {
     axios.get(`/api/wo/${id}`)
       .then(({ data }) => {
         setWo(data);
         // Keep the rail's status chip fresh without re-fetching the whole list
-        // (which server-side scans the org's purchase history).
-        setList(l => l && l.map(w => (String(w.id) === String(data.id) ? { ...w, status: data.status } : w)));
+        // (which server-side scans the org's purchase history). Opening also
+        // clears the unseen-progress dot (server stamps lastViewedAt).
+        setList(l => l && l.map(w => (String(w.id) === String(data.id) ? { ...w, status: data.status, attention: false } : w)));
       })
       .catch(err => {
         if (err.response?.status === 409 && err.response.data?.error === 'reauth_required') setBlocked('reauth');
@@ -120,6 +127,7 @@ export default function WorkOrderPage({ user }) {
   }
 
   function printPdf() {
+    setPrintTxn(null); // only one print sheet may be mounted
     axios.get(`/api/wo/${id}/bom`)
       .then(({ data }) => {
         setPrintBom(data.lines);
@@ -128,26 +136,47 @@ export default function WorkOrderPage({ user }) {
       .catch(() => toast.error('Could not load the BOM for printing'));
   }
 
+  function printTxnSlip(t) {
+    setPrintTxn(t);
+    setTimeout(() => window.print(), 80);
+  }
+
   return (
     <div style={{ height: '100%', display: 'flex', minHeight: 0, overflow: 'hidden' }}>
       {/* Left rail: all work orders, click to switch */}
       <div style={{ width: 260, flexShrink: 0, borderRight: '1px solid var(--border)', overflowY: 'auto', background: 'var(--bg-card)' }}>
-        {!list ? <Empty>Loading…</Empty> : list.map(w => (
+        <div style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--bg-card)', padding: 8, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <input
+            value={railQ} onChange={e => setRailQ(e.target.value)} placeholder="Search WO…"
+            aria-label="Search work orders"
+            style={{ padding: '5px 8px', fontSize: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)' }}
+          />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <FilterSelect label="Statuses" value={railStatus} onChange={setRailStatus} options={distinct(list || [], 'status')} style={{ flex: 1, minWidth: 0 }} />
+            <FilterSelect label="Priorities" value={railPri} onChange={setRailPri} options={distinct(list || [], 'priority')} style={{ flex: 1, minWidth: 0 }} />
+          </div>
+        </div>
+        {!list ? <Empty>Loading…</Empty> : list.filter(w =>
+          (!railStatus || w.status === railStatus) &&
+          (!railPri || w.priority === railPri) &&
+          (!railQ || String(w.woNumber || '').toLowerCase().includes(railQ.toLowerCase())),
+        ).map(w => (
           <div
             key={w.id}
             onClick={() => String(w.id) !== String(id) && navigate(`/wo/${w.id}`)}
             style={{
               padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid var(--border)',
-              background: String(w.id) === String(id) ? 'var(--blue-light)' : 'transparent',
+              background: String(w.id) === String(id) ? 'var(--blue-mid)' : 'transparent',
               borderLeft: String(w.id) === String(id) ? '3px solid var(--blue)' : '3px solid transparent',
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {w.attention && <span title="New progress — a PO receipt landed since this was last opened" style={{ width: 8, height: 8, borderRadius: '50%', background: '#dc2626', flexShrink: 0 }} />}
               <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{w.woNumber}</span>
               <StatusChip status={w.status} />
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {w.customerName} · {w.woDate}
+              {fmtDate(w.woDate)}
             </div>
           </div>
         ))}
@@ -159,32 +188,17 @@ export default function WorkOrderPage({ user }) {
           <>
             <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <b style={{ fontSize: 15 }}>{wo.woNumber}</b>
-                    {forward.length ? (
-                      <Menu
-                        trigger={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><StatusChip status={wo.status} /> ▾</span>}
-                        triggerStyle={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
-                        items={forward.map(s => ({ label: `→ ${spaced(s)}`, onClick: () => changeStatus(s) }))}
-                      />
-                    ) : <StatusChip status={wo.status} />}
-                    <ProcChip status={wo.procStatus} />
-                  </div>
-                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 3 }}>
-                    SO {wo.salesOrderNumber} · {wo.customerName}{wo.projectName ? ` · ${wo.projectName}` : ''}
-                  </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <b style={{ fontSize: 15 }}>{wo.woNumber}</b>
+                  {/* Status chips are display-only — status moves live in the ⋯ menu. */}
+                  <StatusChip status={wo.status} />
+                  <ProcChip status={wo.procStatus} />
                 </div>
                 <div style={{ flex: 1 }} />
-                <button onClick={() => navigate('/wo')} title="Back to the list" style={{ width: 28, height: 28, border: '1px solid var(--border)', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-secondary)' }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ verticalAlign: 'middle' }}>
-                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
+                <CloseX onClick={() => navigate('/wo')} title="Back to the list" />
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
                 <div style={{ flex: 1 }} />
-                <button onClick={() => setEditing(true)} style={btn}>✎ Edit</button>
                 {wo.status === 'Completed' && (
                   <button onClick={() => changeStatus('Closed')} disabled={busy} style={btn}>Close WO</button>
                 )}
@@ -206,17 +220,44 @@ export default function WorkOrderPage({ user }) {
                   triggerStyle={{ ...btn, fontWeight: 700 }}
                   align="right"
                   items={[
+                    ...forward.map(s => ({ label: `→ ${spaced(s)}`, onClick: () => changeStatus(s) })),
                     ...(levels > 0 && !allApproved ? [{ label: `✕ Reject — Level ${nextLevel}`, tone: '#b91c1c', onClick: () => approve('Rejected') }] : []),
-                    ...(wo.nextStatuses?.includes('Cancelled') ? [{ label: 'Cancel work order', tone: '#b91c1c', onClick: () => changeStatus('Cancelled') }] : []),
+                    ...(wo.nextStatuses?.includes('Cancelled') ? [{ label: 'Cancel Work Order', tone: '#b91c1c', onClick: () => changeStatus('Cancelled') }] : []),
                     { label: '🖨 Print / PDF', onClick: printPdf },
                     {
-                      label: 'Delete work order', tone: '#b91c1c',
+                      label: 'Delete Work Order', tone: '#b91c1c',
                       disabled: !canDelete,
                       title: canDelete ? undefined : 'Only Draft or Cancelled work orders can be deleted',
                       onClick: () => setConfirmDelete(true),
                     },
                   ]}
                 />
+              </div>
+              {/* SO-derived header fields (CR-110, MSUN): re-synced from Books on every open. */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '8px 16px', marginTop: 10, padding: '12px 14px', background: 'var(--blue-light)', border: '1px solid var(--blue-border)', borderRadius: 10 }}>
+                {[
+                  ['WO No', wo.woNumber],
+                  ['WO Date', fmtDate(wo.woDate)],
+                  ['SO No', wo.salesOrderNumber],
+                  ['SO Date', fmtDate(wo.soDate)],
+                  ['Customer', wo.customerName],
+                  ...(wo.projectName ? [['Project', wo.projectName]] : []),
+                  ['Row Type', wo.rowType || '—'],
+                  ['Panel Type', wo.panelType || '—'],
+                  ['Expected Shipment', fmtDate(wo.shipmentDate)],
+                  ['Buyer Order No', wo.buyerOrderNo || '—'],
+                  ['Buyer Order Date', fmtDate(wo.buyerOrderDate)],
+                  ['WO Due Date', <span style={{ color: dueDays(wo.dueDate) !== null && dueDays(wo.dueDate) < 4 ? '#dc2626' : undefined }}>{fmtDate(wo.dueDate)}</span>],
+                  ['WO Due Days', <DueDays date={wo.dueDate} />],
+                  ['Priority', wo.priority || '—'],
+                  ['Machining Completion', fmtDate(wo.machiningDoneDate)],
+                  ['Fitting Completion', fmtDate(wo.fittingDoneDate)],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--blue)' }}>{label}</div>
+                    <div style={{ fontSize: 12.5, marginTop: 1 }}>{value}</div>
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -237,7 +278,7 @@ export default function WorkOrderPage({ user }) {
               {tab === 'Items' && <WoItemsTab workOrderId={id} fgs={wo.fgs} status={wo.status} onChanged={load} />}
               {tab === 'Purchase' && <PurchaseTab workOrderId={id} wo={wo} onChanged={load} />}
               {tab === 'Approvals' && <ApprovalsTab workOrderId={id} wo={wo} onChanged={load} />}
-              {tab === 'History' && <HistoryTab workOrderId={id} wo={wo} />}
+              {tab === 'History' && <HistoryTab workOrderId={id} wo={wo} onPrintTxn={printTxnSlip} />}
             </div>
 
             {editing && <EditModal wo={wo} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); load(); }} />}
@@ -305,7 +346,7 @@ export default function WorkOrderPage({ user }) {
               </Modal>
             )}
 
-            <WoPrintSheet wo={wo} lines={printBom} />
+            {printTxn ? <IssueSlip wo={wo} txn={printTxn} /> : <WoPrintSheet wo={wo} lines={printBom} />}
           </>
         )}
       </div>
@@ -441,7 +482,7 @@ function WoPrintSheet({ wo, lines }) {
         {wo.projectName ? ` · ${wo.projectName}` : ''}
       </div>
 
-      <h2 style={{ fontSize: 14, margin: '14px 0 6px' }}>Finished goods</h2>
+      <h2 style={{ fontSize: 14, margin: '14px 0 6px' }}>Finished Goods</h2>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead><tr><th style={th}>Item</th><th style={th}>SKU</th><th style={{ ...th, textAlign: 'right' }}>Qty</th></tr></thead>
         <tbody>
@@ -467,6 +508,56 @@ function WoPrintSheet({ wo, lines }) {
         <b>Estimated cost:</b> {fmtMoney(wo.estimatedCost)} &nbsp;·&nbsp; <b>Actual cost:</b> {fmtMoney(wo.actualCost)}
       </div>
       {wo.notes && <div style={{ marginTop: 8, fontSize: 12 }}><b>Notes:</b> {wo.notes}</div>}
+    </div>
+  );
+}
+
+// Printable slip for one material movement (Haresh item 18) — same hidden
+// wo-print-sheet mechanics as WoPrintSheet, plain black-on-white like the
+// estimate prints. Batch numbers ride in txn.notes.
+function IssueSlip({ wo, txn }) {
+  const th = { textAlign: 'left', borderBottom: '1px solid #000', padding: '4px 8px', fontSize: 11 };
+  const td = { borderBottom: '1px solid #ccc', padding: '4px 8px', fontSize: 12 };
+  const title = { issue: 'Material Issue Slip', return: 'Material Return Slip', reserve: 'Material Reservation Slip', dereserve: 'Material De-reservation Slip' }[txn.type] || 'Material Movement Slip';
+  return (
+    <div className="wo-print-sheet">
+      <h1 style={{ fontSize: 20, margin: '0 0 2px' }}>{title}</h1>
+      <div style={{ fontSize: 12, marginBottom: 14 }}>
+        {txn.txnNumber} · {fmtDate(txn.confirmedAt || txn.createdAt)}
+        {txn.transferOrderNumber ? ` · Transfer Order ${txn.transferOrderNumber}` : ''}
+      </div>
+      <div style={{ fontSize: 12, marginBottom: 14 }}>
+        Work Order {wo.woNumber} · SO {wo.salesOrderNumber} · {wo.customerName}
+        {wo.projectName ? ` · ${wo.projectName}` : ''}
+      </div>
+
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr><th style={th}>Material</th><th style={th}>SKU</th><th style={th}>UoM</th><th style={{ ...th, textAlign: 'right' }}>Qty</th></tr>
+        </thead>
+        <tbody>
+          {(txn.lines || []).map((l, i) => (
+            <tr key={i}>
+              <td style={td}>{l.name || l.rmItemId}</td>
+              <td style={td}>{l.sku || '—'}</td>
+              <td style={td}>{l.uom || '—'}</td>
+              <td style={{ ...td, textAlign: 'right' }}>{l.qty}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {txn.notes && (
+        <div style={{ marginTop: 12, fontSize: 12 }}>
+          <b>Batches / notes</b>
+          <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{txn.notes}</div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 40, marginTop: 48, fontSize: 12 }}>
+        <div style={{ flex: 1, borderTop: '1px solid #000', paddingTop: 4 }}>Issued by (name, signature, date)</div>
+        <div style={{ flex: 1, borderTop: '1px solid #000', paddingTop: 4 }}>Received by (name, signature, date)</div>
+      </div>
     </div>
   );
 }
@@ -529,7 +620,43 @@ function ApprovalsTab({ workOrderId, wo, onChanged }) {
 
 // ---- History --------------------------------------------------------------
 
-function HistoryTab({ workOrderId, wo }) {
+// Raw ActivityLog codes → plain-language labels for the audit trail.
+const ACTION_LABELS = {
+  'txn.confirm.reserve': 'Material reserved',
+  'txn.confirm.dereserve': 'Reservation released',
+  'txn.confirm.issue': 'Material issued',
+  'txn.confirm.return': 'Material returned',
+  'txn.draft.reserve': 'Reserve draft created',
+  'txn.draft.dereserve': 'Dereserve draft created',
+  'txn.draft.issue': 'Issue draft created',
+  'txn.draft.return': 'Return draft created',
+  'txn.cancel': 'Movement cancelled',
+  'wo.create': 'Work order created',
+  'wo.update': 'Work order updated',
+  'wo.delete': 'Work order deleted',
+  'wo.status': 'Status changed',
+  'wo.reopen': 'Work order reopened',
+  'bom.revise': 'BOM revised',
+  'pr.create': 'Purchase request raised',
+  'pr.line.add': 'Purchase request line added',
+  'pr.delete': 'Purchase request deleted',
+  'pr.line.delete': 'Purchase request line removed',
+  'pr.confirm': 'Purchase request confirmed',
+  'pr.raise': 'Purchase order raised',
+  'pr.raise.fail': 'Purchase order raise failed',
+  'po.delete': 'Purchase order deleted',
+  'po.edit': 'Purchase order edited',
+};
+function friendlyAction(action = '') {
+  if (ACTION_LABELS[action]) return ACTION_LABELS[action];
+  const m = action.match(/^approval\.l(\d+)\.(\w+)$/);
+  if (m) return `Level ${m[1]} ${m[2].toLowerCase()}`;
+  if (action.startsWith('po.')) return `Purchase order ${spaced(action.slice(3)).toLowerCase()}`;
+  if (action.startsWith('webhook.')) return 'Zoho sync';
+  return spaced(action.replace(/\./g, ' '));
+}
+
+function HistoryTab({ workOrderId, wo, onPrintTxn }) {
   const [log, setLog] = useState(null);
   useEffect(() => {
     axios.get(`/api/wo/${workOrderId}/history`).then(({ data }) => setLog(data)).catch(() => setLog([]));
@@ -539,23 +666,56 @@ function HistoryTab({ workOrderId, wo }) {
     <div style={{ height: '100%', overflow: 'auto', padding: '14px 20px 24px' }}>
       <h3 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 8px' }}>Material movements</h3>
       {!wo.transactions?.length ? <Empty>Nothing has moved yet.</Empty> : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+        <table className="grid-table" style={{ width: '100%' }}>
           <thead>
-            <tr>{['Document', 'Action', 'Status', 'Zoho Transfer Order', 'Lines', 'When'].map((h, i) => (
-              <th key={h} style={{ ...thStyle, textAlign: i > 3 ? 'right' : 'left' }}>{h}</th>
+            <tr>{['Document', 'Action', 'Status', 'Zoho Transfer Order', 'Lines', 'When', ''].map((h, i) => (
+              <th key={h || 'x'} style={{ ...thStyle, textAlign: i > 3 ? 'right' : 'left' }}>{h}</th>
             ))}</tr>
           </thead>
           <tbody>
             {wo.transactions.map(t => (
               <tr key={t.id} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={{ ...cell, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{t.txnNumber}</td>
-                <td style={{ ...cell, textTransform: 'capitalize' }}>{t.type}</td>
+                <td style={{ ...cell, textTransform: 'capitalize' }}>
+                  {t.type}
+                  {t.notes && <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'none', whiteSpace: 'pre-wrap' }}>{t.notes}</div>}
+                </td>
                 <td style={cell}><StatusChip status={t.status} /></td>
                 <td style={{ ...cell, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{t.transferOrderNumber || '—'}</td>
                 <td style={{ ...cell, textAlign: 'right' }}>{t.lines.length}</td>
                 <td style={{ ...cell, textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>{fmtDate(t.confirmedAt || t.createdAt)}</td>
+                <td style={{ ...cell, textAlign: 'right', width: 40 }}>
+                  {t.status === 'Confirmed' && (
+                    <button onClick={() => onPrintTxn(t)} title="Print slip" style={{ ...btn, padding: '3px 8px' }}>🖨</button>
+                  )}
+                </td>
               </tr>
             ))}
+          </tbody>
+        </table>
+      )}
+
+      <h3 style={{ fontSize: 13, fontWeight: 600, margin: '20px 0 8px' }}>Purchase documents</h3>
+      {!wo.purchaseRequests?.length ? <Empty>No purchase requests yet.</Empty> : (
+        <table className="grid-table" style={{ width: '100%' }}>
+          <thead>
+            <tr>{['PR #', 'Status', 'Item', 'Vendor', 'PO #', 'Ordered', 'Received', 'Billed'].map((h, i) => (
+              <th key={h} style={{ ...thStyle, textAlign: i > 4 ? 'right' : 'left' }}>{h}</th>
+            ))}</tr>
+          </thead>
+          <tbody>
+            {wo.purchaseRequests.flatMap(pr => (pr.lines || []).map((l, i) => (
+              <tr key={`${pr.id}-${l.id || i}`} style={{ borderBottom: '1px solid var(--border)' }}>
+                <td style={{ ...cell, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{i === 0 ? pr.prNumber : ''}</td>
+                <td style={cell}>{i === 0 ? <StatusChip status={pr.status} /> : ''}</td>
+                <td style={cell}>{l.rmName || l.rmItemId}</td>
+                <td style={cell}>{l.vendorName || '—'}</td>
+                <td style={{ ...cell, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{l.poNumber || '—'}</td>
+                <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{l.purchaseQty}</td>
+                <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{l.receivedQty}</td>
+                <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{l.billedQty}</td>
+              </tr>
+            )))}
           </tbody>
         </table>
       )}
@@ -566,7 +726,8 @@ function HistoryTab({ workOrderId, wo }) {
           {log.map((e, i) => (
             <div key={i} style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', fontSize: 12, display: 'flex', gap: 12 }}>
               <span style={{ color: 'var(--text-muted)', minWidth: 150 }}>{e.at}</span>
-              <b style={{ minWidth: 170 }}>{e.action}</b>
+              <b style={{ minWidth: 200 }}>{friendlyAction(e.action)}</b>
+              <span style={{ minWidth: 140 }}>{e.userName || 'System'}</span>
               <span style={{ color: 'var(--text-muted)' }}>{e.entityType}</span>
             </div>
           ))}

@@ -5,6 +5,9 @@ const { rowList, out, idOk, orgClause, ownsRow } = require("../store");
 const router = express.Router();
 const TABLE = "Industry";
 
+// Series suffix width: max 7 leading zeros → 8 total digits.
+const clampPad = (v) => Math.min(8, Math.max(1, Number(v) || 4));
+
 router.get("/", async (req, res) => {
   try {
     const rows = rowList(
@@ -48,13 +51,14 @@ router.get("/:id/property-values", async (req, res) => {
 });
 
 router.post("/", async (req, res) => {
-  const { name, skuSeparator = "", seriesStart } = req.body;
+  const { name, skuSeparator = "", seriesStart, seriesPad } = req.body;
   if (!name) return res.status(400).json({ error: "name is required" });
   try {
     const row = await req.catalyst.datastore().table(TABLE).insertRow({
       name,
       skuSeparator,
       seriesStart: seriesStart ? Number(seriesStart) : null,
+      seriesPad: seriesPad ? clampPad(seriesPad) : null,
       orgId: req.orgId,
     });
     res.status(201).json(out(row));
@@ -67,11 +71,12 @@ router.put("/:id", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
   if (!(await ownsRow(req.catalyst, TABLE, id))) return res.status(404).json({ error: "Not found" });
-  const { name, skuSeparator, seriesStart } = req.body;
+  const { name, skuSeparator, seriesStart, seriesPad } = req.body;
   const data = { ROWID: id };
   if (name) data.name = name;
   if (skuSeparator !== undefined) data.skuSeparator = skuSeparator;
   if (seriesStart !== undefined) data.seriesStart = seriesStart === "" || seriesStart === null ? null : Number(seriesStart);
+  if (seriesPad !== undefined) data.seriesPad = seriesPad === "" || seriesPad === null ? null : clampPad(seriesPad);
   try {
     const row = await req.catalyst.datastore().table(TABLE).updateRow(data);
     res.json(out(row));

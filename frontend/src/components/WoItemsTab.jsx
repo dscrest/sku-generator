@@ -2,8 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import Modal, { ModalFooter, ModalBtn } from './Modal.jsx';
-import RowEditButton from './RowEditButton.jsx';
-import RowDeleteButton from './RowDeleteButton.jsx';
+import RowMenu from './RowMenu.jsx';
 import GridFooter, { usePager } from './GridFooter.jsx';
 import { Empty, Banner } from './MaterialsGrid.jsx';
 import { select, thStyle, cell, btn } from './woCommon.jsx';
@@ -66,10 +65,10 @@ export default function WoItemsTab({ workOrderId, fgs, status, onChanged }) {
 
       <div style={{ flex: 1, overflow: 'auto', padding: '0 20px 16px' }}>
         {!data ? <Empty>Loading…</Empty> : !lines.length ? <Empty>No items on this finished good yet.</Empty> : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+          <table className="grid-table" style={{ width: '100%' }}>
             <thead>
               <tr>
-                {['Raw material', 'SKU', 'UoM', 'Source'].map(h => <th key={h} style={thStyle}>{h}</th>)}
+                {['Raw Material', 'SKU', 'UoM', 'Source'].map(h => <th key={h} style={thStyle}>{h}</th>)}
                 <th style={{ ...thStyle, textAlign: 'right' }}>Required</th>
                 <th style={{ ...thStyle, width: 110 }} />
               </tr>
@@ -91,10 +90,7 @@ export default function WoItemsTab({ workOrderId, fgs, status, onChanged }) {
                   <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{l.requiredQty}</td>
                   <td style={{ ...cell, textAlign: 'right' }}>
                     {!locked && l.requiredQty > 0 && (
-                      <span style={{ display: 'inline-flex', gap: 4 }}>
-                        <RowEditButton title="Edit quantity / replace" onEdit={() => setModal({ mode: 'replace', line: l })} />
-                        <RowDeleteButton title="Remove item" onDelete={() => setModal({ mode: 'remove', line: l })} />
-                      </span>
+                      <RowMenu editLabel="Edit / replace" onEdit={() => setModal({ mode: 'replace', line: l })} deleteLabel="Remove" onDelete={() => setModal({ mode: 'remove', line: l })} />
                     )}
                   </td>
                 </tr>
@@ -227,7 +223,7 @@ function OpModal({ workOrderId, fgId, mode, line, onClose, onDone }) {
 
 // ---- Books item typeahead ---------------------------------------------------
 
-function ItemPicker({ value, onPick, field }) {
+export function ItemPicker({ value, onPick, field }) {
   const [q, setQ] = useState('');
   const [hits, setHits] = useState(null);
   const [open, setOpen] = useState(false);

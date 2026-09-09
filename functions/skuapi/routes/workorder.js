@@ -24,6 +24,7 @@ const txn = require("../workorder/txn");
 const purchase = require("../workorder/purchase");
 const reports = require("../workorder/reports");
 const { warehouseOptions, reconcileOrg, syncItem } = require("../workorder/sync");
+const { soFields, woHeaderFields, USER_OWNED } = require("../workorder/soFields");
 
 const router = express.Router();
 const n = (v) => Number(v) || 0;
@@ -35,9 +36,9 @@ const FLOW = {
   Draft: ["Cancelled"],
   PendingApproval: ["Cancelled"],
   Approved: ["MaterialAllocationPending", "Cancelled"],
-  MaterialAllocationPending: ["ReadyForProduction", "Cancelled"],
-  ReadyForProduction: ["InProgress", "Cancelled"],
-  InProgress: ["QualityCheck", "Cancelled"],
+  MaterialAllocationPending: ["ReadyForProduction", "Completed", "Cancelled"],
+  ReadyForProduction: ["InProgress", "Completed", "Cancelled"],
+  InProgress: ["QualityCheck", "Completed", "Cancelled"],
   QualityCheck: ["Completed", "InProgress", "Cancelled"],
   Completed: ["Closed"],
   Closed: [],
@@ -124,6 +125,7 @@ router.get("/sales-orders", ok(async (req, res) => {
 
 router.get("/so/:soId", ok(async (req, res) => {
   const so = await getSalesOrder(req.catalyst, req.params.soId);
+  const f = soFields(so);
   res.json({
     id: String(so.salesorder_id),
     number: so.salesorder_number,
@@ -134,6 +136,11 @@ router.get("/so/:soId", ok(async (req, res) => {
     lineItems: (so.line_items || []).map((l) => ({
       itemId: String(l.item_id), name: l.name, sku: l.sku || null, quantity: n(l.quantity),
     })),
+    // Create-modal prefill (CR-113) — user-editable before POST /api/wo.
+    dueDate: f.dueDate || null,
+    priority: f.woPriority || null,
+    machiningDoneDate: f.machiningDoneDate || null,
+    fittingDoneDate: f.fittingDoneDate || null,
   });
 }));
 
@@ -421,6 +428,10 @@ router.delete("/pr-line/:lineId", ok(async (req, res) => {
   res.json(await purchase.deletePRLine(req.catalyst, req.orgId, req.params.lineId, req.userId));
 }));
 
+router.post("/pr/:prId/lines", ok(async (req, res) => {
+  res.json(await purchase.addPRLine(req.catalyst, req.orgId, req.params.prId, req.body || {}, req.userId));
+}));
+
 router.post("/pr/:prId/confirm", ok(async (req, res) => {
   res.json(await purchase.confirmPR(req.catalyst, req.orgId, req.params.prId, req.userId));
 }));
@@ -463,8 +474,17 @@ router.get("/", ok(async (req, res) => {
     salesOrderNumber: w.salesOrderNumber,
     customerName: w.customerName,
     projectName: w.projectName || null,
+    dueDate: w.dueDate || null,
+    priority: w.woPriority || null,
     status: w.status,
     procStatus: procMap.get(String(w.ROWID)) || null,
+    // Red dot (Haresh item 20): a PO receipt landed after the WO was last
+    // opened. ponytail: org-wide, not per-user, and only PO receipts trigger it.
+    attention: Boolean(
+      procMap.receiptAt.get(String(w.ROWID))
+      && !["Completed", "Closed", "Cancelled"].includes(String(w.status))
+      && (!w.lastViewedAt || String(procMap.receiptAt.get(String(w.ROWID))) > String(w.lastViewedAt)),
+    ),
     qcStatus: w.qcStatus || null,
     revision: n(w.revision),
     bomImportedAt: w.bomImportedAt || null,
@@ -505,6 +525,7 @@ router.post("/", ok(async (req, res) => {
     estimatedCost: n(so.total),
     actualCost: 0,
     notes: "",
+    ...woHeaderFields(so, req.body),
   });
 
   const fgTable = req.catalyst.datastore().table("WorkOrderFG");
@@ -541,7 +562,7 @@ router.post("/", ok(async (req, res) => {
 
 router.get("/:id", ok(async (req, res) => {
   const wo = await loadWo(req);
-  const [fgs, prs, txns, approvals, procMap, values] = await Promise.all([
+  const [fgs, prs, txns, approvals, procMap, values, so] = await Promise.all([
     byOrg(req.catalyst, req.orgId, "WorkOrderFG", `workOrderId = ${zStr(String(wo.ROWID))}`),
     purchase.listPRs(req.catalyst, req.orgId, wo.ROWID),
     txn.listTxns(req.catalyst, req.orgId, wo.ROWID),
@@ -551,7 +572,27 @@ router.get("/:id", ok(async (req, res) => {
     ),
     purchase.procStatusByWo(req.catalyst, req.orgId, wo.ROWID),
     settings(req.catalyst, req.orgId),
+    // SO header fields re-sync on every open (CR-110); Books being down just
+    // means the stored values serve this view.
+    getSalesOrder(req.catalyst, wo.salesOrderId).catch(() => null),
   ]);
+  // One write: clears the unseen-progress red dot and refreshes any SO-derived
+  // fields that changed in Books. Fire-and-forget so a slow write never delays
+  // the page; `wo` is patched in memory so the response is already fresh.
+  const patch = { ROWID: String(wo.ROWID), lastViewedAt: dsDate(Date.now()) };
+  if (so) {
+    for (const [k, v] of Object.entries(soFields(so))) {
+      // User-owned header fields (CR-113): SO value only backfills a blank.
+      if (USER_OWNED.has(k) && wo[k]) continue;
+      if (String(wo[k] || "") !== v) { patch[k] = v; wo[k] = v; }
+    }
+  }
+  req.catalyst.datastore().table("WorkOrder").updateRow(patch).catch(() => {});
+  // ponytail: live-read from the fetched SO (no WorkOrder column); "—" when Books is down.
+  const soCf = (label) => {
+    const f = (so?.custom_fields || []).find((c) => String(c.label || "").trim().toLowerCase() === label);
+    return f ? String(f.value ?? "").trim() || null : null;
+  };
   res.json({
     id: String(wo.ROWID),
     woNumber: wo.woNumber,
@@ -560,6 +601,16 @@ router.get("/:id", ok(async (req, res) => {
     salesOrderNumber: wo.salesOrderNumber,
     customerName: wo.customerName,
     projectName: wo.projectName || null,
+    rowType: soCf("row type"),
+    panelType: soCf("panel type"),
+    soDate: wo.soDate || null,
+    shipmentDate: wo.shipmentDate || null,
+    buyerOrderNo: wo.buyerOrderNo || null,
+    buyerOrderDate: wo.buyerOrderDate || null,
+    priority: wo.woPriority || null,
+    dueDate: wo.dueDate || null,
+    machiningDoneDate: wo.machiningDoneDate || null,
+    fittingDoneDate: wo.fittingDoneDate || null,
     status: wo.status,
     procStatus: procMap.get(String(wo.ROWID)) || null,
     qcStatus: wo.qcStatus || null,
@@ -585,7 +636,8 @@ router.get("/:id", ok(async (req, res) => {
 router.put("/:id", ok(async (req, res) => {
   const wo = await loadWo(req);
   const fields = { ROWID: String(wo.ROWID) };
-  for (const k of ["projectName", "notes", "woDate"]) if (req.body[k] !== undefined) fields[k] = req.body[k] || "";
+  for (const k of ["projectName", "notes", "woDate", "dueDate", "machiningDoneDate", "fittingDoneDate"]) if (req.body[k] !== undefined) fields[k] = req.body[k] || "";
+  if (req.body.priority !== undefined) fields.woPriority = req.body.priority || "";
   for (const k of ["estimatedCost", "actualCost"]) if (req.body[k] !== undefined) fields[k] = n(req.body[k]);
   await req.catalyst.datastore().table("WorkOrder").updateRow(fields);
   await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.update", req.userId, fields);
@@ -941,15 +993,18 @@ router.get("/:id/grid", ok(async (req, res) => {
       : `workOrderId = ${zStr(String(wo.ROWID))}`,
   );
   if (!fgs.length) { const e = new Error("Finished good not found on this work order"); e.status = 404; throw e; }
-  res.json(await buildGrid(req.catalyst, req.orgId, wo, fgs[0]));
+  // With ?fgId: one grid (unchanged shape). Without: every FG's grid at once —
+  // the multi-FG Details view (Haresh item 1).
+  if (req.query.fgId) return res.json(await buildGrid(req.catalyst, req.orgId, wo, fgs[0]));
+  res.json({ grids: await buildGridsBulk(req.catalyst, req.orgId, fgs.map((fg) => ({ wo, fg }))) });
 }));
 
 router.post("/:id/txn", ok(async (req, res) => {
   const wo = await loadWo(req);
-  const { fgId, type, requested, notes, confirm } = req.body || {};
+  const { fgId, type, requested, notes, confirm, fromWarehouseId, toWarehouseId } = req.body || {};
   const draft = await txn.createDraft(
     req.catalyst, req.orgId,
-    { workOrderId: wo.ROWID, workOrderFgId: fgId, type, requested, notes },
+    { workOrderId: wo.ROWID, workOrderFgId: fgId, type, requested, notes, fromWarehouseId, toWarehouseId },
     req.userId,
   );
   // The grid's Confirm button does both in one call — Draft is only kept as a

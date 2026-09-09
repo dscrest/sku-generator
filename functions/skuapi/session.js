@@ -88,7 +88,19 @@ function clearSessionCookie(res) {
 }
 
 function currentUserId(req) {
-  return readSession(parseCookies(req)[COOKIE]);
+  // Three carriers, same signed value: Authorization header, ?t= query param
+  // (CRM widget — an Authorization header would trigger a CORS preflight that
+  // Catalyst's gateway swallows, so the widget rides the query string), and
+  // the cookie (the normal app).
+  // ponytail: query tokens show up in access logs (internal-only); upgrade =
+  // whitelist the widget domain in Catalyst gateway CORS and go header-only.
+  const auth = req.headers.authorization || "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+  return (
+    readSession(bearer) ||
+    readSession(req.query && req.query.t) ||
+    readSession(parseCookies(req)[COOKIE])
+  );
 }
 
 // Gate + stash: verified user id goes on req.userId AND on the per-request
@@ -153,6 +165,7 @@ async function createUser(catalyst, { email, name, password, zuid }) {
 module.exports = {
   hashPassword,
   verifyPassword,
+  makeSession,
   requireAuth,
   requireAdmin,
   isAdmin,

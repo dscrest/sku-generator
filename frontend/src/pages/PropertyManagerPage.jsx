@@ -4,7 +4,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
 import Modal, { ModalFooter, ModalBtn, ConfirmModal } from '../components/Modal.jsx';
-import RowDeleteButton from '../components/RowDeleteButton.jsx';
+import RowMenu from '../components/RowMenu.jsx';
 
 const inputStyle = {
   width: '100%', background: 'var(--bg-secondary)', border: '1px solid var(--border)',
@@ -22,8 +22,8 @@ const selectStyle = {
   backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center', paddingRight: 30,
 };
 
-const emptyProp = { name: '', caption: '', unit: '', valueType: 'Manual', rangeMin: '', rangeMax: '', required: false, includeInName: false, zohoCfApiName: '', clubKey: '', createValuesAsItems: false };
-const emptyVal = { displayValue: '', name: '', sku: '', description: '', createAsItem: false };
+const emptyProp = { name: '', caption: '', unit: '', valueType: 'Manual', rangeMin: '', rangeMax: '', required: false, includeInName: false, zohoCfApiName: '', clubKey: '', createValuesAsItems: false, showInWidget: false };
+const emptyVal = { displayValue: '', name: '', sku: '', description: '', createAsItem: false, isDefault: false };
 
 // Single-club combobox: shows the current club as a removable chip, filters
 // existing clubs as you type, and offers "Create" for a new name. One club per
@@ -114,6 +114,11 @@ function PropForm({ form, setForm, onSubmit, onCancel, label, clubKeys = [] }) {
         Required for SKU generation
       </label>
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
+        <input type="checkbox" checked={!!form.showInWidget} onChange={e => setForm(f => ({ ...f, showInWidget: e.target.checked }))} />
+        Show as CRM widget search filter
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>— appears in the quote widget's Add-filter menu</span>
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
         <input type="checkbox" checked={!!form.includeInName} onChange={e => setForm(f => ({ ...f, includeInName: e.target.checked }))} />
         Include in item name
         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>— tick none and every property is used</span>
@@ -140,6 +145,11 @@ function ValForm({ form, setForm, onSubmit, onCancel, label }) {
         <div><label style={labelStyle}>SKU Code <span style={{ color: '#e11d48' }}>*</span></label><input style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} value={form.sku} onChange={e => setForm(f => ({ ...f, sku: e.target.value }))} onFocus={fi} onBlur={fo} /></div>
       </div>
       <div><label style={labelStyle}>Description</label><input style={inputStyle} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} onFocus={fi} onBlur={fo} /></div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
+        <input type="checkbox" checked={!!form.isDefault} onChange={e => setForm(f => ({ ...f, isDefault: e.target.checked }))} />
+        Set as default value
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>— pre-selected in the SKU generator (one per property)</span>
+      </label>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {['##Property##', '##Caption##', '##Unit##'].map(tag => (
           <span key={tag} style={{ background: 'var(--blue-light)', color: 'var(--blue)', border: '1px solid var(--blue-border)', borderRadius: 20, fontSize: 10, fontWeight: 500, padding: '2px 8px', fontFamily: 'var(--font-mono)' }}>{tag}</span>
@@ -211,7 +221,7 @@ export default function PropertyManagerPage() {
 
   function openEditProp(prop) {
     setSelectedProp(prop);
-    setPropForm({ name: prop.name, caption: prop.caption, unit: prop.unit || '', valueType: prop.valueType, rangeMin: prop.rangeMin ?? '', rangeMax: prop.rangeMax ?? '', required: !!prop.required, includeInName: !!prop.includeInName, zohoCfApiName: prop.zohoCfApiName || '', clubKey: prop.clubKey || '', createValuesAsItems: !!prop.createValuesAsItems });
+    setPropForm({ name: prop.name, caption: prop.caption, unit: prop.unit || '', valueType: prop.valueType, rangeMin: prop.rangeMin ?? '', rangeMax: prop.rangeMax ?? '', required: !!prop.required, includeInName: !!prop.includeInName, zohoCfApiName: prop.zohoCfApiName || '', clubKey: prop.clubKey || '', createValuesAsItems: !!prop.createValuesAsItems, showInWidget: !!prop.showInWidget });
     setShowEditProp(true);
   }
 
@@ -242,7 +252,7 @@ export default function PropertyManagerPage() {
 
   function openEditVal(val) {
     setSelectedVal(val);
-    setValForm({ displayValue: val.displayValue, name: val.name, sku: val.sku, description: val.description || '', createAsItem: !!val.createAsItem, zohoItemId: val.zohoItemId || '' });
+    setValForm({ displayValue: val.displayValue, name: val.name, sku: val.sku, description: val.description || '', createAsItem: !!val.createAsItem, isDefault: !!val.isDefault, zohoItemId: val.zohoItemId || '' });
     setShowEditVal(true);
   }
 
@@ -325,17 +335,8 @@ export default function PropertyManagerPage() {
                     </div>
                     <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 10, flexShrink: 0, background: prop.valueType === 'Range' ? 'var(--orange-light)' : 'var(--bg-secondary)', color: prop.valueType === 'Range' ? 'var(--orange)' : 'var(--text-secondary)', border: `1px solid ${prop.valueType === 'Range' ? 'var(--orange-border)' : 'var(--border)'}` }}>{prop.valueType}</span>
                     <span style={{ fontSize: 11, color: 'var(--text-muted)', background: 'var(--bg-secondary)', borderRadius: 10, padding: '1px 7px', flexShrink: 0 }}>#{prop.skuPosition}</span>
-                    <div className="row-actions" style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                      <button
-                        title={`Edit ${prop.name}`}
-                        onClick={e => { e.stopPropagation(); openEditProp(prop); }}
-                        style={{ width: 28, height: 28, border: '1px solid var(--border)', background: 'var(--bg-card)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}
-                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--border)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-card)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                      </button>
-                      <RowDeleteButton onDelete={() => setConfirmDel({ kind: 'prop', row: prop })} title={`Delete ${prop.name}`} />
+                    <div style={{ flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                      <RowMenu onEdit={() => openEditProp(prop)} onDelete={() => setConfirmDel({ kind: 'prop', row: prop })} />
                     </div>
                   </div>
                 );
@@ -360,11 +361,14 @@ export default function PropertyManagerPage() {
                           onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
                           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                         >
-                          <td style={{ padding: '10px 16px' }}>{val.displayValue}</td>
+                          <td style={{ padding: '10px 16px' }}>
+                            {val.displayValue}
+                            {val.isDefault && <span title="Default value — pre-selected in the SKU generator" style={{ marginLeft: 8, fontSize: 9, fontWeight: 700, color: '#047857', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>DEFAULT</span>}
+                          </td>
                           <td style={{ padding: '10px 16px', color: 'var(--text-secondary)' }}>{val.name}</td>
                           <td style={{ padding: '10px 16px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--blue)' }}>{val.sku}</td>
                           <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
-                            <RowDeleteButton onDelete={() => setConfirmDel({ kind: 'val', row: val })} title={`Delete ${val.displayValue}`} />
+                            <RowMenu onEdit={() => openEditVal(val)} onDelete={() => setConfirmDel({ kind: 'val', row: val })} />
                           </td>
                         </tr>
                       );

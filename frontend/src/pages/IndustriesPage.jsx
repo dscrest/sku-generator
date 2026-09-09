@@ -4,8 +4,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
 import Modal, { ModalFooter, ModalBtn, ConfirmModal } from '../components/Modal.jsx';
-import RowDeleteButton from '../components/RowDeleteButton.jsx';
-import RowEditButton from '../components/RowEditButton.jsx';
+import RowMenu from '../components/RowMenu.jsx';
 import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
 
 const inputStyle = {
@@ -29,7 +28,7 @@ export default function IndustriesPage() {
   const [selected, setSelected] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
-  const [form, setForm] = useState({ name: '', skuSeparator: '', seriesStart: '' });
+  const [form, setForm] = useState({ name: '', skuSeparator: '', seriesStart: '', seriesPad: '' });
   const [sortCol, setSortCol] = useState('name');
   const [sortDir, setSortDir] = useState('asc');
   const [fName, setFName] = useState('');
@@ -64,13 +63,13 @@ export default function IndustriesPage() {
     try {
       await axios.post('/api/industries', form);
       toast.success('Industry created');
-      setShowAdd(false); setForm({ name: '', skuSeparator: '', seriesStart: '' }); load();
+      setShowAdd(false); setForm({ name: '', skuSeparator: '', seriesStart: '', seriesPad: '' }); load();
     } catch { toast.error('Failed to create industry'); }
   }
 
   function openEdit(ind) {
     setSelected(ind);
-    setForm({ name: ind.name, skuSeparator: ind.skuSeparator, seriesStart: ind.seriesStart ?? '' });
+    setForm({ name: ind.name, skuSeparator: ind.skuSeparator, seriesStart: ind.seriesStart ?? '', seriesPad: ind.seriesPad ?? '' });
     setShowEdit(true);
   }
 
@@ -99,6 +98,37 @@ export default function IndustriesPage() {
   const focusIn = e => e.target.style.borderColor = 'var(--blue)';
   const focusOut = e => e.target.style.borderColor = 'var(--border)';
 
+  // Numerical series: a checkbox gates the options; start is always 1. The user
+  // types the number format literally (e.g. 0001) and its length is the suffix
+  // width. seriesStart holds the on/off flag (1 = on, '' = off); seriesPad holds
+  // the total digit width.
+  const seriesOn = !!form.seriesStart;
+  const pad = Number(form.seriesPad) || 4;
+  const seriesFields = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-primary)' }}>
+        <input type="checkbox" checked={seriesOn} style={{ cursor: 'pointer' }}
+          onChange={e => setForm(f => e.target.checked
+            ? { ...f, seriesStart: 1, seriesPad: f.seriesPad || 4 }
+            : { ...f, seriesStart: '', seriesPad: '' })} />
+        Allow numerical series
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>— appends a running number to each SKU</span>
+      </div>
+      {seriesOn && (
+        <div>
+          <label style={labelStyle}>Number format</label>
+          <input style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} inputMode="numeric"
+            value={'1'.padStart(pad, '0')}
+            onChange={e => { const digits = e.target.value.replace(/\D/g, ''); setForm(f => ({ ...f, seriesPad: Math.min(8, Math.max(1, digits.length)) })); }}
+            placeholder="e.g. 0001" onFocus={focusIn} onBlur={focusOut} />
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+            SKUs count <span style={{ fontFamily: 'var(--font-mono)' }}>{'1'.padStart(pad, '0')}, {'2'.padStart(pad, '0')} … {'10'.padStart(pad, '0')}, {'100'.padStart(pad, '0')}</span> — always starts at 1. Max 7 leading zeros.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', padding: '0 24px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
@@ -114,7 +144,7 @@ export default function IndustriesPage() {
       <div style={{ flex: 1, overflow: 'auto', padding: '20px 24px' }}>
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
           <Toolbar
-            onAdd={() => { setForm({ name: '', skuSeparator: '', seriesStart: '' }); setShowAdd(true); }}
+            onAdd={() => { setForm({ name: '', skuSeparator: '', seriesStart: '', seriesPad: '' }); setShowAdd(true); }}
             onRefresh={load}
             right={
               <div style={{ display: 'flex', gap: 8 }}>
@@ -141,24 +171,25 @@ export default function IndustriesPage() {
                 return (
                   <tr
                     key={ind.id}
-                    style={{ borderTop: '1px solid var(--border)', transition: 'background 0.1s' }}
+                    title="Click to edit"
+                    onClick={() => openEdit(ind)}
+                    style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
                     onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
                     onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                   >
                     <td style={{ padding: '10px 16px', color: 'var(--text-muted)', fontSize: 12 }}>{ind.id}</td>
                     <td style={{ padding: '10px 16px', fontWeight: 500 }}>
                       <a
-                        onClick={() => navigate(`/sku/industries/${ind.id}/properties`)}
+                        onClick={e => { e.stopPropagation(); navigate(`/sku/industries/${ind.id}/properties`); }}
                         style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'none' }}
                         title="Open properties"
                       >{ind.name} ›</a>
                     </td>
                     <td style={{ padding: '10px 16px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>"{ind.skuSeparator}"</td>
-                    <td style={{ padding: '10px 16px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{ind.seriesStart ? `from ${String(ind.seriesStart).padStart(4, '0')}` : '—'}</td>
-                    <td style={{ padding: '8px 12px' }}>
-                      <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-                        <RowEditButton onEdit={() => openEdit(ind)} title={`Edit ${ind.name}`} />
-                        <RowDeleteButton onDelete={() => setConfirmDel(ind)} title={`Delete ${ind.name}`} />
+                    <td style={{ padding: '10px 16px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{ind.seriesStart ? `from ${'1'.padStart(Number(ind.seriesPad) || 4, '0')}` : '—'}</td>
+                    <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                        <RowMenu onEdit={() => openEdit(ind)} onDelete={() => setConfirmDel(ind)} />
                       </div>
                     </td>
                   </tr>
@@ -181,10 +212,7 @@ export default function IndustriesPage() {
             <label style={labelStyle}>SKU Separator</label>
             <input style={inputStyle} value={form.skuSeparator} onChange={e => setForm(f => ({ ...f, skuSeparator: e.target.value }))} placeholder='e.g. - or leave blank' onFocus={focusIn} onBlur={focusOut} />
           </div>
-          <div>
-            <label style={labelStyle}>Numerical Series</label>
-            <input style={inputStyle} type="number" min="1" step="1" value={form.seriesStart} onChange={e => setForm(f => ({ ...f, seriesStart: e.target.value }))} placeholder="e.g. 1 — blank = off" onFocus={focusIn} onBlur={focusOut} />
-          </div>
+          {seriesFields}
           <ModalFooter>
             <ModalBtn onClick={() => setShowAdd(false)}>Cancel</ModalBtn>
             <ModalBtn onClick={handleAdd} variant="primary">Create</ModalBtn>
@@ -202,10 +230,7 @@ export default function IndustriesPage() {
             <label style={labelStyle}>SKU Separator</label>
             <input style={inputStyle} value={form.skuSeparator} onChange={e => setForm(f => ({ ...f, skuSeparator: e.target.value }))} onFocus={focusIn} onBlur={focusOut} />
           </div>
-          <div>
-            <label style={labelStyle}>Numerical Series</label>
-            <input style={inputStyle} type="number" min="1" step="1" value={form.seriesStart} onChange={e => setForm(f => ({ ...f, seriesStart: e.target.value }))} placeholder="e.g. 1 — blank = off" onFocus={focusIn} onBlur={focusOut} />
-          </div>
+          {seriesFields}
           <ModalFooter>
             <ModalBtn onClick={() => setShowEdit(false)}>Cancel</ModalBtn>
             <ModalBtn onClick={handleEdit} variant="primary">Save</ModalBtn>

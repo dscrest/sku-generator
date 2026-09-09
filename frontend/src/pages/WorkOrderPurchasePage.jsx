@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import PurchaseTab, { PoSplit } from '../components/PurchaseTab.jsx';
@@ -14,15 +15,17 @@ import { fmtMoney, fmtDate } from '../format.js';
  * each work order. Requests/Orders keep the per-WO PurchaseTab and per-PO
  * PoSplit reachable.
  */
-const VIEWS = ['By item', 'Requests', 'Orders'];
+const VIEWS = ['By Item', 'Requests', 'Orders'];
 const nice = s => String(s || '—').replace(/_/g, ' ');
 
 export default function WorkOrderPurchasePage() {
+  const navigate = useNavigate();
   const [wos, setWos] = useState(null);
   const [prs, setPrs] = useState(null);
   const [pos, setPos] = useState(null);
   const [view, setView] = useState(VIEWS[0]);
   const [statusFilter, setStatusFilter] = useState('');
+  const [woFilter, setWoFilter] = useState('');
   const [selected, setSelected] = useState(null);   // wo id → PurchaseTab
   const [selectedPo, setSelectedPo] = useState(null); // po id → PoSplit
   const [wo, setWo] = useState(null);
@@ -71,7 +74,10 @@ export default function WorkOrderPurchasePage() {
 
   const gridRows = view === 'Requests' ? (prs || []) : view === 'Orders' ? (pos || []) : [];
   const statuses = [...new Set(gridRows.map(r => r.status).filter(Boolean))];
-  const filtered = statusFilter ? gridRows.filter(r => r.status === statusFilter) : gridRows;
+  const woNumbers = [...new Set(gridRows.map(r => r.woNumber).filter(Boolean))];
+  const filtered = gridRows.filter(r =>
+    (!statusFilter || r.status === statusFilter) &&
+    (!woFilter || r.woNumber === woFilter));
   const { pageRows, pager } = usePager(filtered);
 
   if (blocked) return <AccessNotice kind={blocked} />;
@@ -96,6 +102,8 @@ export default function WorkOrderPurchasePage() {
           <b style={{ fontSize: 14 }}>{wo?.woNumber || ''}</b>
           {wo && <StatusChip status={wo.status} />}
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{wo ? `${wo.customerName} · SO ${wo.salesOrderNumber}` : ''}</span>
+          <div style={{ flex: 1 }} />
+          <button onClick={() => navigate(`/wo/${selected}`)} style={btn}>Open work order →</button>
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>
           {!wo ? <Empty>Loading work order…</Empty>
@@ -110,22 +118,28 @@ export default function WorkOrderPurchasePage() {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
         <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
           {VIEWS.map(v => (
-            <button key={v} onClick={() => { setView(v); setStatusFilter(''); }} style={{
+            <button key={v} onClick={() => { setView(v); setStatusFilter(''); setWoFilter(''); }} style={{
               padding: '7px 14px', fontSize: 13, border: 'none', cursor: 'pointer',
               background: v === view ? 'var(--blue)' : 'var(--bg-card)',
               color: v === view ? '#fff' : 'var(--text-secondary)', fontWeight: v === view ? 600 : 400,
             }}>{v}</button>
           ))}
         </div>
-        {view !== 'By item' && (
-          <select style={select} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-            <option value="">All statuses</option>
-            {statuses.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
+        {view !== 'By Item' && (
+          <>
+            <select style={select} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+              <option value="">All Statuses</option>
+              {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select style={select} value={woFilter} onChange={e => setWoFilter(e.target.value)}>
+              <option value="">All Work Orders</option>
+              {woNumbers.map(w => <option key={w} value={w}>{w}</option>)}
+            </select>
+          </>
         )}
       </div>
 
-      {view === 'By item' ? (
+      {view === 'By Item' ? (
         <ByItemView onRaised={loadLists} />
       ) : (
         <>
@@ -134,7 +148,7 @@ export default function WorkOrderPurchasePage() {
               <Empty>{view === 'Requests' ? 'No purchase requests yet.' : 'No purchase orders in Zoho Books yet.'}</Empty>
             ) : view === 'Requests' ? (
               <Table
-                head={['PR #', 'Work order', 'Customer', 'Status', 'Lines', 'PO #s', 'Created']}
+                head={['PR #', 'Work Order', 'Customer', 'Status', 'Lines', 'PO #s', 'Created']}
                 rightFrom={4}
                 rows={pageRows.map(pr => ({
                   key: pr.id, onClick: pr.woId ? () => setSelected(pr.woId) : undefined,
@@ -148,7 +162,7 @@ export default function WorkOrderPurchasePage() {
               />
             ) : (
               <Table
-                head={['PO #', 'Date', 'Vendor', 'Status', 'PR #', 'Work order', 'Received', 'Billed', 'Total']}
+                head={['PO #', 'Date', 'Vendor', 'Status', 'PR #', 'Work Order', 'Received', 'Billed', 'Total']}
                 rightFrom={8}
                 rows={pageRows.map(p => ({
                   key: p.id, onClick: () => setSelectedPo(p.id),
@@ -181,17 +195,22 @@ const th = {
 const td = { padding: '8px 12px', fontSize: 13 };
 
 /**
- * By-item view (CR-023): one row per short raw material across every open work
- * order. Tick items, edit the order quantity if needed, pick one vendor, Raise
- * PO → a consolidated PR + a single grouped draft PO in Books.
+ * By-item view (CR-023, extended for Haresh items 9 + 12): one row per short raw
+ * material across every open work order, or — grouped by work order — one row
+ * per (item, WO) so the buyer can pick specific items from specific WOs.
+ * Vendor is chosen per row, and a row can be split into extra (qty, vendor)
+ * lines to order the same item from two vendors. Raise groups the lines by
+ * vendor and creates one consolidated PR + draft PO per vendor.
  */
 function ByItemView({ onRaised }) {
   const [items, setItems] = useState(null);
   const [vendors, setVendors] = useState([]);
-  const [checked, setChecked] = useState({});   // rmItemId -> true
-  const [qty, setQty] = useState({});            // rmItemId -> edited total
-  const [open, setOpen] = useState({});          // rmItemId -> breakdown expanded
-  const [vendorId, setVendorId] = useState('');
+  const [grouping, setGrouping] = useState('item'); // 'item' | 'wo'
+  const [checked, setChecked] = useState({});   // rowKey -> true
+  const [qty, setQty] = useState({});           // rowKey -> edited qty
+  const [vendor, setVendor] = useState({});     // rowKey -> vendorId
+  const [splits, setSplits] = useState({});     // rowKey -> [{qty, vendorId}]
+  const [open, setOpen] = useState({});         // item mode: breakdown expanded
   const [raising, setRaising] = useState(false);
 
   function load() {
@@ -205,65 +224,173 @@ function ByItemView({ onRaised }) {
     axios.get('/api/wo/vendors').then(({ data }) => setVendors(data)).catch(() => setVendors([]));
   }, []);
 
-  const { pageRows, pager } = usePager(items || []);
-  const all = items || [];
-  const chosen = all.filter(i => checked[i.rmItemId]);
-  const orderQty = i => { const v = qty[i.rmItemId]; return v === undefined || v === '' ? i.totalQty : Number(v) || 0; };
-  const totalUnits = chosen.reduce((s, i) => s + orderQty(i), 0);
-  const allOn = all.length > 0 && all.every(i => checked[i.rmItemId]);
+  function clearSelection() { setChecked({}); setQty({}); setVendor({}); setSplits({}); }
+
+  // Row model shared by both groupings: key, item identity, default qty and the
+  // breakdown entries the ordered qty is attributed to.
+  const itemRows = useMemo(() => (items || []).map(i => ({
+    key: i.rmItemId, rmItemId: i.rmItemId, rmName: i.rmName, item: i,
+    defaultQty: i.totalQty,
+    breakdown: (i.breakdown || []).filter(b => b.status === 'Pending'),
+  })), [items]);
+  const woGroups = useMemo(() => {
+    const map = new Map();
+    for (const i of (items || [])) for (const b of (i.breakdown || [])) {
+      if (b.status !== 'Pending') continue;
+      const woId = b.workOrderId || '';
+      if (!map.has(woId)) map.set(woId, { woId, woNumber: b.woNumber, salesOrderNumber: b.salesOrderNumber, rows: [] });
+      map.get(woId).rows.push({
+        key: `${woId}|${i.rmItemId}`, rmItemId: i.rmItemId, rmName: i.rmName,
+        defaultQty: b.qty, breakdown: [b],
+      });
+    }
+    return [...map.values()];
+  }, [items]);
+
+  const { pageRows, pager } = usePager(grouping === 'item' ? itemRows : woGroups);
+  const allRows = grouping === 'item' ? itemRows : woGroups.flatMap(g => g.rows);
+  const rowQty = r => { const v = qty[r.key]; return v === undefined || v === '' ? r.defaultQty : Number(v) || 0; };
+
+  // Every order line the buyer has built up: checked main rows + their splits.
+  const lines = [];
+  for (const r of allRows) {
+    if (!checked[r.key]) continue;
+    if (rowQty(r) > 0) lines.push({ row: r, qty: rowQty(r), vendorId: vendor[r.key] || '' });
+    for (const sp of splits[r.key] || []) {
+      if (Number(sp.qty) > 0) lines.push({ row: r, qty: Number(sp.qty), vendorId: sp.vendorId || '' });
+    }
+  }
+  const totalUnits = lines.reduce((s, l) => s + l.qty, 0);
+  const vendorCount = new Set(lines.map(l => l.vendorId).filter(Boolean)).size;
 
   async function raise() {
-    if (!vendorId) return toast.error('Pick a vendor');
-    if (!chosen.length) return toast.error('Select at least one item');
-    // Covered rows default to 0 — order only the lines the buyer actually typed.
-    const toOrder = chosen.filter(i => orderQty(i) > 0);
-    if (!toOrder.length) return toast.error('Every selected quantity is zero');
-    const vendor = vendors.find(v => String(v.id) === String(vendorId));
+    if (!lines.length) return toast.error('Select at least one line with a quantity above zero');
+    if (lines.some(l => !l.vendorId)) return toast.error('Pick a vendor on every line');
+    const byVendor = new Map();
+    for (const l of lines) {
+      if (!byVendor.has(l.vendorId)) byVendor.set(l.vendorId, []);
+      byVendor.get(l.vendorId).push(l);
+    }
     setRaising(true);
     try {
-      const { data } = await axios.post('/api/wo/purchase/raise', {
-        vendorId, vendorName: vendor?.name || '',
-        items: toOrder.map(i => ({
-          rmItemId: i.rmItemId, rmName: i.rmName, qty: orderQty(i),
-          breakdown: (i.breakdown || []).filter(b => b.status === 'Pending'),
-        })),
-      });
-      toast.success(`${data.prNumber} raised · PO ${data.poNumber}`);
-      setChecked({}); setQty({}); setVendorId('');
+      // Sequential on purpose: the Catalyst dev tier throttles concurrent calls.
+      for (const [vid, vLines] of byVendor) {
+        const vName = vendors.find(v => String(v.id) === String(vid))?.name || '';
+        const { data } = await axios.post('/api/wo/purchase/raise', {
+          vendorId: vid, vendorName: vName,
+          items: vLines.map(l => ({
+            rmItemId: l.row.rmItemId, rmName: l.row.rmName, qty: l.qty, breakdown: l.row.breakdown,
+          })),
+        });
+        toast.success(`${data.prNumber} raised · PO ${data.poNumber} for ${vName}`);
+      }
+      clearSelection();
       load();
       onRaised?.();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Could not raise the purchase order');
+      load();
     } finally { setRaising(false); }
   }
+
+  const vendorSelect = (value, onChange, enabled) => (
+    <select value={value} onChange={e => onChange(e.target.value)} disabled={!enabled}
+      style={{ ...select, maxWidth: 180, borderColor: enabled && !value ? '#fca5a5' : 'var(--border)', opacity: enabled ? 1 : 0.5 }}>
+      <option value="">Vendor…</option>
+      {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+    </select>
+  );
+
+  const splitRows = r => (splits[r.key] || []).map((sp, idx) => (
+    <tr key={`${r.key}-split-${idx}`} style={{ background: 'var(--bg-page)', borderBottom: '1px solid var(--border)' }}>
+      <td style={td} />
+      <td style={{ ...td, fontSize: 12, color: 'var(--text-muted)' }}>↳ split of {r.rmName || r.rmItemId}</td>
+      <td style={td} />
+      <td style={{ ...td, textAlign: 'right' }}>
+        <input type="number" min="0" step="any" value={sp.qty} placeholder="0"
+          onChange={e => setSplits(s => ({ ...s, [r.key]: s[r.key].map((x, j) => j === idx ? { ...x, qty: e.target.value } : x) }))}
+          style={{ width: 80, padding: '4px 6px', fontSize: 13, textAlign: 'right', fontFamily: 'var(--font-mono)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }} />
+      </td>
+      <td style={td}>
+        {vendorSelect(sp.vendorId, v => setSplits(s => ({ ...s, [r.key]: s[r.key].map((x, j) => j === idx ? { ...x, vendorId: v } : x) })), true)}
+      </td>
+      <td style={{ ...td, textAlign: 'right' }}>
+        <button onClick={() => setSplits(s => ({ ...s, [r.key]: s[r.key].filter((_, j) => j !== idx) }))}
+          title="Remove this split" style={{ ...btn, padding: '2px 7px', color: '#b91c1c' }}>✕</button>
+      </td>
+    </tr>
+  ));
+
+  const mainRowCells = r => (
+    <>
+      <td style={td}>
+        <input type="checkbox" checked={!!checked[r.key]} onChange={e => setChecked(c => ({ ...c, [r.key]: e.target.checked }))} />
+      </td>
+      <td style={{ ...td, fontWeight: 600 }}>{r.rmName || r.rmItemId}</td>
+    </>
+  );
+  const qtyVendorCells = r => (
+    <>
+      <td style={{ ...td, textAlign: 'right' }}>
+        {/* Always editable (CR): a draft-covered row defaults to 0 so the buyer
+            can still order extra instead of hitting a locked '—'. */}
+        <input type="number" min="0" step="any" value={qty[r.key] ?? r.defaultQty}
+          onChange={e => setQty(q => ({ ...q, [r.key]: e.target.value }))}
+          style={{ width: 80, padding: '4px 6px', fontSize: 13, textAlign: 'right', fontFamily: 'var(--font-mono)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }} />
+      </td>
+      <td style={td}>{vendorSelect(vendor[r.key] || '', v => setVendor(m => ({ ...m, [r.key]: v })), !!checked[r.key])}</td>
+    </>
+  );
+  const splitBtn = r => (
+    <button
+      onClick={() => setSplits(s => ({ ...s, [r.key]: [...(s[r.key] || []), { qty: '', vendorId: '' }] }))}
+      disabled={!checked[r.key]}
+      title="Order part of this quantity from another vendor"
+      style={{ ...btn, padding: '3px 8px', fontSize: 12, opacity: checked[r.key] ? 1 : 0.4 }}>
+      ⑂ Split
+    </button>
+  );
 
   if (!items) return <div style={{ flex: 1 }}><Empty>Loading shortfall…</Empty></div>;
   if (!items.length) return <div style={{ flex: 1 }}><Empty>No shortfall across open work orders — nothing to purchase.</Empty></div>;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '10px 20px 0' }}>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Group by</span>
+        <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+          {[['item', 'Item'], ['wo', 'Work Order']].map(([k, label]) => (
+            <button key={k} onClick={() => { if (grouping !== k) { setGrouping(k); clearSelection(); setOpen({}); } }} style={{
+              padding: '5px 12px', fontSize: 12, border: 'none', cursor: 'pointer',
+              background: grouping === k ? 'var(--blue)' : 'var(--bg-card)',
+              color: grouping === k ? '#fff' : 'var(--text-secondary)', fontWeight: grouping === k ? 600 : 400,
+            }}>{label}</button>
+          ))}
+        </div>
+      </div>
       <div style={{ flex: 1, overflow: 'auto', padding: '0 20px' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+        <table className="grid-table" style={{ width: '100%', marginTop: 12 }}>
           <thead>
             <tr>
-              <th style={{ ...th, width: 34 }}>
-                <input type="checkbox" checked={allOn}
-                  onChange={e => setChecked(e.target.checked ? Object.fromEntries(all.map(i => [i.rmItemId, true])) : {})} />
-              </th>
+              <th style={{ ...th, width: 34 }} />
               <th style={th}>Item</th>
-              <th style={th}>Work order</th>
+              {grouping === 'item' ? <th style={th}>Work order</th> : <th style={{ ...th, textAlign: 'right' }}>Needed</th>}
               <th style={{ ...th, textAlign: 'right' }}>Order qty</th>
-              <th style={th}>Status</th>
-              <th style={th}>PO number</th>
+              <th style={th}>Vendor</th>
+              <th style={{ ...th, textAlign: 'right' }} />
             </tr>
           </thead>
           <tbody>
-            {pageRows.map(i => (
-              <RowGroup key={i.rmItemId}
-                item={i} checked={!!checked[i.rmItemId]} qty={qty[i.rmItemId]} open={!!open[i.rmItemId]}
-                onCheck={v => setChecked(c => ({ ...c, [i.rmItemId]: v }))}
-                onQty={v => setQty(q => ({ ...q, [i.rmItemId]: v }))}
-                onToggle={() => setOpen(o => ({ ...o, [i.rmItemId]: !o[i.rmItemId] }))}
+            {grouping === 'item' ? pageRows.map(r => (
+              <RowGroup key={r.key}
+                row={r} open={!!open[r.key]}
+                onToggle={() => setOpen(o => ({ ...o, [r.key]: !o[r.key] }))}
+                mainRowCells={mainRowCells} qtyVendorCells={qtyVendorCells} splitBtn={splitBtn} splitRows={splitRows}
+              />
+            )) : pageRows.map(g => (
+              <WoGroup key={g.woId || 'none'}
+                group={g}
+                mainRowCells={mainRowCells} qtyVendorCells={qtyVendorCells} splitBtn={splitBtn} splitRows={splitRows}
               />
             ))}
           </tbody>
@@ -273,16 +400,14 @@ function ByItemView({ onRaised }) {
       {/* pinned raise bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 20px', borderTop: '1px solid var(--border)', background: 'var(--bg-card)' }}>
         <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-          {chosen.length ? <><b>{chosen.length}</b> item{chosen.length > 1 ? 's' : ''} · <b>{totalUnits.toLocaleString('en-IN')}</b> units</> : 'Select items to order'}
+          {lines.length
+            ? <><b>{lines.length}</b> line{lines.length > 1 ? 's' : ''} · <b>{totalUnits.toLocaleString('en-IN')}</b> units{vendorCount > 0 && <> · <b>{vendorCount}</b> vendor{vendorCount > 1 ? 's' : ''}</>}</>
+            : 'Tick lines, set quantities and a vendor per line'}
         </span>
         <div style={{ flex: 1 }} />
-        <select style={select} value={vendorId} onChange={e => setVendorId(e.target.value)}>
-          <option value="">Select vendor…</option>
-          {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-        </select>
-        <button onClick={raise} disabled={raising || !chosen.length || !vendorId}
-          style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600, opacity: (raising || !chosen.length || !vendorId) ? 0.5 : 1 }}>
-          {raising ? 'Raising…' : 'Raise PO'}
+        <button onClick={raise} disabled={raising || !lines.length}
+          style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600, opacity: (raising || !lines.length) ? 0.5 : 1 }}>
+          {raising ? 'Raising…' : vendorCount > 1 ? `Raise ${vendorCount} POs` : 'Raise PO'}
         </button>
       </div>
       <GridFooter pager={pager} />
@@ -290,46 +415,80 @@ function ByItemView({ onRaised }) {
   );
 }
 
-function RowGroup({ item, checked, qty, open, onCheck, onQty, onToggle }) {
-  const bd = item.breakdown || [];
-  const pendingCount = bd.filter(b => b.status === 'Pending').length;
-  const onPoCount = bd.length - pendingCount;
+// Item-grouped row: the aggregate line plus an expandable per-WO breakdown.
+function RowGroup({ row, open, onToggle, mainRowCells, qtyVendorCells, splitBtn, splitRows }) {
+  const bd = row.item.breakdown || [];
+  // Expansion lists only pending lines — the on-PO ones are already ordered
+  // and just clutter the raise flow; the summary still counts them.
+  const pending = bd.filter(b => b.status === 'Pending');
+  const onPoCount = bd.length - pending.length;
   const poNumbers = [...new Set(bd.map(b => b.poNumber).filter(Boolean))].join(', ');
   return (
     <>
       <tr className="list-row" style={{ borderBottom: '1px solid var(--border)' }}>
-        <td style={td}><input type="checkbox" checked={checked} onChange={e => onCheck(e.target.checked)} /></td>
-        <td style={{ ...td, fontWeight: 600 }}>{item.rmName || item.rmItemId}</td>
+        {mainRowCells(row)}
         <td style={td}>
-          <button onClick={onToggle} style={{ ...btn, padding: '3px 8px', fontSize: 12 }}>
-            {bd.length} work order{bd.length > 1 ? 's' : ''} {open ? '▴' : '▾'}
-          </button>
+          {pending.length > 0 && (
+            <button onClick={onToggle} style={{ ...btn, padding: '3px 8px', fontSize: 12 }}>
+              {pending.length} work order{pending.length > 1 ? 's' : ''} {open ? '▴' : '▾'}
+            </button>
+          )}
+          <span style={{ marginLeft: pending.length ? 8 : 0, fontSize: 11, color: 'var(--text-muted)' }}>
+            {[pending.length && `${pending.length} pending`, onPoCount && `${onPoCount} on PO`].filter(Boolean).join(' · ')}
+            {poNumbers && ` · ${poNumbers}`}
+          </span>
         </td>
-        <td style={{ ...td, textAlign: 'right' }}>
-          {/* Always editable (CR): a draft-covered row defaults to 0 so the buyer
-              can still order extra instead of hitting a locked '—'. */}
-          <input type="number" min="0" step="any" value={qty ?? item.totalQty}
-            onChange={e => onQty(e.target.value)}
-            style={{ width: 80, padding: '4px 6px', fontSize: 13, textAlign: 'right', fontFamily: 'var(--font-mono)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }} />
-        </td>
-        <td style={{ ...td, fontSize: 12, color: 'var(--text-secondary)' }}>
-          {[pendingCount && `${pendingCount} pending`, onPoCount && `${onPoCount} on PO`].filter(Boolean).join(' · ')}
-        </td>
-        <td style={{ ...td, fontSize: 12 }}>{poNumbers || '—'}</td>
+        {qtyVendorCells(row)}
+        <td style={{ ...td, textAlign: 'right' }}>{splitBtn(row)}</td>
       </tr>
-      {open && bd.map((b, idx) => (
+      {splitRows(row)}
+      {open && pending.map((b, idx) => (
         <tr key={idx} style={{ background: 'var(--bg-page)', borderBottom: '1px solid var(--border)' }}>
           <td style={td} />
           <td style={td} />
           <td style={{ ...td, fontSize: 12 }}>
             <b style={{ color: 'var(--blue)' }}>{b.woNumber || '—'}</b>
             {b.salesOrderNumber ? <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>SO {b.salesOrderNumber}</span> : null}
+            <span style={{ marginLeft: 8, fontFamily: 'var(--font-mono)' }}>{b.qty}</span>
           </td>
-          <td style={{ ...td, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12 }}>{b.qty}</td>
+          <td style={td} />
           <td style={td}><ProcChip status={b.status} /></td>
-          <td style={{ ...td, fontSize: 12 }}>{b.poNumber || '—'}</td>
+          <td style={{ ...td, fontSize: 12, textAlign: 'right' }}>—</td>
         </tr>
       ))}
+    </>
+  );
+}
+
+// WO-grouped section: a header row for the work order, then one selectable row
+// per pending item under it (Haresh item 9).
+function WoGroup({ group, mainRowCells, qtyVendorCells, splitBtn, splitRows }) {
+  return (
+    <>
+      <tr style={{ background: 'var(--bg-page)', borderBottom: '1px solid var(--border)' }}>
+        <td colSpan={6} style={{ ...td, fontWeight: 700 }}>
+          <span style={{ color: 'var(--blue)' }}>{group.woNumber || 'No work order'}</span>
+          {group.salesOrderNumber && <span style={{ color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>SO {group.salesOrderNumber}</span>}
+          <span style={{ color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>{group.rows.length} item{group.rows.length > 1 ? 's' : ''} pending</span>
+        </td>
+      </tr>
+      {group.rows.map(r => (
+        <FragmentRow key={r.key} row={r} mainRowCells={mainRowCells} qtyVendorCells={qtyVendorCells} splitBtn={splitBtn} splitRows={splitRows} />
+      ))}
+    </>
+  );
+}
+
+function FragmentRow({ row, mainRowCells, qtyVendorCells, splitBtn, splitRows }) {
+  return (
+    <>
+      <tr className="list-row" style={{ borderBottom: '1px solid var(--border)' }}>
+        {mainRowCells(row)}
+        <td style={{ ...td, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{row.defaultQty}</td>
+        {qtyVendorCells(row)}
+        <td style={{ ...td, textAlign: 'right' }}>{splitBtn(row)}</td>
+      </tr>
+      {splitRows(row)}
     </>
   );
 }

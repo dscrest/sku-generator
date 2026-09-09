@@ -5,6 +5,7 @@ const { pushToZoho } = require("../zoho/push");
 const { listStockAccounts } = require("../zoho/booksApi");
 const { importFromBooks } = require("../zoho/import");
 const { searchItemIds, deleteItemValues, backfillItemValues } = require("../itemValues");
+const { processImport } = require("../importItems");
 
 const router = express.Router();
 const TABLE = "SKUItem";
@@ -68,6 +69,23 @@ router.post("/import-zoho", async (req, res) => {
   }
 });
 
+// Bulk import: create local SKU items from a parsed sheet (one row per item).
+// Body: { industryId, rows } where rows = [{ "<Property caption>": "<cell>", ...,
+// "Item Type": "Trading"|"Manufacturing" }] (the sheet is parsed to objects in the
+// browser). Runs each row through the same engine as the manual generator (assemble
+// → series → dup check → saveItemValues). Per-row results; one bad row never aborts
+// the batch. Books push stays manual — user clicks "Push all unsynced" afterwards.
+router.post("/import", async (req, res) => {
+  const { industryId, rows } = req.body || {};
+  if (!idOk(industryId)) return res.status(400).json({ error: "Invalid industryId" });
+  if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: "rows required" });
+  try {
+    res.json(await processImport(req.catalyst, industryId, rows));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
 // Search. Body: { industryId?, q?, sku?, type?, filters: [{ propertyId, valueId?, text? }] }.
 // q = free-text LIKE on sku/name; sku = LIKE on sku only; type = exact match;
 // filters = property-based. All present clauses are AND-ed. Nothing set ->
@@ -77,7 +95,7 @@ router.post("/import-zoho", async (req, res) => {
 // the internal app. Swap the q path to Catalyst Search (app.search()) for CRM/scale.
 const TYPES = ["Trading", "Manufacturing"];
 router.post("/search", async (req, res) => {
-  const { industryId, filters, q, sku, type } = req.body || {};
+  const { industryId, filters, q, sku, type, withValues } = req.body || {};
   if (industryId && !idOk(industryId)) return res.status(400).json({ error: "Invalid industryId" });
   if (type && !TYPES.includes(type)) return res.status(400).json({ error: "Invalid type" });
   try {
@@ -99,7 +117,26 @@ router.post("/search", async (req, res) => {
     if (where.length) sql += ` WHERE ${where.join(" AND ")}`;
     sql += " ORDER BY CREATEDTIME DESC";
     const items = rowList(await zcql.executeZCQLQuery(sql)).map(out);
-    res.json(await withIndustry(req.catalyst, items));
+    const result = await withIndustry(req.catalyst, items);
+    // withValues: attach { "<Property caption>": "<display text>" } per item — the
+    // CRM widget uses it for spec chips and custom-subform column mapping.
+    // valueText already holds the resolved display value (see itemValues.saveItemValues).
+    // ponytail: single ZCQL page (300 value rows); widget searches are narrow.
+    if (withValues && result.length) {
+      const iv = rowList(await zcql.executeZCQLQuery(
+        `SELECT skuItemId, propertyId, valueText FROM SKUItemValue WHERE skuItemId IN (${result.map((i) => i.id).join(",")}) AND ${orgClause(req.catalyst)}`,
+      ));
+      const capById = new Map(rowList(await zcql.executeZCQLQuery(
+        `SELECT ROWID, caption FROM Property WHERE ${orgClause(req.catalyst)}`,
+      )).map((p) => [String(p.ROWID), p.caption]));
+      const byItem = {};
+      for (const v of iv) {
+        const cap = capById.get(String(v.propertyId));
+        if (cap && v.valueText) (byItem[String(v.skuItemId)] ||= {})[cap] = v.valueText;
+      }
+      for (const it of result) it.values = byItem[String(it.id)] || {};
+    }
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

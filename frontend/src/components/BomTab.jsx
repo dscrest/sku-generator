@@ -282,10 +282,10 @@ export default function BomTab({ workOrderId, fgs, revision, onChanged }) {
       {!bom ? <Empty>Loading…</Empty> : !bom.lines.length ? (
         <Empty>No lines yet. Compare with the Zoho composite item, or upload a BOM file.</Empty>
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+        <table className="grid-table" style={{ width: '100%' }}>
           <thead>
             <tr>
-              {['Raw material', 'SKU', 'UOM', 'Per unit', 'Required', 'Source'].map((h, i) => (
+              {['Raw Material', 'SKU', 'UOM', 'Per Unit', 'Required', 'Source'].map((h, i) => (
                 <th key={h} style={{ ...thStyle, textAlign: i < 3 ? 'left' : 'right' }}>{h}</th>
               ))}
             </tr>

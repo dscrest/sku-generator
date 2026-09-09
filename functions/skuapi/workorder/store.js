@@ -23,14 +23,22 @@ const WAREHOUSE_KEYS = { main: "mainWarehouseId", reserve: "reserveWarehouseId",
 // Every key the settings screen offers, in display order. Values with no
 // default (the emails, the warehouse ids) are blank until an admin sets them.
 const SETTING_KEYS = [
-  { key: "mainWarehouseId", label: "Main warehouse", type: "warehouse" },
-  { key: "reserveWarehouseId", label: "Reserve warehouse", type: "warehouse" },
-  { key: "issueWarehouseId", label: "Issue warehouse", type: "warehouse" },
-  { key: "purchaseTeamEmail", label: "Purchase team email", type: "email", hint: "Receives material shortfall alerts" },
-  { key: "approverL1Email", label: "Approver — level 1", type: "email" },
-  { key: "approverL2Email", label: "Approver — level 2", type: "email" },
+  { key: "mainWarehouseId", label: "Main warehouse", type: "warehouse", group: "Warehouses" },
+  { key: "reserveWarehouseId", label: "Reserve warehouse", type: "warehouse", group: "Warehouses" },
+  { key: "issueWarehouseId", label: "Issue warehouse", type: "warehouse", group: "Warehouses" },
   {
-    key: "approvalLevels", label: "Approval levels", type: "select",
+    key: "allowWarehouseSelect", label: "Allow warehouse selection", type: "select", group: "Warehouses",
+    hint: "Let store users pick the source and target warehouse on Reserve / Issue / Return",
+    options: [
+      { value: "", label: "Off — fixed routing" },
+      { value: "true", label: "On" },
+    ],
+  },
+  { key: "purchaseTeamEmail", label: "Purchase team email", type: "email", hint: "Receives material shortfall alerts", group: "Alerts" },
+  { key: "approverL1Email", label: "Approver — level 1", type: "email", group: "Approvals" },
+  { key: "approverL2Email", label: "Approver — level 2", type: "email", group: "Approvals" },
+  {
+    key: "approvalLevels", label: "Approval levels", type: "select", group: "Approvals",
     hint: "Disabled = work orders need no approval",
     options: [
       { value: "", label: "Auto (from approver emails)" },
@@ -39,11 +47,11 @@ const SETTING_KEYS = [
       { value: "2", label: "2 levels" },
     ],
   },
-  { key: "shortfallAlertDays", label: "Shortfall alert after (days)", type: "number", hint: "Days from BOM import before alerting" },
-  { key: "costAlertPct", label: "Cost alert threshold (%)", type: "number", hint: "% of estimated cost that triggers a review" },
-  { key: "woNumberPrefix", label: "Work order prefix", type: "text" },
-  { key: "prNumberPrefix", label: "Purchase request prefix", type: "text" },
-  { key: "txnNumberPrefix", label: "Material transaction prefix", type: "text" },
+  { key: "shortfallAlertDays", label: "Shortfall alert after (days)", type: "number", hint: "Days from BOM import before alerting", group: "Alerts" },
+  { key: "costAlertPct", label: "Cost alert threshold (%)", type: "number", hint: "% of estimated cost that triggers a review", group: "Alerts" },
+  { key: "woNumberPrefix", label: "Work order prefix", type: "text", group: "Document numbering" },
+  { key: "prNumberPrefix", label: "Purchase request prefix", type: "text", group: "Document numbering" },
+  { key: "txnNumberPrefix", label: "Material transaction prefix", type: "text", group: "Document numbering" },
 ];
 
 // Per-request memo: settings are read once per request, never cached across

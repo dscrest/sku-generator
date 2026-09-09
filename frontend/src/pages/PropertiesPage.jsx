@@ -4,8 +4,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
 import { ConfirmModal } from '../components/Modal.jsx';
-import RowDeleteButton from '../components/RowDeleteButton.jsx';
-import RowEditButton from '../components/RowEditButton.jsx';
+import RowMenu from '../components/RowMenu.jsx';
 import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
 
 const thStyle = {
@@ -107,13 +106,15 @@ export default function PropertiesPage() {
               {pageRows.map(p => (
                 <tr
                   key={p.id}
-                  style={{ borderTop: '1px solid var(--border)', transition: 'background 0.1s' }}
+                  title="Click to open in property manager"
+                  onClick={() => navigate(`/sku/industries/${p.industryId}/properties`)}
+                  style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
                   onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
                   onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                 >
                   <td style={tdStyle}>
                     <a
-                      onClick={() => navigate(`/sku/industries/${p.industryId}/properties`)}
+                      onClick={e => { e.stopPropagation(); navigate(`/sku/industries/${p.industryId}/properties`); }}
                       style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'none' }}
                       title="Open in property manager"
                     >{p.industryName || p.industryId} ›</a>
@@ -124,10 +125,9 @@ export default function PropertiesPage() {
                   <td style={{ ...tdStyle, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12 }}>{p.skuPosition}</td>
                   <td style={{ ...tdStyle, color: 'var(--text-muted)' }}>{p.unit || '—'}</td>
                   <td style={tdStyle}>{p.required ? 'Yes' : 'No'}</td>
-                  <td style={{ padding: '8px 12px' }}>
-                    <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-                      <RowEditButton onEdit={() => navigate(`/sku/industries/${p.industryId}/properties`)} title={`Edit in ${p.industryName || 'industry'} manager`} />
-                      <RowDeleteButton onDelete={() => setConfirmDel(p)} title={`Delete ${p.caption || p.name}`} />
+                  <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <RowMenu editLabel="Edit in manager" onEdit={() => navigate(`/sku/industries/${p.industryId}/properties`)} onDelete={() => setConfirmDel(p)} />
                     </div>
                   </td>
                 </tr>

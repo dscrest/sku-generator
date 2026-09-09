@@ -22,3 +22,11 @@ export function fmtDate(v) {
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? String(v).slice(0, 10) : d.toLocaleDateString('en-IN');
 }
+
+// Whole days from today to `v` (CR-110): positive = days left, negative = overdue.
+export function dueDays(v) {
+  if (!v) return null;
+  const d = new Date(String(v).slice(0, 10));
+  if (Number.isNaN(d.getTime())) return null;
+  return Math.round((d - new Date(new Date().toDateString())) / 86400000);
+}

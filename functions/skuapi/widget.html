@@ -1,0 +1,1079 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>SKU Studio</title>
+  <script src="https://live.zwidgets.com/js-sdk/1.2/ZohoEmbededAppSDK.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13.5px; color: #0f172a; background: #e9ecf1; -webkit-font-smoothing: antialiased; }
+    .center { display: grid; place-items: center; min-height: 100vh; text-align: center; padding: 24px; }
+    .center > div { background: #fff; border-radius: 14px; padding: 32px 40px; box-shadow: 0 1px 2px rgba(15,23,42,.06), 0 12px 40px rgba(15,23,42,.10); }
+    .muted { color: #64748b; }
+    .mono { font-family: 'IBM Plex Mono', ui-monospace, Menlo, monospace; }
+    button { font: inherit; cursor: pointer; border-radius: 7px; border: 1px solid #d9dfe8; background: #fff; padding: 6px 12px; color: #0f172a; }
+    button.primary { background: #0f172a; border-color: #0f172a; color: #fff; }
+    button.primary:hover:not(:disabled) { background: #1e293b; }
+    button:disabled { opacity: .5; cursor: default; }
+    input, select { font: inherit; padding: 6px 8px; border: 1px solid #d9dfe8; border-radius: 7px; color: #0f172a; background: #fff; }
+    input:focus { outline: none; border-color: #0f766e; }
+    .error { color: #c0392b; }
+    .hidden { display: none !important; }
+
+    #v-picker { min-height: 100vh; padding: 16px; }
+    #card { max-width: 1280px; margin: 0 auto; height: calc(100vh - 32px); min-height: 560px; background: #fff; border-radius: 14px; box-shadow: 0 1px 2px rgba(15,23,42,.06), 0 12px 40px rgba(15,23,42,.10); overflow: hidden; display: flex; flex-direction: column; }
+
+    /* header */
+    #hdr { background: #0f172a; color: #fff; padding: 14px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+    #hdr .mark { width: 36px; height: 36px; border-radius: 9px; background: #0f766e; display: grid; place-items: center; font: 600 18px 'IBM Plex Mono', monospace; color: #fff; flex: none; }
+    #hdr .titles { flex: 1; min-width: 200px; }
+    #hdr .t1 { font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
+    #hdr .t2 { font-size: 12.5px; color: #94a3b8; margin-top: 2px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    #hdr .t2 b { color: #e2e8f0; font-weight: 500; }
+    #hdr .dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; display: inline-block; margin-right: 5px; }
+    #steps { display: flex; align-items: center; gap: 6px; flex: none; }
+    .step { display: flex; align-items: center; gap: 7px; padding: 6px 11px; border-radius: 8px; background: rgba(255,255,255,.08); color: #94a3b8; font-size: 12.5px; font-weight: 500; }
+    .step .n { width: 17px; height: 17px; border-radius: 50%; background: rgba(255,255,255,.14); display: grid; place-items: center; font-size: 10.5px; }
+    .step.on { background: #15803d; color: #fff; }
+    #steps .sep { color: #475569; font-size: 12px; }
+
+    /* panes */
+    #panes { display: flex; flex: 1; min-height: 0; flex-wrap: wrap; }
+    #left { flex: 2 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-right: 1px solid #e5e7eb; }
+    #right { flex: 1 1 300px; min-width: 280px; background: #f8fafc; display: flex; flex-direction: column; min-height: 0; }
+
+    #toolbar { display: flex; gap: 8px; align-items: center; }
+    #industry { flex: none; max-width: 220px; background: #f8fafc; }
+    #searchbar { position: relative; flex: 1; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 8px 6px 12px; border: 1.5px solid #d9dfe8; border-radius: 10px; min-height: 44px; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.04); }
+    #searchbar:focus-within { border-color: #0f172a; }
+    #search { flex: 1; min-width: 120px; border: 0; padding: 4px 2px; font-size: 14px; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; background: #eef2f7; border: 1px solid #d9dfe8; border-radius: 6px; padding: 3px 5px 3px 9px; font-size: 12.5px; }
+    .chip .cap { font: 500 10.5px 'IBM Plex Mono', monospace; color: #64748b; letter-spacing: .02em; }
+    .chip b { font-weight: 500; }
+    .chip button { border: 0; background: none; color: #94a3b8; padding: 0 2px; font-size: 14px; line-height: 1; }
+    .chip button:hover { color: #0f172a; }
+    /* open filter panel — every parameter visible at once (CR-110) */
+    #filter-panel { border-bottom: 1px solid #e5e7eb; background: #fbfcfe; flex: none; }
+    #fp-head { display: flex; align-items: center; gap: 10px; padding: 10px 20px 0; }
+    #fp-title { font-size: 13.5px; font-weight: 600; }
+    #fp-count { font-weight: 500; font-size: 12px; }
+    #fp-search { margin-left: auto; width: 210px; padding: 5px 9px; font-size: 12.5px; }
+    #fp-clear { border: 0; background: none; color: #0f766e; font-size: 12.5px; font-weight: 500; padding: 0; }
+    #fp-clear:hover { text-decoration: underline; }
+    #fp-toggle { border: 0; background: none; color: #64748b; font-size: 13px; padding: 2px 6px; }
+    #fp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; padding: 10px 20px 14px; max-height: 300px; overflow: auto; }
+    #fp-grid.collapsed { display: none; }
+    .fp-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 9px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+    .fp-card.set { border-color: #0f766e; box-shadow: 0 0 0 1px rgba(15,118,110,.18); }
+    .fp-card .cap { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: #334155; min-width: 0; }
+    .fp-card .cap > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fp-card .num { width: 16px; height: 16px; border-radius: 50%; background: #eef2f7; color: #64748b; display: grid; place-items: center; font-size: 9.5px; flex: none; }
+    .fp-card select, .fp-card input { width: 100%; font-size: 12.5px; padding: 5px 7px; border-radius: 6px; }
+    .fp-hint { grid-column: 1 / -1; color: #64748b; font-size: 12.5px; padding: 6px 0 2px; }
+
+    #result-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 12.5px; color: #64748b; }
+    #clear-btn { border: 0; background: none; color: #0f766e; font-weight: 500; padding: 0; }
+    #clear-btn:hover { text-decoration: underline; }
+    #results { flex: 1; overflow: auto; border: 1px solid #e5e7eb; border-radius: 10px; min-height: 120px; }
+    .r-row { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid #eef1f5; }
+    .r-row:hover { background: #f8fafc; }
+    .r-main { flex: 1; min-width: 0; }
+    .r-name { font-size: 14px; font-weight: 500; }
+    .r-sku { font: 500 12px 'IBM Plex Mono', monospace; color: #64748b; margin-left: 8px; }
+    .r-specs { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 4px; }
+    .r-specs span { font-size: 11.5px; color: #334155; background: #f1f5f9; border-radius: 4px; padding: 1px 6px; }
+    .r-row > button { width: 92px; flex: none; font-size: 12.5px; font-weight: 500; padding: 6px 0; }
+    .r-row > button:hover { background: #0f172a; color: #fff; border-color: #0f172a; }
+    .r-row > button.added { border-color: #bbf7d0; background: #f0fdf4; color: #15803d; }
+    .r-row > button.added:hover { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+    .r-empty { padding: 24px; color: #64748b; text-align: center; line-height: 1.5; }
+
+    /* create card */
+    #create-box { border: 1.5px dashed #b7c3d3; border-radius: 10px; padding: 14px 16px; background: #f8fafc; display: none; }
+    #create-box .title { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+    #create-box .title .plus { width: 22px; height: 22px; border-radius: 50%; background: #0f172a; color: #fff; display: grid; place-items: center; font-size: 14px; flex: none; }
+    #c-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+    #c-chips span { font-size: 12px; color: #334155; background: #fff; border: 1px solid #d9dfe8; border-radius: 5px; padding: 3px 8px; }
+    #c-chips span .cap { font: 500 10px 'IBM Plex Mono', monospace; color: #64748b; margin-right: 4px; }
+    #create-box .row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; align-items: flex-end; }
+    #create-box label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: #64748b; font-weight: 500; }
+    #c-name-lab { flex: 1; min-width: 180px; }
+    #c-rate { width: 100px; text-align: right; }
+    #c-info { font-size: 12.5px; color: #64748b; margin-top: 2px; }
+    #c-error { margin-top: 2px; font-size: 12.5px; }
+
+    /* quote lines */
+    #lines-head { padding: 14px 16px 8px; display: flex; align-items: baseline; justify-content: space-between; font-size: 14.5px; font-weight: 600; }
+    #lines-clear { border: 0; background: none; color: #64748b; font-size: 12px; padding: 0; font-weight: 400; }
+    #lines-clear:hover { color: #0f172a; }
+    #lines { flex: 1; overflow: auto; padding: 0 12px; display: flex; flex-direction: column; gap: 8px; }
+    .l-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px 10px 10px 4px; display: grid; grid-template-columns: 18px minmax(0,1fr); gap: 4px; }
+    .l-move { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+    .l-move button { border: 0; background: none; color: #94a3b8; font-size: 9px; line-height: 1; padding: 2px; }
+    .l-move button:hover:not(:disabled) { color: #0f172a; }
+    .l-move button:disabled { opacity: .3; }
+    .l-top { display: flex; align-items: flex-start; gap: 8px; }
+    .l-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; line-height: 1.3; }
+    .l-sku { font: 12px 'IBM Plex Mono', monospace; color: #64748b; margin-top: 2px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .badge { font: 500 9.5px 'IBM Plex Sans', sans-serif; letter-spacing: .04em; border-radius: 4px; padding: 1px 5px; }
+    .badge.books { color: #b45309; background: #fef3c7; }
+    .badge.pending { color: #b91c1c; background: #fee2e2; }
+    .l-x { border: 0; background: none; color: #94a3b8; font-size: 15px; line-height: 1; padding: 0 2px; }
+    .l-x:hover { color: #dc2626; }
+    .l-grid { display: grid; grid-template-columns: 56px 1fr 56px minmax(0,1fr); gap: 6px; align-items: end; margin-top: 8px; }
+    .l-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; color: #64748b; font-weight: 500; }
+    .l-grid input { width: 100%; padding: 5px 7px; text-align: right; border-radius: 6px; font-size: 13px; }
+    .l-total { text-align: right; font-size: 13.5px; font-weight: 600; padding-bottom: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .l-empty { margin: 8px 4px; padding: 26px 14px; border: 1.5px dashed #d9dfe8; border-radius: 10px; text-align: center; color: #64748b; line-height: 1.5; }
+    #lines-foot { padding: 12px 16px 16px; border-top: 1px solid #e5e7eb; background: #fff; display: flex; flex-direction: column; gap: 10px; }
+    #subtotal-row { display: flex; justify-content: space-between; font-size: 12.5px; color: #64748b; }
+    #subtotal { color: #0f172a; font-weight: 600; font-size: 14.5px; font-variant-numeric: tabular-nums; }
+    #add-btn { padding: 11px 14px; font-size: 13.5px; font-weight: 600; border-radius: 9px; }
+    #status { font-size: 12px; color: #0f766e; }
+  </style>
+</head>
+<body>
+
+  <div id="v-loading" class="center"><p class="muted">Loading…</p></div>
+
+  <div id="v-message" class="center hidden"><div>
+    <p id="message-text"></p>
+    <button id="signin-btn" class="primary hidden">Sign in</button>
+  </div></div>
+
+  <div id="v-org" class="center hidden"><div>
+    <p>Choose the organization to work in:</p>
+    <select id="org-select"></select>
+    <button id="org-btn" class="primary">Continue</button>
+  </div></div>
+
+  <div id="v-picker" class="hidden"><div id="card">
+    <div id="hdr">
+      <div class="mark">S</div>
+      <div class="titles">
+        <div class="t1">SKU Studio</div>
+        <div class="t2"><span id="quote-head"></span><span id="org-head"></span></div>
+      </div>
+      <div id="steps">
+        <div class="step" id="step-1"><span class="n">1</span>Find items</div>
+        <span class="sep">→</span>
+        <div class="step" id="step-2"><span class="n">2</span>Quote lines <span id="step-count"></span></div>
+        <span class="sep">→</span>
+        <div class="step" id="step-3"><span class="n">3</span>Update quote</div>
+      </div>
+    </div>
+    <div id="filter-panel">
+      <div id="fp-head">
+        <span id="fp-title">Filters <span id="fp-count" class="muted"></span></span>
+        <input id="fp-search" type="search" placeholder="Search parameter…" autocomplete="off" />
+        <button id="fp-clear" class="hidden" type="button">Clear all</button>
+        <button id="fp-toggle" type="button">▾</button>
+      </div>
+      <div id="fp-grid"><div class="fp-hint">Pick an industry to see its parameters.</div></div>
+    </div>
+    <div id="panes">
+      <div id="left">
+        <div id="toolbar">
+          <select id="industry"><option value="">All industries</option></select>
+          <div id="searchbar">
+            <span id="chips" style="display:contents"></span>
+            <input id="search" type="search" placeholder="Search by SKU or name…" autocomplete="off" />
+          </div>
+        </div>
+        <div id="result-meta">
+          <span id="result-summary">Type to search, or add a filter.</span>
+          <button id="clear-btn" class="hidden">Clear search</button>
+        </div>
+        <div id="results"><div class="r-empty">Type to search, or add a filter.</div></div>
+        <div id="create-box">
+          <div class="title"><span class="plus">+</span><span id="c-title">No catalog item matches. Create it in Zoho Books</span></div>
+          <div id="c-chips"></div>
+          <div class="row">
+            <label id="c-name-lab">Item name<input id="c-name" /></label>
+            <label>SKU<input id="c-sku" class="mono" style="width:170px" /></label>
+            <label>Rate<input id="c-rate" type="number" min="0" /></label>
+            <label>Type<select id="c-type"><option>Trading</option><option>Manufacturing</option></select></label>
+            <label>Industry<select id="c-industry"></select></label>
+            <button id="c-save" class="primary">Create &amp; add to quote</button>
+          </div>
+          <div id="c-info"></div>
+          <div id="c-error" class="error"></div>
+        </div>
+      </div>
+      <div id="right">
+        <div id="lines-head"><span>Quote lines <span id="line-count" class="muted">0</span></span><button id="lines-clear" class="hidden">Clear</button></div>
+        <div id="lines"><div class="l-empty">No lines yet.<br>Add items from the results.</div></div>
+        <div id="lines-foot">
+          <div id="subtotal-row"><span id="subtotal-units">Subtotal</span><span id="subtotal">0.00</span></div>
+          <button id="add-btn" class="primary" disabled>Push to Zoho Quote</button>
+          <span id="status"></span>
+        </div>
+      </div>
+    </div>
+  </div></div>
+
+<script>
+'use strict';
+// Served from the same Catalyst origin as the API — nothing env-specific here.
+var API = '/server/skuapi';
+var APP_ORIGIN = location.origin;
+
+var recordId = null;
+var lines = []; // [{ id, sku, name, values, qty, rate, disc, rateTouched, badge }] — array so ▲▼ reorder works
+var authDone = false;
+
+function findLine(id) { return lines.find(function (l) { return l.id === id; }); }
+
+// Cookie-free auth: the sign-in popup hands over a session token via
+// postMessage (third-party cookies never reach this iframe). Held in memory —
+// localStorage is only best-effort persistence, since browsers partition or
+// block storage inside third-party iframes.
+var sessionToken = null;
+try { sessionToken = localStorage.getItem('sku_token'); } catch (e) { /* storage blocked */ }
+
+function api(path, opts) {
+  opts = opts || {};
+  opts.headers = {};
+  if (opts.body) opts.headers['Content-Type'] = 'application/json';
+  // Token rides the ?t= query param, NOT an Authorization header: Catalyst's
+  // gateway hijacks Authorization and rejects anything that isn't a Zoho OAuth
+  // token (INVALID_TOKEN 401) before the function ever sees the request.
+  if (sessionToken) path += (path.indexOf('?') > -1 ? '&' : '?') + 't=' + encodeURIComponent(sessionToken);
+  return fetch(API + path, opts);
+}
+
+function show(id) {
+  ['v-loading', 'v-message', 'v-org', 'v-picker'].forEach(function (v) {
+    document.getElementById(v).classList.toggle('hidden', v !== id);
+  });
+}
+function message(text, withSignin) {
+  document.getElementById('message-text').textContent = text;
+  document.getElementById('signin-btn').classList.toggle('hidden', !withSignin);
+  show('v-message');
+}
+var $ = function (id) { return document.getElementById(id); };
+
+/* ---------- boot ---------- */
+ZOHO.embeddedApp.on('PageLoad', function (data) {
+  // Only Quotes for now; Deals join once their SKU line subform exists in CRM.
+  if (data.Entity !== 'Quotes') {
+    return message('This widget works on Quotes only (got: ' + (data.Entity || 'unknown') + ').');
+  }
+  // EntityId arrives as a string, an array, or a JSON-stringified array
+  // depending on how the widget is launched — normalize all three.
+  var eid = data.EntityId;
+  if (typeof eid === 'string' && eid.charAt(0) === '[') {
+    try { eid = JSON.parse(eid); } catch (e) { /* keep as-is */ }
+  }
+  recordId = Array.isArray(eid) ? eid[0] : eid;
+  if (!recordId) {
+    // CreateOrCloneView = unsaved quote → no record id to write lines into.
+    return message(data.ButtonPosition === 'CreateOrCloneView'
+      ? 'This quote is not saved yet. Save it first, then open it and use the SKU button from the quote’s detail page.'
+      : 'Could not read the quote id from CRM. PageLoad data: ' + JSON.stringify(data));
+  }
+  probe();
+});
+ZOHO.embeddedApp.init();
+
+/* ---------- auth ---------- */
+function probe() {
+  api('/auth/me').then(function (r) {
+    if (r.status === 401) {
+      var hadToken = Boolean(sessionToken);
+      sessionToken = null;
+      try { localStorage.removeItem('sku_token'); } catch (e) { /* storage blocked */ }
+      // Distinct messages per failure leg so a report pinpoints where it broke.
+      if (authDone) {
+        return message(hadToken
+          ? 'Sign-in worked but the server rejected the session token. Please try again.'
+          : 'Sign-in finished without a session token. Please try again.', true);
+      }
+      return silentAuth();
+    }
+    if (!r.ok) return r.json().then(function (d) { message(d.error || ('Error ' + r.status)); });
+    return r.json().then(function (me) {
+      if (!me.orgId) return orgStep();
+      if (!(me.addons || []).includes('sku-generator')) {
+        return message('The SKU Generator add-on is not enabled for ' + (me.orgName || 'this organization') + '.');
+      }
+      startPicker(me);
+    });
+  }).catch(function () { message('Cannot reach the SKU Generator API.'); });
+}
+
+// Token handoff handshake with the OAuth popup/iframe (an /app/ page on our
+// origin): it announces 'sku-auth-ready', we reply hello, it sends the token.
+window.addEventListener('message', function (e) {
+  if (e.origin !== APP_ORIGIN || !e.data) return;
+  if (e.data.type === 'sku-auth-ready') {
+    e.source.postMessage({ type: 'sku-auth-hello' }, APP_ORIGIN);
+  } else if (e.data.type === 'sku-auth-token') {
+    var f = $('silent-frame');
+    if (f) f.remove();
+    if (!e.data.token) {
+      // The popup finished but could not mint a session — show its reason.
+      return message('Sign-in failed: ' + (e.data.error || 'no session token issued') + '.', true);
+    }
+    sessionToken = e.data.token;
+    try { localStorage.setItem('sku_token', e.data.token); } catch (err) { /* storage blocked */ }
+    authDone = true;
+    show('v-loading');
+    probe();
+  }
+});
+
+function silentAuth() {
+  // Warm Zoho session + prior consent → the OAuth chain completes invisibly in
+  // the iframe and posts 'sku-auth-done'. Any rendered Zoho page (login,
+  // consent) is frame-blocked, so the timeout falls back to the popup button.
+  var f = document.createElement('iframe');
+  f.id = 'silent-frame';
+  f.name = 'sku-auth';
+  f.src = API + '/auth/zoho';
+  f.style.display = 'none';
+  document.body.appendChild(f);
+  setTimeout(function () {
+    if (authDone) return;
+    f.remove();
+    message('Sign in to the SKU Generator to continue.', true);
+  }, 6000);
+}
+
+$('signin-btn').addEventListener('click', function () {
+  var w = window.open(API + '/auth/zoho', 'sku-auth', 'width=620,height=720');
+  if (!w) return message('Popup blocked — allow popups for this page, then try again.', true);
+  message('Waiting for sign-in to finish…');
+});
+
+/* ---------- org selection ---------- */
+function orgStep() {
+  api('/auth/zoho/orgs').then(function (r) { return r.json(); }).then(function (orgs) {
+    if (!Array.isArray(orgs) || !orgs.length) return message('No Zoho Books organization found for this account.');
+    if (orgs.length === 1) return selectOrg(orgs[0]);
+    var sel = $('org-select');
+    sel.innerHTML = '';
+    orgs.forEach(function (o, i) {
+      var opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = o.name;
+      sel.appendChild(opt);
+    });
+    $('org-btn').onclick = function () { selectOrg(orgs[Number(sel.value)]); };
+    show('v-org');
+  }).catch(function () { message('Failed to load organizations.'); });
+}
+function selectOrg(o) {
+  show('v-loading');
+  api('/auth/zoho/select-org', {
+    method: 'POST',
+    body: JSON.stringify({ orgId: o.organization_id, orgName: o.name }),
+  }).then(function () { probe(); });
+}
+
+/* ---------- picker ---------- */
+var industryId = '';
+var params = [];        // showInWidget properties of the chosen industry
+var valuesByProp = {};  // propertyId -> [{id, displayValue}] (lazy cache)
+var chips = [];         // { propertyId, caption, valueType, valueId?, text?, display }
+var pushed = false;     // step 3 flag
+
+function updateSteps() {
+  var step = pushed ? 3 : (lines.length ? 2 : 1);
+  [1, 2, 3].forEach(function (n) { $('step-' + n).classList.toggle('on', n === step); });
+  $('step-count').textContent = lines.length ? '(' + lines.length + ')' : '';
+}
+
+function startPicker(me) {
+  show('v-picker');
+  $('search').focus();
+  updateSteps();
+  if (me.orgName) {
+    $('org-head').innerHTML = '<span class="dot"></span>Books Org: <b></b>';
+    $('org-head').querySelector('b').textContent = me.orgName;
+  }
+  // Widget opens as a small CRM popup by default — ask for room to breathe.
+  try {
+    if (window.ZOHO && ZOHO.CRM.UI && typeof ZOHO.CRM.UI.Resize === 'function') {
+      ZOHO.CRM.UI.Resize({ height: '780', width: '1320' }).catch(function () { /* CRM caps it */ });
+    }
+  } catch (e) { /* older SDK */ }
+  discoverSubforms(); // warm the metadata cache; failures surface at add time
+  ZOHO.CRM.API.getRecord({ Entity: 'Quotes', RecordID: recordId }).then(function (res) {
+    var q = res && res.data && res.data[0];
+    if (q) {
+      $('quote-head').innerHTML = 'Quote <b></b>';
+      $('quote-head').querySelector('b').textContent = q.Subject || q.Quote_Number || recordId;
+    }
+  });
+  api('/api/industries').then(function (r) { return r.json(); }).then(function (inds) {
+    inds = Array.isArray(inds) ? inds : [];
+    inds.forEach(function (ind) {
+      [$('industry'), $('c-industry')].forEach(function (sel) {
+        var opt = document.createElement('option');
+        opt.value = ind.id;
+        opt.textContent = ind.name;
+        sel.appendChild(opt);
+      });
+    });
+    if (inds.length === 1) {
+      $('industry').value = inds[0].id;
+      industryId = String(inds[0].id);
+      loadParams();
+    }
+  });
+}
+
+$('industry').addEventListener('change', function () {
+  industryId = this.value;
+  chips = []; // filters belong to the previous industry
+  valuesByProp = {};
+  lastGenKey = null;
+  renderChips();
+  loadParams();
+  triggerSearch(0);
+});
+
+function loadParams() {
+  params = [];
+  renderFilterPanel();
+  if (!industryId) return;
+  api('/api/industries/' + industryId + '/properties')
+    .then(function (r) { return r.ok ? r.json() : []; })
+    .then(function (list) {
+      params = (Array.isArray(list) ? list : []).filter(function (p) { return p.showInWidget; });
+      // One batched call fills every property's values (CR-088 endpoint) —
+      // never one request per property, the Dev concurrency cap can't take it.
+      return api('/api/industries/' + industryId + '/property-values')
+        .then(function (r) { return r.ok ? r.json() : {}; })
+        .then(function (byProp) { valuesByProp = byProp || {}; renderFilterPanel(); });
+    });
+}
+
+/* ---------- filter panel (CR-110) ---------- */
+// Every showInWidget parameter rendered at once in a grid — a select of its
+// values (List) or a free-text input (Range/other). The panel is the source of
+// truth; `chips` is rebuilt from it so search + create-card code is untouched.
+var panelCtrls = {}; // propertyId -> { prop, el, card }
+
+function renderFilterPanel() {
+  var grid = $('fp-grid');
+  grid.innerHTML = '';
+  panelCtrls = {};
+  if (!industryId) {
+    grid.innerHTML = '<div class="fp-hint">Pick an industry to see its parameters.</div>';
+    return syncChipsFromPanel();
+  }
+  if (!params.length) {
+    grid.innerHTML = '<div class="fp-hint">No properties are flagged "Show as CRM widget search filter" for this industry.</div>';
+    return syncChipsFromPanel();
+  }
+  params.forEach(function (p, i) {
+    var card = document.createElement('div');
+    card.className = 'fp-card';
+    card.dataset.caption = String(p.caption || '').toLowerCase();
+    var cap = document.createElement('div');
+    cap.className = 'cap';
+    var num = document.createElement('span');
+    num.className = 'num';
+    num.textContent = i + 1;
+    var txt = document.createElement('span');
+    txt.textContent = p.caption;
+    txt.title = p.caption;
+    cap.appendChild(num);
+    cap.appendChild(txt);
+    card.appendChild(cap);
+    var vals = valuesByProp[p.id] || [];
+    var ctrl;
+    if (vals.length) {
+      ctrl = document.createElement('select');
+      var any = document.createElement('option');
+      any.value = '';
+      any.textContent = '— Any —';
+      ctrl.appendChild(any);
+      vals.forEach(function (v) {
+        var o = document.createElement('option');
+        o.value = v.id;
+        o.textContent = v.displayValue;
+        ctrl.appendChild(o);
+      });
+    } else {
+      // No stored values (Range/Manual property) → free text.
+      ctrl = document.createElement('input');
+      ctrl.placeholder = 'Any';
+    }
+    ctrl.addEventListener('change', function () { syncChipsFromPanel(); });
+    card.appendChild(ctrl);
+    grid.appendChild(card);
+    panelCtrls[p.id] = { prop: p, el: ctrl, card: card };
+  });
+  applyParamSearch();
+  syncChipsFromPanel();
+}
+
+function syncChipsFromPanel() {
+  chips = [];
+  params.forEach(function (p) {
+    var c = panelCtrls[p.id];
+    if (!c) return;
+    var isSel = c.el.tagName === 'SELECT';
+    var raw = isSel ? c.el.value : c.el.value.trim();
+    c.card.classList.toggle('set', Boolean(raw));
+    if (!raw) return;
+    if (isSel) {
+      chips.push({ propertyId: p.id, caption: p.caption, valueType: p.valueType, valueId: raw,
+        display: c.el.options[c.el.selectedIndex].textContent });
+    } else {
+      chips.push({ propertyId: p.id, caption: p.caption, valueType: p.valueType, text: raw, display: raw });
+    }
+  });
+  $('fp-count').textContent = params.length ? chips.length + '/' + params.length + ' set' : '';
+  $('fp-clear').classList.toggle('hidden', !chips.length);
+  renderChips();
+  triggerSearch(0);
+}
+
+function resetPanelControl(propertyId) {
+  var c = panelCtrls[propertyId];
+  if (c) { c.el.value = ''; c.card.classList.remove('set'); }
+}
+
+function applyParamSearch() {
+  var q = $('fp-search').value.trim().toLowerCase();
+  params.forEach(function (p) {
+    var c = panelCtrls[p.id];
+    if (c) c.card.classList.toggle('hidden', Boolean(q) && c.card.dataset.caption.indexOf(q) === -1);
+  });
+}
+$('fp-search').addEventListener('input', applyParamSearch);
+$('fp-clear').addEventListener('click', function () {
+  params.forEach(function (p) { resetPanelControl(p.id); });
+  syncChipsFromPanel();
+});
+$('fp-toggle').addEventListener('click', function () {
+  var g = $('fp-grid');
+  g.classList.toggle('collapsed');
+  this.textContent = g.classList.contains('collapsed') ? '▸' : '▾';
+});
+function renderChips() {
+  var box = $('chips');
+  box.innerHTML = '';
+  chips.forEach(function (c, i) {
+    var span = document.createElement('span');
+    span.className = 'chip';
+    var cap = document.createElement('span');
+    cap.className = 'cap';
+    cap.textContent = c.caption;
+    var val = document.createElement('b');
+    val.textContent = c.display;
+    var x = document.createElement('button');
+    x.type = 'button';
+    x.textContent = '×';
+    x.addEventListener('click', function () { resetPanelControl(c.propertyId); syncChipsFromPanel(); });
+    span.appendChild(cap); span.appendChild(val); span.appendChild(x);
+    box.appendChild(span);
+  });
+  $('clear-btn').classList.toggle('hidden', !chips.length && !$('search').value.trim());
+}
+$('clear-btn').addEventListener('click', function () {
+  params.forEach(function (p) { resetPanelControl(p.id); });
+  $('search').value = '';
+  syncChipsFromPanel();
+});
+
+/* ---------- search ---------- */
+var searchTimer = null;
+var lastResults = [];
+$('search').addEventListener('input', function () { renderChips(); triggerSearch(300); });
+
+function triggerSearch(delay) {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(runSearch, delay);
+}
+
+function runSearch() {
+  var q = $('search').value.trim();
+  if (!q && !chips.length) {
+    lastResults = [];
+    $('results').innerHTML = '<div class="r-empty">Type to search, or add a filter.</div>';
+    $('result-summary').textContent = 'Type to search, or add a filter.';
+    $('create-box').style.display = 'none';
+    return;
+  }
+  var body = { q: q, withValues: true };
+  if (industryId) body.industryId = industryId;
+  if (chips.length) body.filters = chips.map(function (c) {
+    return c.valueId ? { propertyId: c.propertyId, valueId: c.valueId } : { propertyId: c.propertyId, text: c.text };
+  });
+  api('/api/sku-items/search', { method: 'POST', body: JSON.stringify(body) })
+    .then(function (r) { return r.ok ? r.json() : []; })
+    .then(function (items) { renderResults(items); });
+}
+
+function renderResults(items) {
+  lastResults = items;
+  var box = $('results');
+  box.innerHTML = '';
+  $('result-summary').textContent = items.length + (items.length === 1 ? ' item' : ' items');
+  items.forEach(function (it) {
+    var row = document.createElement('div');
+    row.className = 'r-row';
+    var main = document.createElement('div');
+    main.className = 'r-main';
+    var name = document.createElement('div');
+    name.className = 'r-name';
+    name.textContent = it.name || '';
+    var sku = document.createElement('span');
+    sku.className = 'r-sku mono';
+    sku.textContent = it.sku || '';
+    name.appendChild(sku);
+    main.appendChild(name);
+    var vals = it.values || {};
+    var caps = Object.keys(vals);
+    if (caps.length) {
+      var specs = document.createElement('div');
+      specs.className = 'r-specs';
+      caps.forEach(function (cap) {
+        var s = document.createElement('span');
+        s.textContent = cap + ': ' + vals[cap];
+        specs.appendChild(s);
+      });
+      main.appendChild(specs);
+    }
+    row.appendChild(main);
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    var sync = function () {
+      btn.textContent = findLine(it.id) ? '✓ Added' : 'Add';
+      btn.className = findLine(it.id) ? 'added' : '';
+    };
+    sync();
+    btn.addEventListener('click', function () {
+      if (findLine(it.id)) removeFromCart(it.id); else addToCart(it);
+      sync();
+    });
+    row.appendChild(btn);
+    box.appendChild(row);
+  });
+  var noHit = !items.length;
+  if (noHit) box.innerHTML = '<div class="r-empty">No catalog item matches — create it below.</div>';
+  $('create-box').style.display = noHit ? 'block' : 'none';
+  if (noHit) refreshCreateCard();
+}
+
+/* ---------- cart (quote lines) ---------- */
+function addToCart(it, opts) {
+  opts = opts || {};
+  var line = {
+    id: it.id, sku: it.sku, name: it.name, values: it.values || {},
+    qty: 1, rate: opts.rate || 0, disc: 0,
+    rateTouched: Boolean(opts.rate), badge: opts.badge || null,
+  };
+  lines.push(line);
+  pushed = false;
+  renderCart();
+  if (line.rateTouched) return;
+  // Prefill the rate from the CRM Product's Unit_Price (async, keeps manual edits).
+  ZOHO.CRM.API.searchRecord({
+    Entity: 'Products', Type: 'criteria',
+    Query: '(Product_Code:equals:' + it.sku + ')',
+  }).then(function (res) {
+    var hit = res && res.data && res.data[0];
+    if (hit && findLine(it.id) && !line.rateTouched) {
+      line.rate = Number(hit.Unit_Price) || 0;
+      renderCart();
+    }
+  }).catch(function () { /* no prefill */ });
+}
+function removeFromCart(id) {
+  lines = lines.filter(function (l) { return l.id !== id; });
+  renderCart();
+  renderResults(lastResults); // sync Add/Added buttons
+}
+function lineTotal(l) { return l.qty * l.rate * (1 - l.disc / 100); }
+function updateTotals() {
+  var units = 0, subtotal = 0;
+  lines.forEach(function (l) { units += l.qty; subtotal += lineTotal(l); });
+  $('line-count').textContent = lines.length;
+  $('subtotal-units').textContent = 'Subtotal · ' + units + (units === 1 ? ' unit' : ' units');
+  $('subtotal').textContent = subtotal.toFixed(2);
+  $('add-btn').disabled = !lines.length;
+  $('add-btn').textContent = lines.length
+    ? 'Push ' + lines.length + (lines.length === 1 ? ' line' : ' lines') + ' to Zoho Quote'
+    : 'Push to Zoho Quote';
+  $('lines-clear').classList.toggle('hidden', !lines.length);
+  updateSteps();
+}
+$('lines-clear').addEventListener('click', function () {
+  lines = [];
+  renderCart();
+  renderResults(lastResults);
+});
+function moveLine(i, d) {
+  var j = i + d;
+  if (j < 0 || j >= lines.length) return;
+  var t = lines[i]; lines[i] = lines[j]; lines[j] = t;
+  renderCart();
+}
+function renderCart() {
+  var box = $('lines');
+  box.innerHTML = '';
+  if (!lines.length) box.innerHTML = '<div class="l-empty">No lines yet.<br>Add items from the results.</div>';
+  lines.forEach(function (it, idx) {
+    var card = document.createElement('div');
+    card.className = 'l-card';
+    var mv = document.createElement('div');
+    mv.className = 'l-move';
+    [['▲', -1, idx === 0], ['▼', 1, idx === lines.length - 1]].forEach(function (m) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = m[0];
+      b.disabled = m[2];
+      b.addEventListener('click', function () { moveLine(idx, m[1]); });
+      mv.appendChild(b);
+    });
+    card.appendChild(mv);
+    var main = document.createElement('div');
+    var top = document.createElement('div');
+    top.className = 'l-top';
+    var nm = document.createElement('div');
+    nm.className = 'l-name';
+    nm.textContent = it.name;
+    var sk = document.createElement('div');
+    sk.className = 'l-sku';
+    sk.textContent = it.sku;
+    if (it.badge) {
+      var bd = document.createElement('span');
+      bd.className = 'badge ' + (it.badge === 'pending' ? 'pending' : 'books');
+      bd.textContent = it.badge === 'pending' ? 'NEW — PUSH PENDING' : 'NEW IN BOOKS';
+      sk.appendChild(bd);
+    }
+    nm.appendChild(sk);
+    var x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'l-x';
+    x.textContent = '×';
+    x.addEventListener('click', function () { removeFromCart(it.id); });
+    top.appendChild(nm); top.appendChild(x);
+    main.appendChild(top);
+    var grid = document.createElement('div');
+    grid.className = 'l-grid';
+    var tot = document.createElement('div');
+    [['Qty', 'qty', 1], ['Rate', 'rate', 0], ['Disc %', 'disc', 0]].forEach(function (f) {
+      var lab = document.createElement('label');
+      lab.textContent = f[0];
+      var inp = document.createElement('input');
+      inp.type = 'number';
+      inp.min = f[2];
+      if (f[1] === 'disc') inp.max = 100;
+      inp.value = it[f[1]];
+      inp.addEventListener('input', function () {
+        var v = Number(inp.value) || f[2];
+        it[f[1]] = f[1] === 'disc' ? Math.min(100, Math.max(0, v)) : v;
+        if (f[1] === 'rate') it.rateTouched = true;
+        tot.textContent = lineTotal(it).toFixed(2);
+        updateTotals(); // in place — a full re-render would drop the input focus
+      });
+      lab.appendChild(inp);
+      grid.appendChild(lab);
+    });
+    tot.className = 'l-total';
+    tot.textContent = lineTotal(it).toFixed(2);
+    grid.appendChild(tot);
+    main.appendChild(grid);
+    card.appendChild(main);
+    box.appendChild(card);
+  });
+  updateTotals();
+}
+
+/* ---------- create in Books (generator-backed) ---------- */
+// Map chips → the generator's selectedValues: { propertyId: valueROWID | text }.
+// Free text on a List property is promoted to its valueId on an exact match
+// (saveItemValues silently drops non-ROWID values on List props), else warned.
+function buildSelectedValues() {
+  var sv = {}, unstored = [];
+  chips.forEach(function (c) {
+    if (c.valueId) { sv[c.propertyId] = c.valueId; return; }
+    var vals = valuesByProp[c.propertyId] || [];
+    var hit = vals.find(function (v) {
+      return String(v.displayValue).trim().toLowerCase() === String(c.text).trim().toLowerCase();
+    });
+    if (hit) { sv[c.propertyId] = hit.id; return; }
+    sv[c.propertyId] = c.text;
+    if (c.valueType === 'List') unstored.push(c.caption);
+  });
+  return { sv: sv, unstored: unstored };
+}
+function chipValues() {
+  var v = {};
+  chips.forEach(function (c) { v[c.caption] = c.display; });
+  return v;
+}
+
+var gen = null;         // last /api/sku/generate response (null = manual mode)
+var lastGenKey = null;  // industry+values key so previews don't re-fire per keystroke
+var nameTouched = false, skuTouched = false;
+$('c-name').addEventListener('input', function () { nameTouched = true; });
+$('c-sku').addEventListener('input', function () { skuTouched = true; });
+
+function setCreateInfo(text, isError) {
+  $('c-info').textContent = isError ? '' : (text || '');
+  $('c-error').textContent = isError ? text : '';
+}
+
+function refreshCreateCard() {
+  // chip badges mirror the active filters
+  var cb = $('c-chips');
+  cb.innerHTML = '';
+  chips.forEach(function (c) {
+    var s = document.createElement('span');
+    var cap = document.createElement('span');
+    cap.className = 'cap';
+    cap.textContent = c.caption;
+    s.appendChild(cap);
+    s.appendChild(document.createTextNode(c.display));
+    cb.appendChild(s);
+  });
+  if ($('c-industry').value === '' && industryId) $('c-industry').value = industryId;
+
+  if (!industryId || !chips.length) {
+    // Manual mode: plain create, SKU typed by hand.
+    gen = null;
+    lastGenKey = null;
+    $('c-save').disabled = false;
+    if (!nameTouched && !$('c-name').value) $('c-name').value = $('search').value.trim();
+    setCreateInfo(industryId ? 'Add filters above to auto-generate the SKU from parameters.'
+      : 'Pick an industry to auto-generate the SKU from parameters.');
+    return;
+  }
+  var b = buildSelectedValues();
+  var key = industryId + '|' + JSON.stringify(b.sv);
+  if (key === lastGenKey) return; // same combination — keep preview AND its disabled verdict
+  lastGenKey = key;
+  $('c-save').disabled = false;
+  gen = null;
+  setCreateInfo('Generating SKU preview…');
+  api('/api/sku/generate', { method: 'POST', body: JSON.stringify({ industryId: industryId, selectedValues: b.sv }) })
+    .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+    .then(function (res) {
+      if (key !== lastGenKey) return; // stale response
+      if (!res.ok) return setCreateInfo(res.d.error || 'SKU preview failed.', true);
+      gen = res.d;
+      if (gen.missingRequired && gen.missingRequired.length) {
+        $('c-save').disabled = true;
+        return setCreateInfo('Add filters for required parameters: ' + gen.missingRequired.join(', ') + '.', true);
+      }
+      if (gen.duplicate) {
+        $('c-save').disabled = true;
+        return setCreateInfo('An item with SKU ' + gen.sku + ' already exists — search for it by SKU.', true);
+      }
+      if (!nameTouched) $('c-name').value = gen.name || $('search').value.trim();
+      if (!skuTouched) $('c-sku').value = gen.sku || '';
+      setCreateInfo(b.unstored.length
+        ? 'Note: free-text value for ' + b.unstored.join(', ') + ' has no matching list value and won’t be stored.'
+        : 'SKU and name generated from the selected parameters — edit if needed.');
+    })
+    .catch(function () { setCreateInfo('SKU preview failed — network error.', true); });
+}
+
+$('c-save').addEventListener('click', async function () {
+  var btn = $('c-save');
+  btn.disabled = true;
+  $('c-error').textContent = '';
+  try {
+    var name = $('c-name').value.trim();
+    var sku = $('c-sku').value.trim();
+    var type = $('c-type').value;
+    var ind = $('c-industry').value;
+    if (!name || !ind) throw new Error('Name and industry are required.');
+
+    // 1. Create the SKU item — generator path stores property values so the
+    //    item stays searchable by parameter; manual path is name+SKU only.
+    var r, useGen = Boolean(gen && chips.length && industryId);
+    if (useGen) {
+      if (!sku) sku = gen.sku;
+      var b = buildSelectedValues();
+      r = await api('/api/sku/create-item', { method: 'POST', body: JSON.stringify({
+        name: name, sku: sku, description: gen.description || '', type: type,
+        industryId: ind, selectedValues: b.sv,
+      }) });
+    } else {
+      if (!sku) throw new Error('SKU is required.');
+      r = await api('/api/sku-items', { method: 'POST', body: JSON.stringify({
+        name: name, sku: sku, type: type, industryId: ind,
+      }) });
+    }
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Create failed.');
+
+    // 2. Push to Zoho Books right away. A failure never blocks the quote —
+    //    the item exists locally and can be pushed later from SKU Items.
+    var badge = 'books', pushNote = '';
+    try {
+      var pr = await api('/api/sku-items/' + d.id + '/push-zoho', { method: 'POST', body: '{}' });
+      if (!pr.ok) {
+        var pd = await pr.json().catch(function () { return {}; });
+        throw new Error(pd.error || ('HTTP ' + pr.status));
+      }
+    } catch (pe) {
+      badge = 'pending';
+      pushNote = 'Created locally; Books push failed: ' + (pe.message || pe) + '. Push it later from the SKU Items page.';
+    }
+
+    // 3. Into the quote lines (CRM Product is created at push-to-quote time).
+    addToCart({ id: d.id, sku: d.sku, name: d.name, values: useGen ? chipValues() : {} },
+      { badge: badge, rate: Number($('c-rate').value) || 0 });
+    setStatus(pushNote, Boolean(pushNote));
+
+    $('create-box').style.display = 'none';
+    $('c-rate').value = '';
+    nameTouched = skuTouched = false;
+    lastGenKey = null;
+    triggerSearch(0); // the new item should now show up in results
+  } catch (err) {
+    $('c-error').textContent = err.message || String(err);
+  }
+  btn.disabled = false;
+});
+
+/* ---------- write-back to the Quote ---------- */
+function setStatus(text, isError) {
+  var s = $('status');
+  s.textContent = text;
+  s.className = isError ? 'error' : '';
+}
+
+function findOrCreateProduct(it) {
+  return ZOHO.CRM.API.searchRecord({
+    Entity: 'Products', Type: 'criteria',
+    Query: '(Product_Code:equals:' + it.sku + ')',
+  }).then(function (res) {
+    var hit = res && res.data && res.data[0];
+    if (hit) return hit.id;
+    return ZOHO.CRM.API.insertRecord({
+      Entity: 'Products',
+      APIData: { Product_Name: it.name, Product_Code: it.sku, Unit_Price: it.rate || 0 },
+      Trigger: [],
+    }).then(function (ins) {
+      var row = ins && ins.data && ins.data[0];
+      if (!row || row.code !== 'SUCCESS') throw new Error('Product create failed for ' + it.sku + ': ' + JSON.stringify(row && row.message));
+      return row.details.id;
+    });
+  });
+}
+
+// Metadata-driven subform discovery: which key holds the standard line items,
+// and does the Quote have a custom subform to mirror item details into?
+// Cached; a META failure degrades to { stdKey: null, custom: null } and the
+// add flow falls back to record-read detection (standard subform only).
+var subformInfo = null;
+function discoverSubforms() {
+  if (subformInfo) return Promise.resolve(subformInfo);
+  if (!window.ZOHO || !ZOHO.CRM.META || typeof ZOHO.CRM.META.getFields !== 'function') {
+    return Promise.resolve({ stdKey: null, custom: null });
+  }
+  return ZOHO.CRM.META.getFields({ Entity: 'Quotes' }).then(function (res) {
+    var fields = (res && res.fields) || [];
+    var subs = fields.filter(function (f) { return f.data_type === 'subform'; });
+    var std = subs.find(function (f) { return f.api_name === 'Quoted_Items'; });
+    var custom = subs.find(function (f) { return f.api_name !== 'Quoted_Items'; });
+    // Old-style orgs list no subform field for line items → classic Product_Details.
+    var info = { stdKey: std ? 'Quoted_Items' : 'Product_Details', custom: null };
+    if (!custom) { subformInfo = info; return info; }
+    var mod = (custom.subform && custom.subform.module) || custom.api_name;
+    return ZOHO.CRM.META.getFields({ Entity: mod }).then(function (r2) {
+      info.custom = { key: custom.api_name, columns: (r2 && r2.fields) || [] };
+      subformInfo = info;
+      return info;
+    }, function () { subformInfo = info; return info; }); // columns unreadable → std only
+  }, function () { return { stdKey: null, custom: null }; });
+}
+
+// Map a cart line onto the custom subform's columns by display label:
+// fixed aliases for sku/name/qty/rate/disc, everything else matched against
+// the item's property captions (column "Size" ↔ property "Size", etc.).
+function normLabel(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+var FIXED_COLS = {
+  sku: 'sku', skucode: 'sku', productcode: 'sku', itemcode: 'sku',
+  item: 'name', itemname: 'name', name: 'name', productname: 'name', product: 'name',
+  qty: 'qty', quantity: 'qty',
+  rate: 'rate', price: 'rate', listprice: 'rate', unitprice: 'rate',
+  disc: 'disc', discount: 'disc', discountpercent: 'disc',
+};
+function customRow(columns, line) {
+  var vals = {};
+  Object.keys(line.values).forEach(function (cap) { vals[normLabel(cap)] = line.values[cap]; });
+  var row = {};
+  columns.forEach(function (f) {
+    if (f.read_only || f.data_type === 'lookup' || f.data_type === 'subform' || f.api_name === 'id') return;
+    var l = normLabel(f.field_label);
+    var fixed = FIXED_COLS[l];
+    var v = fixed ? line[fixed] : vals[l];
+    if (v === undefined || v === null || v === '') return;
+    var numeric = f.data_type === 'double' || f.data_type === 'integer' || f.data_type === 'currency';
+    row[f.api_name] = numeric ? Number(v) || 0 : String(v);
+  });
+  return row;
+}
+
+// Re-send an existing subform row as { id } only — the row is retained
+// unchanged, without echoing back read-only fields (subform update replaces
+// all rows; omitted rows are deleted).
+function keepRows(rows) {
+  return (rows || []).map(function (r) { return r.id ? { id: r.id } : r; });
+}
+
+$('add-btn').addEventListener('click', async function () {
+  var btn = $('add-btn');
+  btn.disabled = true;
+  try {
+    setStatus('Reading quote…');
+    var info = await discoverSubforms();
+    var res = await ZOHO.CRM.API.getRecord({ Entity: 'Quotes', RecordID: recordId });
+    var rec = res && res.data && res.data[0];
+    if (!rec) throw new Error('Could not read the quote.');
+    // Metadata names the standard subform; the record-read guess (which fails
+    // on empty quotes) is only the META-less fallback, defaulting to v2.
+    var stdKey = info.stdKey || (rec.Quoted_Items ? 'Quoted_Items' : 'Product_Details');
+    var v3 = stdKey === 'Quoted_Items';
+
+    var stdRows = [], custRows = [];
+    for (var i = 0; i < lines.length; i++) {
+      setStatus('Item ' + (i + 1) + ' of ' + lines.length + ': ' + lines[i].sku + '…');
+      var pid = await findOrCreateProduct(lines[i]);
+      // CRM's subform Discount is an amount, not a percent.
+      var discAmt = lines[i].qty * lines[i].rate * lines[i].disc / 100;
+      stdRows.push(v3
+        ? { Product_Name: { id: pid }, Quantity: lines[i].qty, List_Price: lines[i].rate, Discount: discAmt }
+        : { product: { id: pid }, quantity: lines[i].qty, list_price: lines[i].rate, Discount: discAmt });
+      if (info.custom) custRows.push(customRow(info.custom.columns, lines[i]));
+    }
+
+    setStatus('Updating quote…');
+    // Subform updates REPLACE all rows — existing rows must be re-sent.
+    var upd = { id: recordId };
+    upd[stdKey] = keepRows(rec[stdKey]).concat(stdRows);
+    if (info.custom) upd[info.custom.key] = keepRows(rec[info.custom.key]).concat(custRows);
+    var out = await ZOHO.CRM.API.updateRecord({ Entity: 'Quotes', APIData: upd, Trigger: [] });
+    var row = out && out.data && out.data[0];
+    if (!row || row.code !== 'SUCCESS') throw new Error('Quote update failed: ' + JSON.stringify(row && row.message));
+
+    pushed = true;
+    updateSteps();
+    setStatus('Done.');
+    ZOHO.CRM.UI.Popup.closeReload();
+  } catch (err) {
+    // Zoho SDK rejects with plain objects, not Errors — stringify those.
+    var msg = err && err.message ? err.message
+      : (typeof err === 'object' ? JSON.stringify(err) : String(err));
+    setStatus(msg || 'Add to quote failed.', true);
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

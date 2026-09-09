@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>SKU Studio</title>
+</head>
+<body>
+  <p style="font:13px system-ui;color:#777;text-align:center;margin-top:40px">Loading SKU Studio…</p>
+<script>
+'use strict';
+// Thin loader: the real widget is served from the API origin (single source of
+// truth, no re-zip on changes). location.replace keeps this frame as CRM's
+// direct child — an iframe wrapper would break the Zoho SDK's postMessage
+// handshake with window.parent, so never wrap it.
+location.replace('https://sku-gen-octfis-925638796.development.catalystserverless.com/server/skuapi/widget'
+  + location.search + location.hash);
+</script>
+</body>
+</html>

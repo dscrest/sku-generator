@@ -10,10 +10,54 @@ const catalystSDK = require("zcatalyst-sdk-node");
 
 const app = express();
 app.use(express.json());
+// The CRM widget sends JSON as text/plain to keep requests "simple" (no CORS
+// preflight — Catalyst's gateway answers OPTIONS itself without CORS headers,
+// so any preflighted request dies in the browser). Parse it back to JSON.
+app.use(express.text({ type: "text/plain" }));
+app.use((req, _res, next) => {
+  if (typeof req.body === "string" && req.body) {
+    try { req.body = JSON.parse(req.body); } catch { /* not JSON — leave as-is */ }
+  }
+  next();
+});
 
-// CORS — same-origin in prod; permissive so dev proxy / probes never trip.
+// CORS — the CRM widget runs on a Zoho-hosted domain and sends the session
+// cookie cross-origin, so reflect the Origin + allow credentials. Suffix
+// allowlist, NOT reflect-everything: the API is cookie-authed, so open
+// reflection would let any website ride the user's session.
+// ponytail: extend the suffix list if the packed widget's real Origin (DevTools) differs.
+const CORS_SUFFIXES = [
+  ".catalystserverless.com",
+  // Zoho family — CRM itself plus the domains Zoho serves hosted widgets from
+  // (zohopublic = internally-hosted CRM widgets), across DCs.
+  ".zoho.com", ".zoho.in", ".zoho.eu", ".zoho.com.au", ".zoho.jp", ".zoho.sa", ".zoho.com.cn",
+  ".zohopublic.com", ".zohopublic.in", ".zohopublic.eu", ".zohopublic.com.au", ".zohopublic.jp",
+  // Hosted-widget content domains also vary by DC (the packed widget serves
+  // from <uuid>.zappsusercontent.in on the IN DC).
+  ".zohousercontent.com", ".zohousercontent.in", ".zohousercontent.eu",
+  ".zappsusercontent.com", ".zappsusercontent.in", ".zappsusercontent.eu",
+  ".zohostatic.com", ".zohostatic.in", ".zwidgets.com",
+];
+function corsOk(origin) {
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+  if (!origin.startsWith("https://")) return false;
+  const host = origin.slice("https://".length);
+  return CORS_SUFFIXES.some((s) => host.endsWith(s));
+}
+// ponytail: temp CORS debug — records origins seen so the widget's real Origin
+// can be read from GET /cors-debug. Remove once the widget allowlist is settled.
+const seenOrigins = [];
 app.use((req, res, next) => {
-  res.set("Access-Control-Allow-Origin", "*");
+  const origin = req.get("Origin");
+  if (origin) {
+    const entry = `${corsOk(origin) ? "OK " : "BLOCKED "}${origin} ${req.method} ${req.url}`;
+    if (seenOrigins.length < 50 && !seenOrigins.includes(entry)) seenOrigins.push(entry);
+  }
+  if (origin && corsOk(origin)) {
+    res.set("Access-Control-Allow-Origin", origin);
+    res.set("Access-Control-Allow-Credentials", "true");
+    res.set("Vary", "Origin");
+  }
   res.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(204).end();
@@ -34,6 +78,22 @@ app.use((req, _res, next) => {
 });
 
 app.get("/", (_req, res) => res.json({ status: "ok", service: "skuapi" }));
+app.get("/cors-debug", (_req, res) => res.json(seenOrigins)); // ponytail: temp, remove with seenOrigins
+
+// CRM widget page (Setup → Widgets → hosting "External" → this URL). Served
+// from a function (not the web client) because Catalyst stamps
+// X-Frame-Options: DENY on static hosting with no way to change it; a
+// frame-ancestors CSP set here overrides XFO in modern browsers, letting only
+// Zoho CRM iframe it.
+app.get("/widget", (_req, res) => {
+  res.set(
+    "Content-Security-Policy",
+    "frame-ancestors 'self' https://*.zoho.com https://*.zoho.in https://*.zoho.eu " +
+      "https://*.zoho.com.au https://*.zoho.jp https://*.zoho.sa https://*.zoho.com.cn"
+  );
+  res.set("Cache-Control", "no-cache"); // widget updates land on next reload after deploy
+  res.sendFile(require("path").join(__dirname, "widget.html"));
+});
 
 // Auth: custom email/password login + Zoho OAuth (both set the session cookie).
 app.use("/auth", require("./routes/auth"));
@@ -81,6 +141,8 @@ app.use("/api/wo", requireAddon("work-order"), require("./routes/workorder"));
 // Superseded by /api/wo — kept one release so the Books custom button and any
 // saved /#/reserve?soId= deep links keep working.
 app.use("/api/reserve", requireAddon("reserve"), require("./routes/reserve"));
+// Recipe Engine add-on (CR-104): recipe templates, materials master, quotations.
+app.use("/api/recipe", requireAddon("recipe-engine"), require("./routes/recipe"));
 
 // SKU generator add-on — everything below is gated per-org.
 const skuGen = requireAddon("sku-generator");

@@ -1,6 +1,6 @@
 // Self-check for the estimate parser. Run: node frontend/src/pages/estimateParser.test.js
 import assert from "node:assert";
-import { parseLineDescription, buildEstimate, computeTotals } from "./estimateParser.js";
+import { parseLineDescription, buildEstimate, computeTotals, validUntil } from "./estimateParser.js";
 
 // 1. Prototype-style description → specs + 2 design groups with size rows.
 const desc = `
@@ -148,11 +148,12 @@ const withAccount = buildEstimate({
     Phone: "0484-1234567", Email: "purchase@phoenix.example",
     GST_No: "32AAACP1234A1Z5",
   },
-  _contact: { Full_Name: "Thulaseedharan T K", Mobile: "+91 98765 43210" },
+  _contact: { Full_Name: "Thulaseedharan T K", Mobile: "+91 98765 43210", Email: "tk@phoenix.example" },
 });
 assert.strictEqual(withAccount.header.to.address, "12 Industrial Estate, Kochi, Kerala, 682001");
 assert.strictEqual(withAccount.header.to.phone, "0484-1234567");
-assert.strictEqual(withAccount.header.to.email, "purchase@phoenix.example");
+// CR-060 follow-up: contact-person email prints; the account email is hidden.
+assert.strictEqual(withAccount.header.to.email, "tk@phoenix.example");
 assert.strictEqual(withAccount.header.to.gstin, "32AAACP1234A1Z5");
 assert.strictEqual(withAccount.header.to.contact, "Thulaseedharan T K");
 assert.strictEqual(withAccount.header.to.mobile, "+91 98765 43210");
@@ -164,5 +165,11 @@ assert.strictEqual(est.header.to.gstin, "");
 // 8. Empty / null description → flat, not a crash.
 assert.strictEqual(parseLineDescription(""), null);
 assert.strictEqual(parseLineDescription(null), null);
+
+// 9. validUntil (Template 2): +15 days, month/year rollover, junk → "".
+assert.strictEqual(validUntil("07-07-2026"), "22-07-2026");
+assert.strictEqual(validUntil("20-12-2026"), "04-01-2027");
+assert.strictEqual(validUntil(""), "");
+assert.strictEqual(validUntil("garbage"), "");
 
 console.log("estimateParser: all checks passed");

@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import { Empty, Banner } from './MaterialsGrid.jsx';
-import Modal, { ModalFooter, ModalBtn } from './Modal.jsx';
+import Modal, { ModalFooter, ModalBtn, CloseX } from './Modal.jsx';
+import { ItemPicker } from './WoItemsTab.jsx';
 import { StatusChip, btn, select, thStyle, cell } from './woCommon.jsx';
 import { fmtMoney } from '../format.js';
 
@@ -117,7 +118,7 @@ export default function PurchaseTab({ workOrderId, wo, onChanged }) {
             </span>
             <div style={{ flex: 1 }} />
             <button onClick={raise} disabled={busy} style={{ ...btn, background: '#dc2626', color: '#fff', borderColor: '#dc2626', fontWeight: 600 }}>
-              Raise purchase request
+              Raise request
             </button>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -231,6 +232,7 @@ export default function PurchaseTab({ workOrderId, wo, onChanged }) {
               ))}
             </tbody>
           </table>
+          {pr.status === 'Draft' && <AddLineRow prId={pr.id} onAdded={onChanged} />}
         </div>
       ))}
 
@@ -248,6 +250,42 @@ export default function PurchaseTab({ workOrderId, wo, onChanged }) {
           </ModalFooter>
         </Modal>
       )}
+    </div>
+  );
+}
+
+// Ad-hoc extra line on a draft PR (Haresh item 10): pick any Books item and a
+// quantity — it joins the request with requiredQty 0 so it reads as an extra.
+function AddLineRow({ prId, onAdded }) {
+  const [item, setItem] = useState(null);
+  const [qty, setQty] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function add() {
+    if (!item || !(Number(qty) > 0)) return toast.error('Pick an item and a quantity above zero');
+    setBusy(true);
+    try {
+      await axios.post(`/api/wo/pr/${prId}/lines`, { rmItemId: item.id, rmName: item.name, purchaseQty: Number(qty) });
+      toast.success(`${item.name} added to the request`);
+      setItem(null); setQty('');
+      onAdded();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not add the item');
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 14px', borderTop: '1px solid var(--border)', background: 'var(--bg-page)' }}>
+      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Add item:</span>
+      <div style={{ flex: 1, maxWidth: 380 }}>
+        <ItemPicker value={item} onPick={setItem}
+          field={{ width: '100%', padding: '5px 9px', fontSize: 13, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-card)' }} />
+      </div>
+      <input type="number" min="0" step="any" value={qty} onChange={e => setQty(e.target.value)} placeholder="Qty"
+        style={{ width: 80, padding: '5px 8px', fontSize: 13, textAlign: 'right', fontFamily: 'var(--font-mono)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }} />
+      <button onClick={add} disabled={busy || !item || !(Number(qty) > 0)} style={{ ...btn, opacity: busy || !item || !(Number(qty) > 0) ? 0.5 : 1 }}>
+        {busy ? 'Adding…' : '+ Add'}
+      </button>
     </div>
   );
 }
@@ -340,8 +378,8 @@ export function PoSplit({ pos, selectedPo, onSelect, onClose, onChanged }) {
     ['Date', detail?.date],
     ['Reference (SO)', detail?.referenceNumber || '—'],
     ['Total', detail ? fmtMoney(detail.total) : ''],
-    ['Receive status', detail?.receivedStatus || '—'],
-    ['Bill status', detail?.billedStatus || '—'],
+    ['Receive Status', detail?.receivedStatus || '—'],
+    ['Bill Status', detail?.billedStatus || '—'],
   ];
 
   return (
@@ -371,11 +409,7 @@ export function PoSplit({ pos, selectedPo, onSelect, onClose, onChanged }) {
               <b style={{ fontSize: 15 }}>{detail.number}</b>
               <StatusChip status={detail.status} />
               <div style={{ flex: 1 }} />
-              <button onClick={onClose} title="Back to purchase requests" style={{ width: 28, height: 28, border: '1px solid var(--border)', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'var(--text-secondary)' }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ verticalAlign: 'middle' }}>
-                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
+              <CloseX onClick={onClose} title="Back to purchase requests" />
             </div>
 
             <div style={{ padding: '12px 18px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px 18px', borderBottom: '1px solid var(--border)' }}>

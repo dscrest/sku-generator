@@ -3,10 +3,9 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
-import Modal, { ModalFooter, ModalBtn } from '../components/Modal.jsx';
+import Modal, { ModalFooter, ModalBtn, CloseX } from '../components/Modal.jsx';
 import { readDealId } from '../components/CrmInfoCard';
-import RowDeleteButton from '../components/RowDeleteButton.jsx';
-import RowEditButton from '../components/RowEditButton.jsx';
+import RowMenu from '../components/RowMenu.jsx';
 import GridFooter, { usePager } from '../components/GridFooter.jsx';
 import { fmtDate } from '../format.js';
 
@@ -434,7 +433,9 @@ export default function SKUItemsPage() {
                       return (
                         <tr
                           key={item.id}
-                          style={{ borderTop: '1px solid var(--border)', transition: 'background 0.1s' }}
+                          title="Click to edit"
+                          onClick={() => openDetail(item)}
+                          style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
                           onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
                           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                         >
@@ -478,11 +479,8 @@ export default function SKUItemsPage() {
                               );
                             })()}
                           </td>
-                          <td style={{ padding: '8px 12px' }}>
-                            <div style={{ display: 'flex', gap: 2 }}>
-                              <RowEditButton onEdit={() => openDetail(item)} title={`Edit ${item.sku}`} />
-                              <RowDeleteButton onDelete={() => setConfirmDelete(item)} title={`Delete ${item.sku}`} />
-                            </div>
+                          <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
+                            <RowMenu onEdit={() => openDetail(item)} onDelete={() => setConfirmDelete(item)} />
                           </td>
                         </tr>
                       );
@@ -573,15 +571,7 @@ export default function SKUItemsPage() {
                         {pushingId === selectedItem.id ? 'Pushing…' : selectedItem.zohoItemId ? '✓ Synced · Re-push to Zoho' : 'Push to Zoho'}
                       </button>
                     )}
-                    <button
-                      onClick={closeDetail}
-                      title="Close details"
-                      style={{ width: 28, height: 28, border: '1px solid var(--border)', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                      </svg>
-                    </button>
+                    <CloseX onClick={closeDetail} title="Close details" />
                   </div>
                 </div>
 

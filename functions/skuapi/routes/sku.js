@@ -1,8 +1,9 @@
 "use strict";
 const express = require("express");
-const { rowList, out, idOk, orgClause, findSkuRowId, isActive, nameFilter } = require("../store");
+const { rowList, out, idOk, orgClause, findSkuRowId, isActive } = require("../store");
 const { saveItemValues, deleteItemValues, missingRequired } = require("../itemValues");
 const { nextSeriesSku, stripSuffix, escRe } = require("../skuSeries");
+const { assemble } = require("../skuBuild");
 const { pushToZoho } = require("../zoho/push");
 
 const router = express.Router();
@@ -30,60 +31,27 @@ router.post("/generate", async (req, res) => {
       ),
     ).map(out).filter(isActive);
 
-    const inName = nameFilter(properties);
-
-    // Clubbed properties (same non-empty clubKey) concatenate their codes with
-    // NO separator into one segment; unclubbed props are each their own segment.
-    // Segments are built in first-encounter (skuPosition) order, then joined by
-    // the industry separator. Name/description stay one entry per property.
-    const segByKey = new Map();
-    const segments = [];
-    const pushCode = (prop, code) => {
-      const key = prop.clubKey || "__" + prop.id;
-      let seg = segByKey.get(key);
-      if (!seg) { seg = []; segByKey.set(key, seg); segments.push(seg); }
-      seg.push(code);
+    const getPv = async (rowid) => {
+      const pvs = rowList(
+        await zcql.executeZCQLQuery(`SELECT * FROM PropertyValue WHERE ROWID = ${rowid} AND ${orgClause(req.catalyst)}`),
+      );
+      return pvs.length ? out(pvs[0]) : null;
     };
-    const nameParts = [];
-    const descParts = [];
-    const missingRequired = [];
-
-    for (const prop of properties) {
-      const rawValue = selectedValues[prop.id];
-      if (rawValue === undefined || rawValue === null || rawValue === "") {
-        if (prop.required) missingRequired.push(prop.caption);
-        continue;
-      }
-
-      if (prop.valueType === "Range") {
-        const num = parseFloat(rawValue);
-        if (isNaN(num)) return res.status(400).json({ error: `${prop.caption} must be a number` });
-        if (prop.rangeMin !== null && num < prop.rangeMin)
-          return res.status(400).json({ error: `${prop.caption} must be >= ${prop.rangeMin}` });
-        if (prop.rangeMax !== null && num > prop.rangeMax)
-          return res.status(400).json({ error: `${prop.caption} must be <= ${prop.rangeMax}` });
-        pushCode(prop, String(rawValue));
-        if (inName(prop)) nameParts.push(String(rawValue));
-        descParts.push(`${prop.caption}: ${rawValue}${prop.unit ? " " + prop.unit : ""}`);
-      } else {
-        if (!idOk(rawValue)) return res.status(400).json({ error: `Invalid value for ${prop.caption}` });
-        const pvs = rowList(
-          await zcql.executeZCQLQuery(`SELECT * FROM PropertyValue WHERE ROWID = ${rawValue} AND ${orgClause(req.catalyst)}`),
-        );
-        if (!pvs.length) return res.status(404).json({ error: `Value ${rawValue} not found` });
-        const pv = out(pvs[0]);
-        pushCode(prop, pv.sku);
-        if (inName(prop)) nameParts.push(pv.name);
-        descParts.push(`${prop.caption}: ${pv.displayValue || pv.name}${prop.unit ? " " + prop.unit : ""}`);
-      }
-    }
 
     const sep = industry.skuSeparator || "";
-    let sku = segments.map((s) => s.join("")).join(sep);
+    let asm;
+    try {
+      asm = await assemble(properties, selectedValues, sep, getPv);
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
+    const { name: asmName, description: asmDescription, missingRequired } = asm;
+    let sku = asm.sku;
     if (sku && Number(industry.seriesStart) > 0) {
       // Numerical series (CR-089). Preview computes but never consumes a
       // number. Editing keeps the item's existing suffix while its property
       // combination is unchanged; a changed combination gets a fresh number.
+      const pad = Number(industry.seriesPad) || 4;
       let kept = null;
       if (idOk(excludeItemId)) {
         const cur = rowList(
@@ -91,17 +59,17 @@ router.post("/generate", async (req, res) => {
             `SELECT sku FROM SKUItem WHERE ROWID = ${excludeItemId} AND ${orgClause(req.catalyst)}`,
           ),
         )[0];
-        const m = cur && new RegExp(`^${escRe(sku + sep)}(\\d{4})$`, "i").exec(cur.sku);
+        const m = cur && new RegExp(`^${escRe(sku + sep)}(\\d{${pad}})$`, "i").exec(cur.sku);
         if (m) kept = m[1];
       }
-      sku = kept ? sku + sep + kept : await nextSeriesSku(req.catalyst, sku, sep, industry.seriesStart);
+      sku = kept ? sku + sep + kept : await nextSeriesSku(req.catalyst, industryId, sku, sep, pad);
     }
     res.json({
       sku,
-      name: nameParts.join(" "),
+      name: asmName,
       // One "Caption: Value" line per filled property — this block is what lands
       // in the Books item (sales) and purchase descriptions.
-      description: descParts.join("\n"),
+      description: asmDescription,
       missingRequired,
       duplicate: sku ? Boolean(await findSkuRowId(req.catalyst, sku, idOk(excludeItemId) ? excludeItemId : undefined)) : false,
     });
@@ -138,7 +106,8 @@ router.post("/create-item", async (req, res) => {
     let finalSku = sku;
     if (Number(industry.seriesStart) > 0) {
       const sep = industry.skuSeparator || "";
-      finalSku = await nextSeriesSku(req.catalyst, stripSuffix(sku, sep), sep, industry.seriesStart);
+      const pad = Number(industry.seriesPad) || 4;
+      finalSku = await nextSeriesSku(req.catalyst, industryId, stripSuffix(sku, sep, pad), sep, pad);
     }
     if (await findSkuRowId(req.catalyst, finalSku)) {
       return res.status(409).json({ error: "SKU already exists" });

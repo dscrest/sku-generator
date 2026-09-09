@@ -11,7 +11,7 @@ const letter = (i) => String.fromCharCode(65 + i); // A, B, C…
 // Company identity band at the top of every printed page (Sales-Order-template
 // header style): centered logo left, address block right. Lives here (not in
 // EstimatePage) so both files can use it without a circular import.
-const COMPANY = {
+export const COMPANY = {
   name: 'MSUN VALVE PRIVATE LIMITED',
   lines: [
     'Plot No.B-10,Swastik Industrial Park,',

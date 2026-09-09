@@ -2,8 +2,8 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { readDealId, readParam } from '../components/CrmInfoCard';
-import { buildEstimate, computeTotals, ddmmyyyy } from './estimateParser';
-import { TermsSheet, HeadBand, FootBand, Cols, FillTable } from './EstimateTerms.jsx';
+import { buildEstimate, computeTotals, ddmmyyyy, validUntil } from './estimateParser';
+import { TermsSheet, HeadBand, FootBand, Cols, FillTable, COMPANY } from './EstimateTerms.jsx';
 import { loadTerms, saveTerms, DEFAULT_TERMS, EXPORT_TERMS } from './estimateTerms.js';
 
 // Estimate ("Techno Commercial Proposal") print page. Two CRM entry points:
@@ -140,6 +140,109 @@ const CSS = `
 }
 `;
 
+// Design "Template 2" (MSUN — Estimate Template 2.pdf): Arial card layout, teal
+// accents. The PDF's embedded fonts are ArialMT / Arial-BoldMT, so plain Arial —
+// no webfont. Markup keeps the engine hooks (.est-sheet / .est-chrome /
+// [data-totals] / .est-foot-band); visuals are scoped under .est2 so the
+// Classic design is untouched.
+const CSS2 = `
+.est2.est-sheet { font-family: Arial, "Helvetica Neue", Helvetica, sans-serif; font-size: 12px;
+  line-height: 1.4; color: #333; }
+/* Header card: logo left, company identity right. Rounded on ALL four corners
+   — the teal rule used to square off the left edge (border-radius: 0 8px 8px 0),
+   which read as a broken card next to the rounded tables below it. */
+.est2 .est2-head { display: flex; justify-content: space-between; align-items: center; gap: 16px;
+  background: #F5F9F9; border-left: 5px solid #0F7576; border-radius: 8px;
+  padding: 9px 14px; margin-bottom: 6px; }
+/* Text wordmark (PDF logo block): MSUN with M teal / SUN orange, spaced
+   VALVE PVT. LTD. line, small gray tagline. Sized up so the wordmark and the
+   address meet in the middle instead of leaving a dead band between them. */
+.est2 .est2-mark-name { font-size: 40px; font-weight: bold; line-height: 1; letter-spacing: 1px; }
+.est2 .est2-mark-name span { color: #0F7576; }
+.est2 .est2-mark-name b { color: #E28E3F; }
+.est2 .est2-mark-sub { color: #0F7576; font-weight: bold; font-size: 13.5px; letter-spacing: 5.5px;
+  margin-top: 3px; }
+.est2 .est2-mark-tag { color: #999; font-size: 10.5px; letter-spacing: .5px; margin-top: 3px; }
+.est2 .est2-head-addr { text-align: right; color: #555; line-height: 1.4; font-size: 12.5px; }
+.est2 .est2-head-addr .est2-co { font-weight: bold; color: #111; font-size: 14.5px; }
+/* ESTIMATE heading + offer meta table. */
+.est2 .est2-title-row { display: flex; justify-content: space-between; align-items: flex-start;
+  margin: 0 0 8px; }
+.est2 .est2-estimate { font-size: 28px; font-weight: bold; color: #0F7576; letter-spacing: 2px; }
+.est2 .est2-sub { font-size: 10.5px; letter-spacing: 2.5px; color: #888; text-transform: uppercase;
+  margin-top: 2px; }
+/* Rounded tables (PDF look): border-collapse can't round corners, so bordered
+   tables use separate borders — outer border + radius + overflow clip on the
+   table, inner rules as right/bottom cell borders only.
+   ponytail: relies on Chrome clipping cell backgrounds at a rounded table box;
+   wrap each table in a rounded div if another engine ever needs this. */
+.est2 table.est2-meta, .est2 table.est2-totals, .est2 table.est2-terms {
+  border-collapse: separate; border-spacing: 0; border: 1px solid #DCE8E7;
+  border-radius: 6px; overflow: hidden; }
+.est2 .est2-meta td, .est2 .est2-totals td, .est2 .est2-terms td {
+  border: 0; border-right: 1px solid #DCE8E7; border-bottom: 1px solid #DCE8E7; }
+.est2 .est2-meta td:last-child, .est2 .est2-totals td:last-child,
+.est2 .est2-terms td:last-child { border-right: 0; }
+.est2 .est2-meta tr:last-child td, .est2 .est2-totals tr:last-child td,
+.est2 .est2-terms tr:last-child td { border-bottom: 0; }
+.est2 table.est2-meta { width: 78mm; }
+.est2 .est2-meta td { padding: 4px 9px; }
+.est2 .est2-meta td:first-child { background: #EFF5F4; color: #556; font-weight: bold; width: 42%; }
+.est2 .est2-meta td:last-child { font-weight: bold; color: #111; text-align: right; }
+/* TO/BUYER + OFFER REFERENCE cards. */
+.est2 .est2-cards { display: flex; gap: 10px; margin-bottom: 12px; }
+.est2 .est2-card { flex: 1; border: 1px solid #DCE8E7; border-radius: 6px; overflow: hidden; }
+.est2 .est2-card-h { background: #EFF5F4; color: #0F7576; font-weight: bold; font-size: 10.5px;
+  letter-spacing: 1.5px; text-transform: uppercase; padding: 5px 10px;
+  border-bottom: 1px solid #DCE8E7; }
+.est2 .est2-card-b { padding: 7px 10px; line-height: 1.5; }
+.est2 .est2-card-b .est2-to-name { font-weight: bold; font-size: 13.5px; color: #111; }
+/* Items block: teal header band, horizontal row rules only (no vertical grid).
+   The three stacked tables (items / filler / totals band) sit in one rounded
+   .est2-tbl container; it takes over the fill-to-footer stretch (flex column,
+   flex:1) from the filler table, which stretches inside it. */
+.est2 .est2-tbl { display: flex; flex-direction: column; flex: 1;
+  border: 1px solid #DCE8E7; border-radius: 6px; overflow: hidden; margin-bottom: 8px; }
+.est2 table.est2-items { table-layout: fixed; }
+.est2 .est2-items th { background: #0F7576; color: #fff; font-size: 10.5px; font-weight: bold;
+  letter-spacing: 1px; text-transform: uppercase; padding: 6px 8px; border: 0; text-align: left; }
+.est2 .est2-items th.est-ctr { text-align: center; }
+.est2 .est2-items th.est2-th-num { text-align: right; }
+.est2 .est2-items td { border: 0; border-bottom: 1px solid #E4EDEC; padding: 6px 8px;
+  vertical-align: top; }
+.est2 .est2-items .est-item-title { text-decoration: none; color: #111; }
+.est2 .est2-items .est-specs { color: #667; font-size: 11px; }
+.est2 .est2-items .est-num { text-align: right; }
+.est2 .est2-items.est-fill-table td { border: 0; }
+/* Per-page subtotal band. */
+.est2 .est2-items tr.est2-band td { background: #EFF5F4; font-weight: bold; border-bottom: 0;
+  color: #111; }
+/* Closing sheet: right totals box, section headings, terms/bank, signatures. */
+.est2 table.est2-totals { width: 78mm; margin-left: auto; margin-bottom: 4px; }
+.est2 .est2-totals td { padding: 5px 10px; }
+.est2 .est2-totals td:first-child { background: #EFF5F4; color: #556; font-weight: bold; }
+.est2 .est2-totals td:last-child { text-align: right; font-weight: bold; color: #111; }
+.est2 .est2-totals tr.est2-grand td { background: #0F7576; color: #fff; border-color: #0F7576; }
+.est2 .est2-sec { color: #0F7576; font-weight: bold; font-size: 11.5px; letter-spacing: 1.5px;
+  text-transform: uppercase; border-bottom: 1px solid #DCE8E7; padding-bottom: 3px;
+  margin: 12px 0 6px; }
+.est2 table.est2-terms { table-layout: fixed; }
+.est2 .est2-terms td { padding: 4px 9px; vertical-align: top; }
+.est2 .est2-terms td:first-child { background: #F4F8F8; font-weight: bold; color: #445; }
+.est2 .est2-bank td { width: 25%; }
+.est2 .est2-bank td:nth-child(odd) { background: #F4F8F8; font-weight: bold; color: #445; }
+.est2 .est2-sign { display: flex; gap: 48px; margin-top: 30px; margin-bottom: 8px; }
+.est2 .est2-sign > div { flex: 1; border-top: 1px solid #333; padding-top: 5px; text-align: center; }
+.est2 .est2-sign b { display: block; font-size: 12px; color: #111; }
+.est2 .est2-sign span { font-size: 10.5px; color: #777; }
+/* Teal-rule text footer bar (replaces the cert-logo strip; keeps the
+   .est-foot-band hook so the pagination budget and bottom-pinning apply). */
+.est2 .est-foot-band { margin: auto 0 0; display: flex; justify-content: space-between;
+  align-items: center; gap: 12px; max-height: none; border-top: 2px solid #0F7576;
+  padding-top: 6px; font-size: 10.5px; color: #778; }
+.est2 .est-foot-band b { color: #0F7576; }
+`;
+
 // Company band + page title + To/Offer header table, shared by the item
 // sheets and the calculation summary sheet.
 function SheetChrome({ h, title, onLogoLoad }) {
@@ -250,6 +353,213 @@ function EstimateSheet({ estimate, items, priced, pageNo, onLogoLoad }) {
   );
 }
 
+// ── Template 2 design ────────────────────────────────────────────────────────
+// Second visual design (MSUN — Estimate Template 2.pdf), selected by the
+// toolbar Design toggle. Same data layer and pagination engine as Classic;
+// only the sheet components differ. Header fields the mockup adds (currency,
+// Incoterms, prepared-by, enquiry ref) are static per CR decision — currency
+// fixed, the rest omitted until a real source exists.
+const T2_CURRENCY = 'USD';
+
+function Foot2Band() {
+  return (
+    <div className="est-foot-band">
+      <b>MSUN VALVE PVT. LTD.</b>
+      <span>An ISO 9001 Certified Company · IAS · IAF · D&amp;B</span>
+      <span>www.msunvalve.com</span>
+    </div>
+  );
+}
+
+// Header card + ESTIMATE heading/offer table + TO-BUYER / OFFER-REFERENCE
+// cards, on every v2 page (item sheets and the closing sheet). Text wordmark
+// per the PDF (M teal + SUN orange, spaced sub-line, gray tagline) — no image.
+function Sheet2Chrome({ h }) {
+  return (
+    <div className="est-chrome">
+      <div className="est2-head">
+        <div className="est2-mark">
+          <div className="est2-mark-name"><span>M</span><b>SUN</b></div>
+          <div className="est2-mark-sub">VALVE PVT. LTD.</div>
+          <div className="est2-mark-tag">Knife Edge Gate · Butterfly · Ball &amp; Industrial Valves</div>
+        </div>
+        <div className="est2-head-addr">
+          <div className="est2-co">{COMPANY.name}</div>
+          {COMPANY.lines.map((l, i) => <div key={i}>{l}</div>)}
+          <div><b>GSTIN:</b> {COMPANY.gstin} · <b>PAN:</b> {COMPANY.pan}</div>
+        </div>
+      </div>
+      <div className="est2-title-row">
+        <div>
+          <div className="est2-estimate">ESTIMATE</div>
+          <div className="est2-sub">Techno-Commercial Proposal</div>
+        </div>
+        <table className="est2-meta">
+          <tbody>
+            <tr><td>Offer No.</td><td>{h.offerNo}</td></tr>
+            <tr><td>Offer Date</td><td>{h.date}</td></tr>
+            {h.revNo && <tr><td>Revision No.</td><td>{h.revNo}</td></tr>}
+            {h.revDate && <tr><td>Revision Date</td><td>{ddmmyyyy(h.revDate)}</td></tr>}
+            <tr><td>Valid Until</td><td>{validUntil(h.date)}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="est2-cards">
+        <div className="est2-card">
+          <div className="est2-card-h">To / Buyer</div>
+          <div className="est2-card-b">
+            <div className="est2-to-name">{h.to.name}</div>
+            {h.to.address && <div>{h.to.address}</div>}
+            {h.to.phone && <div>{h.to.phone}</div>}
+            {h.to.gstin && <div><b>GSTIN:</b> {h.to.gstin}</div>}
+            {h.to.contact && (
+              <div><b>Attn:</b> {h.to.contact}{[h.to.mobile, h.to.email].filter(Boolean).map((s) => ` | ${s}`).join('')}</div>
+            )}
+          </div>
+        </div>
+        <div className="est2-card">
+          <div className="est2-card-h">Offer Reference</div>
+          <div className="est2-card-b">
+            <div><b>Currency:</b> {T2_CURRENCY}</div>
+            {h.discountPct != null && <div><b>Discount:</b> {h.discountPct}%</div>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Template 2 item page — same contract as EstimateSheet (the pagination engine
+// renders either interchangeably via the est-chrome/thead/[data-totals]/
+// est-foot-band hooks).
+function EstimateSheet2({ estimate, items, priced, pageNo, onLogoLoad }) {
+  const h = estimate.header;
+  const totals = computeTotals(items, null);
+  const widths = priced
+    ? ['6%', '40%', '12%', '9%', '16%', '17%']
+    : ['6%', '60%', '12%', '9%'];
+
+  return (
+    <div className="est-sheet est2">
+      <Sheet2Chrome h={h} onLogoLoad={onLogoLoad} />
+
+      <div className="est2-tbl">
+      <table className="est2-items" style={{ marginBottom: 0 }}>
+        <Cols widths={widths} />
+        <thead>
+          <tr>
+            <th className="est-ctr">SR.</th>
+            <th>DESCRIPTION OF GOODS</th>
+            <th className="est-ctr">SIZE</th>
+            <th className="est-ctr">QTY</th>
+            {priced && <th className="est2-th-num">UNIT PRICE</th>}
+            {priced && <th className="est2-th-num">AMOUNT</th>}
+          </tr>
+        </thead>
+        {items.map((it) => (
+          <tbody key={it.sr} data-item>
+            {it.flat ? (
+              <tr>
+                <td className="est-ctr est-sr">{it.sr}</td>
+                <td>
+                  <div className="est-item-title">{it.title}</div>
+                  {it.text && <div style={{ whiteSpace: 'pre-wrap' }}>{it.text}</div>}
+                </td>
+                <td className="est-ctr">-</td>
+                <td className="est-ctr">{it.qty}</td>
+                {priced && <td className="est-num">{inr.format(it.rate)}</td>}
+                {priced && <td className="est-num">{inr.format(it.total)}</td>}
+              </tr>
+            ) : (
+              <ItemRows item={it} priced={priced} />
+            )}
+          </tbody>
+        ))}
+      </table>
+      <FillTable widths={widths} className="est2-items" />
+      <table className="est2-items" data-totals style={{ marginTop: 0 }}>
+        <Cols widths={widths} />
+        <tbody>
+          <tr className="est2-band">
+            <td />
+            <td>PAGE {pageNo}</td>
+            <td />
+            <td className="est-ctr">{totals.totalQty}</td>
+            {priced && <td className="est2-th-num" style={{ textAlign: 'right', textTransform: 'uppercase' }}>Sub Total</td>}
+            {priced && <td className="est-num">{inr.format(totals.totalA)}</td>}
+          </tr>
+        </tbody>
+      </table>
+      </div>
+      <Foot2Band />
+    </div>
+  );
+}
+
+// Template 2 closing page: grand-totals box, T&C, bank details, signature row.
+// Replaces both Classic's CalcSheet and TermsSheet. Terms values are the same
+// HTML fragments the Classic in-place editor produces — read-only here (edit
+// via the Classic design's ✎ Edit T&C).
+function ClosingSheet2({ estimates, priced, terms }) {
+  const pcts = [...new Set(estimates.map((e) => e.header.discountPct).filter(Boolean))];
+  const grand = { totalA: 0, totalQty: 0, disc: 0, net: 0 };
+  for (const e of estimates) {
+    const t = computeTotals(e.items, e.header.discountPct);
+    grand.totalA += t.totalA; grand.totalQty += t.totalQty;
+    grand.disc += t.disc; grand.net += t.net;
+  }
+  return (
+    <div className="est-sheet est2">
+      <Sheet2Chrome h={estimates[0].header} />
+      {priced ? (
+        <table className="est2-totals">
+          <tbody>
+            <tr><td>Sub Total</td><td>{inr.format(grand.totalA)}</td></tr>
+            {grand.disc > 0 && (
+              <tr><td>Discount{pcts.length === 1 ? ` @${pcts[0]}%` : ''}</td><td>{inr.format(grand.disc)}</td></tr>
+            )}
+            <tr><td>Packing &amp; Forwarding</td><td>Included</td></tr>
+            <tr className="est2-grand"><td>Total</td><td>{inr.format(grand.net)}</td></tr>
+          </tbody>
+        </table>
+      ) : (
+        <table className="est2-totals">
+          <tbody>
+            <tr className="est2-grand"><td>Total Qty</td><td>{grand.totalQty}</td></tr>
+          </tbody>
+        </table>
+      )}
+      <div className="est2-sec">General Terms &amp; Conditions</div>
+      <table className="est2-terms">
+        <Cols widths={['22%', null]} />
+        <tbody>
+          {terms.terms.map((t, i) => (
+            <tr key={i}>
+              <td><span dangerouslySetInnerHTML={{ __html: t.label }} /></td>
+              <td style={{ whiteSpace: 'pre-wrap' }}><span dangerouslySetInnerHTML={{ __html: t.text }} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="est2-sec">Bank Details</div>
+      <table className="est2-terms est2-bank">
+        <tbody>
+          {terms.bank.map((r, i) => (
+            <tr key={i}>
+              {r.map((c, j) => <td key={j} dangerouslySetInnerHTML={{ __html: c }} />)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="est2-sign">
+        <div><b>Customer Acceptance</b><span>Signature &amp; company stamp</span></div>
+        <div><b>For MSUN Valve Pvt. Ltd.</b><span>Authorised Signatory</span></div>
+      </div>
+      <Foot2Band />
+    </div>
+  );
+}
+
 // "CALCULATION FOR OFFER" summary sheet (reference PDF page 05): one row per
 // item per printed page (PAG nn spans a multi-item page), then grand
 // qty/amount, discount, and final basic amount across every printed page.
@@ -353,12 +663,13 @@ const MM = 96 / 25.4; // CSS px per mm
 const PAGE_PX = (297 - 24) * MM; // A4 height inside the sheet's 12mm vertical padding
 const SLACK_PX = 24; // absorbs the unmeasured est-grid margin + wrap/rounding drift
 
-function EstimatePages({ estimates, priced, version }) {
+function EstimatePages({ estimates, priced, version, design }) {
   const [pages, setPages] = useState(null);
   const measureRef = useRef(null);
   const remeasured = useRef(new Set()); // one re-run per image (logo, ISO strip)
+  const Sheet = design === 'template2' ? EstimateSheet2 : EstimateSheet;
 
-  useLayoutEffect(() => { setPages(null); }, [estimates, priced, version]);
+  useLayoutEffect(() => { setPages(null); }, [estimates, priced, version, design]);
 
   // The sheet renders in the Inter webfont; a measure pass that ran before it
   // loaded packed items with shorter fallback-font heights, overflowing the
@@ -408,7 +719,7 @@ function EstimatePages({ estimates, priced, version }) {
     <div ref={measureRef} aria-hidden="true"
       style={{ position: 'absolute', left: -9999, top: 0, visibility: 'hidden' }}>
       {estimates.map((e, i) => (
-        <EstimateSheet key={i} estimate={e} items={e.items} priced={priced} pageNo="00"
+        <Sheet key={i} estimate={e} items={e.items} priced={priced} pageNo="00"
           onLogoLoad={onLogoLoad} />
       ))}
     </div>
@@ -416,10 +727,10 @@ function EstimatePages({ estimates, priced, version }) {
   return (
     <>
       {pages.map((p, k) => (
-        <EstimateSheet key={k} estimate={estimates[p.ei]} items={p.items} priced={priced}
+        <Sheet key={k} estimate={estimates[p.ei]} items={p.items} priced={priced}
           pageNo={String(k + 1).padStart(2, '0')} onLogoLoad={onLogoLoad} />
       ))}
-      {pages.length > 0 && version === 'with-total' && (
+      {pages.length > 0 && version === 'with-total' && design !== 'template2' && (
         <CalcSheet estimates={estimates} pages={pages} priced={priced}
           pageNo={String(pages.length + 1).padStart(2, '0')} />
       )}
@@ -494,6 +805,7 @@ export default function EstimatePage() {
   const [checked, setChecked] = useState(new Set());
   const [priced, setPriced] = useState(true);
   const [version, setVersion] = useState('with-total');
+  const [design, setDesign] = useState('classic'); // 'classic' | 'template2'
   const [revs, setRevs] = useState({}); // quoteId → { revNo, revDate }
   const [terms, setTermsState] = useState(() => loadTerms(false));
   const [exportTerms, setExportTermsState] = useState(() => loadTerms(true));
@@ -617,16 +929,20 @@ export default function EstimatePage() {
   else body = (
     <>
       <div className="est-print-area">
-        <EstimatePages estimates={estimates} priced={priced} version={version} />
-        <TermsSheet terms={activeTerms} defaults={isExport ? EXPORT_TERMS : DEFAULT_TERMS}
-          editing={editTerms} onChange={setActiveTerms} />
+        <EstimatePages estimates={estimates} priced={priced} version={version} design={design} />
+        {design === 'template2' ? (
+          estimates.length > 0 && <ClosingSheet2 estimates={estimates} priced={priced} terms={activeTerms} />
+        ) : (
+          <TermsSheet terms={activeTerms} defaults={isExport ? EXPORT_TERMS : DEFAULT_TERMS}
+            editing={editTerms} onChange={setActiveTerms} />
+        )}
       </div>
     </>
   );
 
   return (
     <div style={{ background: '#eceef1', minHeight: '100%', overflow: 'auto' }}>
-      <style>{CSS}</style>
+      <style>{CSS}{CSS2}</style>
       {state.status === 'sheet' && (
         <div className="est-toolbar">
           {!quoteId && state.quotes?.length > 1 && (
@@ -639,12 +955,19 @@ export default function EstimatePage() {
           <select value={version} onChange={(e) => setVersion(e.target.value)}>
             {TEMPLATE_VERSIONS.map((v) => <option key={v.key} value={v.key}>{v.label}</option>)}
           </select>
+          <span className="est-lbl">Design</span>
+          <button className={design === 'classic' ? 'est-active' : ''} onClick={() => setDesign('classic')}>Classic</button>
+          <button className={design === 'template2' ? 'est-active' : ''} onClick={() => setDesign('template2')}>Template 2</button>
           {rawQuotes.map((q) => (
             <RevFields key={q.id} value={revs[q.id]} onChange={(v) => setRev(q.id, v)}
               label={rawQuotes.length > 1 ? (q.Quote_No || q.Quote_Number || q.id) : ''} />
           ))}
           <span className="est-spacer" />
-          <button className={editTerms ? 'est-active' : ''} onClick={toggleEditTerms}>✎ Edit T&C</button>
+          {/* T&C editing lives on the Classic TermsSheet; Template 2 renders the
+              same (edited) terms read-only. */}
+          {design !== 'template2' && (
+            <button className={editTerms ? 'est-active' : ''} onClick={toggleEditTerms}>✎ Edit T&C</button>
+          )}
           <button onClick={() => window.print()}>🖨 Print / Save PDF</button>
         </div>
       )}

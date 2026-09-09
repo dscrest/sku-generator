@@ -65,7 +65,7 @@ export default function GridFooter({ pager }) {
 }
 
 // Column filter whose options are the distinct values present in the data.
-export function FilterSelect({ label, value, onChange, options }) {
+export function FilterSelect({ label, value, onChange, options, style }) {
   return (
     <select
       value={value}
@@ -75,6 +75,7 @@ export function FilterSelect({ label, value, onChange, options }) {
         padding: '6px 10px', fontSize: 12, border: '1px solid var(--border)',
         borderRadius: 'var(--radius-md)', background: 'var(--bg-card)',
         color: value ? 'var(--text-primary)' : 'var(--text-muted)', cursor: 'pointer', maxWidth: 200,
+        ...style,
       }}
     >
       <option value="">All {label}</option>

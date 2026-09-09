@@ -1,0 +1,23 @@
+{
+  "locale": ["en"],
+  "service": "CRM",
+  "type": "widget",
+  "modules": {
+    "widgets": [
+      {
+        "location": "button",
+        "url": "/app/widget.html",
+        "name": "SKU Picker"
+      }
+    ]
+  },
+  "whiteListedDomains": [
+    "https://sku-gen-octfis-925638796.development.catalystserverless.com"
+  ],
+  "cspDomains": {
+    "connect-src": [
+      "https://sku-gen-octfis-925638796.development.catalystserverless.com"
+    ]
+  },
+  "config": []
+}

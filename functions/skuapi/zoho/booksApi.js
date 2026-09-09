@@ -132,14 +132,15 @@ async function apiRequest(catalyst, method, path, body, service = "books") {
 
 // The generated property breakdown goes into both description boxes Books shows on
 // an item: `description` (Sales Information) and `purchase_description` (Purchase).
-// Custom fields are never pushed — the client maintains them in Books by hand.
+// `customFields` ([{api_name, value}], from Property.zohoCfApiName mappings) go
+// into the Books item's custom fields; omitted when empty.
 // Tracking method + inventory account are immutable once the item has transactions,
 // so they're only set here (create), never in updateItem.
 // opts: { tracking: 'none'|'serial'|'batch', inventoryAccountId } from the push
 // dialog; defaults (serial + Finished Goods) keep non-dialog paths unchanged.
 // ponytail: serial/batch keys are `track_serial_number`/`track_batch_number` per
 // Books v3; verify against the org on first live push.
-async function createItem(catalyst, name, sku, description, opts = {}) {
+async function createItem(catalyst, name, sku, description, opts = {}, customFields) {
   const inventoryAccountId = opts.inventoryAccountId || (await getFinishedGoodsAccountId(catalyst));
   const tracking = opts.tracking || "serial";
   // Default tax so India-GST orgs get a line-level tax on every transaction built
@@ -160,16 +161,18 @@ async function createItem(catalyst, name, sku, description, opts = {}) {
     inventory_valuation_method: "fifo",
     inventory_account_id: inventoryAccountId || undefined,
     rate: 0,
+    custom_fields: customFields && customFields.length ? customFields : undefined,
   });
   return data.item;
 }
 
-async function updateItem(catalyst, zohoItemId, name, sku, description) {
+async function updateItem(catalyst, zohoItemId, name, sku, description, customFields) {
   const body = { name, sku, unit: "pcs" };
   if (description !== undefined) {
     body.description = description;
     body.purchase_description = description;
   }
+  if (customFields && customFields.length) body.custom_fields = customFields;
   const data = await apiRequest(catalyst, "PUT", `/items/${zohoItemId}`, body);
   return data.item;
 }

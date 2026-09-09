@@ -22,8 +22,8 @@ const T = {
   bgSubtle: '#f1f5f9',
   border: '#e2e8f0',
   borderStrong: '#cbd5e1',
-  mono: "'JetBrains Mono', ui-monospace, monospace",
-  sans: "'Inter', ui-sans-serif, sans-serif",
+  mono: 'var(--font-mono)',
+  sans: 'var(--font)',
 };
 
 const shadowSm = '0 1px 2px rgba(15,23,42,0.04), 0 1px 4px rgba(15,23,42,0.04)';
@@ -151,6 +151,12 @@ export default function SKUGeneratorPage() {
       const { data: valMap } = await axios.get(`/api/industries/${industry.id}/property-values`);
       setPropertyValues(valMap);
       const initSels = {};
+      // Seed each property's default value first; a permalink param or edit-mode
+      // selection below overrides it (precedence: edit > permalink > default).
+      props.forEach(p => {
+        const def = (valMap[p.id] || []).find(v => v.isDefault);
+        if (def) initSels[p.id] = String(def.id);
+      });
       props.forEach(p => {
         const qVal = searchParams.get(`p${p.id}`);
         if (qVal) initSels[p.id] = qVal;
@@ -405,7 +411,8 @@ export default function SKUGeneratorPage() {
                   {/* Numerical series chip (CR-089): server-issued, shown once
                       the preview computes it. */}
                   {!loadingProps && activeProps.length > 0 && Number(selectedIndustry.seriesStart) > 0 && (() => {
-                    const suffix = preview?.sku?.match(/\d{4}$/)?.[0];
+                    const pad = Number(selectedIndustry.seriesPad) || 4;
+                    const suffix = preview?.sku?.match(new RegExp(`\\d{${pad}}$`))?.[0];
                     return (
                       <span
                         title="Numerical series"

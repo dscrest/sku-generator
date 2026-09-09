@@ -11,7 +11,7 @@ import { StatusChip, AccessNotice, Table, select, thStyle, cell } from '../compo
  * own tables, so they cost nothing in Zoho API calls however many projects
  * they span.
  */
-const VIEWS = ['SO–BOM status', 'Shortfall / pending', 'Item pipeline', 'Reconciliation', 'Warehouse stock'];
+const VIEWS = ['SO–BOM Status', 'Shortfall / Pending', 'Item Pipeline', 'Reconciliation', 'Warehouse Stock'];
 
 export default function WorkOrderReportsPage() {
   // ?view= keeps the active report across refreshes (CR-038).
@@ -207,7 +207,7 @@ export default function WorkOrderReportsPage() {
             : 'No purchase request lines match.'}</Empty>
         ) : view === VIEWS[0] ? (
           <Table
-            head={['Work order', 'Sales order', 'Customer', 'Status', 'Items', 'Required', 'Reserved', 'Issued', 'On order', 'Short']}
+            head={['Work Order', 'Sales Order', 'Customer', 'Status', 'Items', 'Required', 'Reserved', 'Issued', 'On Order', 'Short']}
             rightFrom={4}
             rows={pageRows.map(r => ({
               key: r.id, onClick: () => navigate(`/wo/${r.id}`),
@@ -220,7 +220,7 @@ export default function WorkOrderReportsPage() {
           />
         ) : view === VIEWS[2] ? (
           <Table
-            head={['Item', 'Vendors', 'Requested', 'On draft PR', 'On draft PO', 'On open PO', 'Received', 'Billed']}
+            head={['Item', 'Vendors', 'Requested', 'On Draft PR', 'On Draft PO', 'On Open PO', 'Received', 'Billed']}
             rightFrom={2}
             rows={pageRows.map(r => ({
               key: r.rmItemId,
@@ -232,7 +232,7 @@ export default function WorkOrderReportsPage() {
           />
         ) : view === VIEWS[3] ? (
           <Table
-            head={['Work order', 'Status', 'Finished good', 'Item', 'SKU', 'Required', 'Reserved', 'Issued', 'Returned', 'Leftover']}
+            head={['Work Order', 'Status', 'Finished Good', 'Item', 'SKU', 'Required', 'Reserved', 'Issued', 'Returned', 'Leftover']}
             rightFrom={5}
             rows={pageRows.map((r, i) => ({
               key: `${r.workOrderId}-${r.itemId}-${i}`, onClick: () => navigate(`/wo/${r.workOrderId}`),
@@ -255,7 +255,7 @@ export default function WorkOrderReportsPage() {
             onRefresh={refreshItem} busyItem={busyItem} groupSync={groupSync} />
         ) : (
           <Table
-            head={['Work order', 'Customer', 'Finished good', 'Raw material', 'Required', 'Available', 'On order', 'Short by', 'PO raised']}
+            head={['Work Order', 'Customer', 'Finished Good', 'Raw Material', 'Required', 'Available', 'On Order', 'Short By', 'PO Raised']}
             rightFrom={4}
             rows={pageRows.map((r, i) => ({
               key: `${r.workOrderId}-${r.rmItemId}-${i}`, onClick: () => navigate(`/wo/${r.workOrderId}`),
@@ -322,7 +322,7 @@ function WarehouseStock({
       </div>
 
       {!displayed.length ? <Empty>No items match the current filters.</Empty> : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+        <table className="grid-table" style={{ width: '100%' }}>
           <thead>
             <tr>
               <th style={thStyle}>Item name</th>
@@ -375,13 +375,13 @@ const refreshBtn = {
 
 // Plain CSV from the rows already on screen — no server round trip.
 const CSV_LABELS = {
-  woNumber: 'Work order', salesOrderNumber: 'Sales order', customerName: 'Customer', status: 'Status',
-  items: 'Items', required: 'Required', reserved: 'Reserved', issued: 'Issued', ordered: 'On order',
-  shortItems: 'Short', rmName: 'Raw material', vendors: 'Vendors', requested: 'Requested',
+  woNumber: 'Work Order', salesOrderNumber: 'Sales Order', customerName: 'Customer', status: 'Status',
+  items: 'Items', required: 'Required', reserved: 'Reserved', issued: 'Issued', ordered: 'On Order',
+  shortItems: 'Short', rmName: 'Raw Material', vendors: 'Vendors', requested: 'Requested',
   noPo: 'On draft PR', onPoDraft: 'On draft PO', onPoOpen: 'On open PO', received: 'Received',
-  billed: 'Billed', fgName: 'Finished good', name: 'Item', sku: 'SKU', returned: 'Returned',
+  billed: 'Billed', fgName: 'Finished Good', name: 'Item', sku: 'SKU', returned: 'Returned',
   leftover: 'Leftover', removedFromBom: 'Removed from BOM', available: 'Available',
-  onOrder: 'On order', shortfallQty: 'Short by', noPoRaised: 'PO raised',
+  onOrder: 'On Order', shortfallQty: 'Short By', noPoRaised: 'PO Raised',
   itemName: 'Item', warehouseName: 'Warehouse', stockOnHand: 'On hand', availableStock: 'Available',
   syncedAt: 'Last synced', total: 'Total',
 };

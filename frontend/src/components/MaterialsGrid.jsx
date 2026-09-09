@@ -27,7 +27,7 @@ const ACTIONS = [
     move: 'Issue → Main warehouse', help: 'Send unused issued material back to stock.' },
   // uncapped: any quantity may be requested — the cap only feeds MAX (what is
   // still short). Confirm raises a purchase request instead of a stock move.
-  { key: 'purchase', label: 'Purchase', verb: 'Request', gerund: 'Requesting', capKey: 'shortfallQty', uncapped: true,
+  { key: 'purchase', label: 'Raise PR', verb: 'Request', gerund: 'Requesting', capKey: 'shortfallQty', uncapped: true,
     move: 'Creates a purchase request — no stock moves', help: 'Raise a purchase request for the typed quantities. MAX fills what is still short.' },
 ];
 
@@ -35,7 +35,7 @@ const ACTIONS = [
 // bar are always shown. COLS are the extra BRD-reconciliation columns, hidden by
 // default and revealed through the column picker for anyone who wants them.
 const COLS = [
-  { key: 'po', label: 'PO', help: 'Quantity ordered from vendors for this work order.' },
+  { key: 'po', label: 'PO Qty', help: 'Quantity ordered from vendors for this work order.' },
   { key: 'received', label: 'Received', help: 'Quantity received against those purchase orders.' },
   { key: 'billed', label: 'Billed', help: 'Quantity the vendor has billed.' },
   { key: 'reservable', label: 'Reservable', help: 'What you can still reserve: A − C − D − G, capped by stock on hand.' },
@@ -69,11 +69,10 @@ const th = {
 };
 
 export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
-  const [fgId, setFgId] = useState(fgs[0]?.id || null);
   const [action, setAction] = useState('reserve');
-  const [grid, setGrid] = useState(null);
-  const [qty, setQty] = useState({});          // itemId -> typed quantity
-  const [sel, setSel] = useState(() => new Set());   // itemIds ticked for bulk fill
+  const [grids, setGrids] = useState(null);    // one grid per FG (Haresh item 1)
+  const [qty, setQty] = useState({});          // rowKey (fgId|itemId) -> typed quantity
+  const [sel, setSel] = useState(() => new Set());   // rowKeys ticked for bulk fill
   const [filter, setFilter] = useState('all');       // all | short | covered | left
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
@@ -82,7 +81,38 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
   const [colCfg, setColCfg] = useState(loadColCfg);   // applied column config
   const [draftCfg, setDraftCfg] = useState(null);     // picker working copy (null = closed)
   const [dragKey, setDragKey] = useState(null);
+  // Warehouse selection (Haresh item 3): only active when the org setting is on.
+  const [whCfg, setWhCfg] = useState(null);           // { allow, options, roles }
+  const [fromWh, setFromWh] = useState('');
+  const [toWh, setToWh] = useState('');
   const act = ACTIONS.find(a => a.key === action);
+
+  useEffect(() => {
+    axios.get('/api/wo/settings')
+      .then(({ data }) => setWhCfg({
+        allow: data.values?.allowWarehouseSelect === 'true',
+        options: data.warehouses || [],
+        roles: {
+          main: data.values?.mainWarehouseId || '',
+          reserve: data.values?.reserveWarehouseId || '',
+          issue: data.values?.issueWarehouseId || '',
+        },
+      }))
+      .catch(() => setWhCfg(null));
+  }, []);
+
+  // The fixed role routing per action — the defaults the selects start from.
+  const defaultRoute = useCallback((a) => {
+    const r = whCfg?.roles || {};
+    return {
+      reserve: [r.main, r.reserve], dereserve: [r.reserve, r.main],
+      issue: [r.reserve, r.issue], return: [r.issue, r.main],
+    }[a] || ['', ''];
+  }, [whCfg]);
+  useEffect(() => {
+    const [f, t] = defaultRoute(action);
+    setFromWh(f); setToWh(t);
+  }, [action, defaultRoute]);
 
   const visibleCols = useMemo(
     () => colCfg.filter(c => c.visible).map(c => COLS.find(col => col.key === c.key)).filter(Boolean),
@@ -107,15 +137,14 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
     setDragKey(null);
   }
 
-  function load(id = fgId) {
-    if (!id) return;
+  function load(keepQty = null) {
     setLoading(true);
-    axios.get(`/api/wo/${workOrderId}/grid`, { params: { fgId: id } })
-      .then(({ data }) => { setGrid(data); setQty({}); setSel(new Set()); })
+    axios.get(`/api/wo/${workOrderId}/grid`)
+      .then(({ data }) => { setGrids(data.grids); setQty(keepQty || {}); setSel(new Set()); })
       .catch(err => toast.error(err.response?.data?.error || 'Could not load the grid'))
       .finally(() => setLoading(false));
   }
-  useEffect(() => { load(fgId); /* eslint-disable-next-line */ }, [fgId, workOrderId]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [workOrderId]);
 
   // Refresh = re-pull stock/PO numbers from Zoho, then re-read the grid.
   async function syncStock() {
@@ -130,7 +159,13 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
     }
   }
 
-  const rows = grid?.rows || [];
+  // All FGs' BOM lines flattened; the same raw material may appear under two
+  // FGs, so every row is keyed by fgId|itemId, never by itemId alone.
+  const rows = useMemo(() => (grids || []).flatMap(g =>
+    g.rows.map(r => ({ ...r, key: `${g.workOrderFgId}|${r.itemId}`, fgId: g.workOrderFgId })),
+  ), [grids]);
+  const multiFg = (grids || []).length > 1;
+  const grid = grids?.[0];   // banner metadata is the same across the batch
 
   // A line still needs reserving when it isn't fully covered; for the other
   // actions the actionable set is simply "there's a cap to act on".
@@ -153,36 +188,42 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
     });
   }, [rows, filter, search, action]);
 
+  const rowByKey = useMemo(() => new Map(rows.map(r => [r.key, r])), [rows]);
   const entered = useMemo(
-    () => Object.entries(qty).filter(([, v]) => Number(v) > 0).map(([itemId, v]) => ({ itemId, qty: Number(v) })),
-    [qty],
+    () => Object.entries(qty)
+      .filter(([k, v]) => Number(v) > 0 && rowByKey.has(k))
+      .map(([k, v]) => ({ key: k, row: rowByKey.get(k), qty: Number(v) })),
+    [qty, rowByKey],
   );
   const enteredUnits = entered.reduce((s, e) => s + e.qty, 0);
 
   // Fill the most each line can take — the "reserve everything I can" case. Scoped
   // to whatever the user is looking at: ticked rows if any, else the current filter.
   function fillAvailable() {
-    const target = sel.size ? visible.filter(r => sel.has(r.itemId)) : visible;
+    // ponytail: MAX on the same raw material under two FGs can jointly exceed
+    // main stock — the server re-validates per FG at confirm and rejects the
+    // second, same as the old FG-switch flow. No client-side joint cap.
+    const target = sel.size ? visible.filter(r => sel.has(r.key)) : visible;
     const next = { ...qty };
     let any = false;
     for (const r of target) {
       const cap = r[act.capKey];
-      if (cap > 0) { next[r.itemId] = String(cap); any = true; }
+      if (cap > 0) { next[r.key] = String(cap); any = true; }
     }
     setQty(next);
     if (!any) toast(`Nothing to ${act.verb.toLowerCase()} on these lines yet`);
   }
 
-  const toggleRow = useCallback((itemId) => {
-    setSel(s => { const n = new Set(s); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n; });
+  const toggleRow = useCallback((rowKey) => {
+    setSel(s => { const n = new Set(s); n.has(rowKey) ? n.delete(rowKey) : n.add(rowKey); return n; });
   }, []);
-  const setRowQty = useCallback((itemId, v) => setQty(q => ({ ...q, [itemId]: v })), []);
-  const allTicked = visible.length > 0 && visible.every(r => sel.has(r.itemId));
+  const setRowQty = useCallback((rowKey, v) => setQty(q => ({ ...q, [rowKey]: v })), []);
+  const allTicked = visible.length > 0 && visible.every(r => sel.has(r.key));
   function toggleAll() {
     setSel(s => {
       const n = new Set(s);
-      if (allTicked) visible.forEach(r => n.delete(r.itemId));
-      else visible.forEach(r => n.add(r.itemId));
+      if (allTicked) visible.forEach(r => n.delete(r.key));
+      else visible.forEach(r => n.add(r.key));
       return n;
     });
   }
@@ -192,9 +233,9 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
   function requestPurchase() {
     if (action !== 'purchase' && entered.length
       && !window.confirm('Switching to Purchase clears the quantities you typed. Continue?')) return;
-    const target = sel.size ? rows.filter(r => sel.has(r.itemId)) : rows.filter(r => r.shortfallQty > 0);
+    const target = sel.size ? rows.filter(r => sel.has(r.key)) : rows.filter(r => r.shortfallQty > 0);
     const next = {};
-    for (const r of target) if (r.shortfallQty > 0) next[r.itemId] = String(r.shortfallQty);
+    for (const r of target) if (r.shortfallQty > 0) next[r.key] = String(r.shortfallQty);
     setAction('purchase');
     setQty(next);
     if (!Object.keys(next).length) toast('Nothing is short — tick rows or type quantities to request extra');
@@ -205,30 +246,50 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
     setBusy(true);
     try {
       if (action === 'purchase') {
-        const lines = entered.map(({ itemId, qty: q }) => {
-          const r = rows.find(x => x.itemId === itemId);
-          return { rmItemId: itemId, rmName: r?.name || '', requiredQty: q, purchaseQty: q };
-        });
+        // One PR for the whole work order — the same item under two FGs is
+        // collapsed server-side at PO time.
+        const lines = entered.map(({ row, qty: q }) => (
+          { rmItemId: row.itemId, rmName: row.name || '', requiredQty: q, purchaseQty: q }
+        ));
         const { data } = await axios.post(`/api/wo/${workOrderId}/purchase-request`, { lines });
         toast.success(`${data.prNumber} created — pick a vendor per line on the Purchase page, then confirm`);
         setQty({}); setSel(new Set());
         onChanged?.();
         return;
       }
-      const { data } = await axios.post(`/api/wo/${workOrderId}/txn`, {
-        fgId, type: action, requested: entered, confirm: true,
-      });
-      toast.success(
-        data.transferOrderNumber
-          ? `${act.verb}d — Transfer Order ${data.transferOrderNumber} created`
-          : `${act.verb}d — ${data.txnNumber}`,
-      );
-      load();
+      // Stock moves are per-FG server-side: one txn per FG, sequentially (the
+      // Catalyst dev tier throttles concurrent calls). A failed FG keeps its
+      // typed quantities so the user can fix and retry just that part.
+      const byFg = new Map();
+      for (const e of entered) {
+        if (!byFg.has(e.row.fgId)) byFg.set(e.row.fgId, []);
+        byFg.get(e.row.fgId).push(e);
+      }
+      const failedKeys = new Set();
+      for (const [fgId, fgEntries] of byFg) {
+        try {
+          const { data } = await axios.post(`/api/wo/${workOrderId}/txn`, {
+            fgId, type: action,
+            requested: fgEntries.map(e => ({ itemId: e.row.itemId, qty: e.qty })),
+            confirm: true,
+            ...(whCfg?.allow && fromWh && toWh ? { fromWarehouseId: fromWh, toWarehouseId: toWh } : {}),
+          });
+          toast.success(
+            data.transferOrderNumber
+              ? `${act.verb}d — Transfer Order ${data.transferOrderNumber} created`
+              : `${act.verb}d — ${data.txnNumber}`,
+          );
+        } catch (err) {
+          const d = err.response?.data;
+          // Every problem at once, so the whole form is fixed in one pass.
+          (d?.details || [d?.error || 'Could not complete the action']).forEach(m => toast.error(m, { duration: 6000 }));
+          fgEntries.forEach(e => failedKeys.add(e.key));
+        }
+      }
+      const keep = {};
+      for (const e of entered) if (failedKeys.has(e.key)) keep[e.key] = String(e.qty);
+      load(failedKeys.size ? keep : null);
       onChanged?.();
-    } catch (err) {
-      const d = err.response?.data;
-      // Every problem at once, so the whole form is fixed in one pass.
-      (d?.details || [d?.error || 'Could not complete the action']).forEach(m => toast.error(m, { duration: 6000 }));
     } finally {
       setBusy(false);
     }
@@ -248,19 +309,6 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       {/* action selector — the only thing that changes between the four jobs */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' }}>
-        {fgs.length > 1 && (
-          <select
-            value={fgId || ''}
-            onChange={e => {
-              // Switching FG reloads the grid and clears typed quantities — ask first.
-              if (entered.length && !window.confirm('Switching the finished good clears the quantities you typed. Continue?')) return;
-              setFgId(e.target.value);
-            }}
-            style={select}
-          >
-            {fgs.map(f => <option key={f.id} value={f.id}>{f.name} × {f.qty}</option>)}
-          </select>
-        )}
         <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
           {ACTIONS.map(a => (
             <button
@@ -288,7 +336,7 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
         <button
           onClick={requestPurchase}
           style={{ ...btn, background: '#b45309', borderColor: '#b45309', color: '#fff', fontWeight: 600 }}>
-          Request purchase
+          Proceed Purchase
         </button>
         <button onClick={syncStock} disabled={syncing} style={btn}>{syncing ? 'Syncing…' : '⟳ Refresh stock'}</button>
         <div style={{ position: 'relative' }}>
@@ -364,6 +412,18 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
           </button>
         ))}
         <div style={{ flex: 1 }} />
+        {whCfg?.allow && action !== 'purchase' && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}>
+            From
+            <select value={fromWh} onChange={e => setFromWh(e.target.value)} style={{ ...select, maxWidth: 160 }}>
+              {whCfg.options.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+            →
+            <select value={toWh} onChange={e => setToWh(e.target.value)} style={{ ...select, maxWidth: 160 }}>
+              {whCfg.options.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+          </span>
+        )}
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
@@ -375,19 +435,13 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
         </button>
       </div>
 
-      {grid?.lastSyncAt && (
-        <div style={{ padding: '2px 20px 8px', fontSize: 12, color: 'var(--text-muted)' }}>
-          Stock last synced {grid.lastSyncAt} · BOM revision {grid.revision}
-        </div>
-      )}
-
       <div style={{ flex: 1, overflow: 'auto', padding: '0 20px' }}>
         {loading ? <Empty>Loading…</Empty> : !rows.length ? (
           <Empty>No BOM lines yet — import the BOM on the <b>BOM</b> tab.</Empty>
         ) : !visible.length ? (
           <Empty>No lines match this filter.</Empty>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+          <table className="grid-table" style={{ width: '100%' }}>
             <thead>
               <tr>
                 <th style={{ ...th, textAlign: 'center', width: 34 }}>
@@ -404,13 +458,38 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
               </tr>
             </thead>
             <tbody>
-              {visible.map(r => (
-                <GridRow
-                  key={r.itemId} r={r} act={act} visibleCols={visibleCols}
-                  qtyVal={qty[r.itemId] ?? ''} ticked={sel.has(r.itemId)}
-                  onToggle={toggleRow} onQty={setRowQty}
-                />
-              ))}
+              {(() => {
+                // All FGs at once, sub-items grouped below each FG (Haresh item 1).
+                const out = [];
+                let lastFg = null;
+                const span = 6 + visibleCols.length + 2;
+                for (const r of visible) {
+                  if (multiFg && r.fgId !== lastFg) {
+                    lastFg = r.fgId;
+                    const g = grids.find(x => x.workOrderFgId === r.fgId);
+                    out.push(
+                      <tr key={`fg-${r.fgId}`} style={{ background: 'var(--bg-page)', borderBottom: '1px solid var(--border)' }}>
+                        <td colSpan={span} style={{ padding: '8px 12px', fontSize: 13, fontWeight: 700 }}>
+                          {g?.fgName || 'Finished Good'} × {g?.fgQty ?? ''}
+                          {g?.shortCount > 0 && (
+                            <span style={{ marginLeft: 10, fontSize: 11, fontWeight: 600, color: '#b91c1c' }}>
+                              {g.shortCount} line{g.shortCount > 1 ? 's' : ''} not in stock
+                            </span>
+                          )}
+                        </td>
+                      </tr>,
+                    );
+                  }
+                  out.push(
+                    <GridRow
+                      key={r.key} r={r} act={act} visibleCols={visibleCols}
+                      qtyVal={qty[r.key] ?? ''} ticked={sel.has(r.key)}
+                      onToggle={toggleRow} onQty={setRowQty}
+                    />,
+                  );
+                }
+                return out;
+              })()}
             </tbody>
           </table>
         )}
@@ -430,6 +509,11 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
           ) : (
             <span style={{ color: 'var(--text-muted)' }}>Enter a quantity or press MAX to {act.verb.toLowerCase()} a line.</span>
           )}
+          {grid?.lastSyncAt && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+              Stock last synced {grid.lastSyncAt} · BOM revision {grid.revision}
+            </div>
+          )}
         </div>
         <button onClick={() => setQty({})} disabled={!entered.length} style={{ ...btn, opacity: entered.length ? 1 : 0.5 }}>
           Discard changes
@@ -443,7 +527,7 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
             fontWeight: 600, cursor: entered.length && !busy ? 'pointer' : 'not-allowed', padding: '8px 16px',
           }}
         >
-          {busy ? 'Working…' : entered.length ? `${act.verb} ${entered.length} line${entered.length === 1 ? '' : 's'}` : `${act.verb} lines`}
+          {busy ? 'Working…' : `Proceed ${act.label}`}
         </button>
       </div>
     </div>
@@ -464,7 +548,7 @@ const GridRow = memo(function GridRow({ r, act, visibleCols, qtyVal, ticked, onT
   return (
     <tr style={{ borderBottom: '1px solid var(--border)' }}>
       <td style={{ textAlign: 'center' }}>
-        <input type="checkbox" checked={ticked} onChange={() => onToggle(r.itemId)} aria-label={`Select ${r.name || r.itemId}`} />
+        <input type="checkbox" checked={ticked} onChange={() => onToggle(r.key)} aria-label={`Select ${r.name || r.itemId}`} />
       </td>
       <td style={{ ...num, textAlign: 'left', fontFamily: 'var(--font)' }}>
         <div style={{ fontWeight: 500 }}>{r.name || r.itemId}</div>
@@ -485,7 +569,7 @@ const GridRow = memo(function GridRow({ r, act, visibleCols, qtyVal, ticked, onT
           <input
             type="number" min="0" max={act.uncapped ? undefined : cap} step="any"
             value={qtyVal}
-            onChange={e => onQty(r.itemId, e.target.value)}
+            onChange={e => onQty(r.key, e.target.value)}
             placeholder={locked ? '—' : '0'}
             disabled={locked}
             title={act.uncapped
@@ -500,7 +584,7 @@ const GridRow = memo(function GridRow({ r, act, visibleCols, qtyVal, ticked, onT
             }}
           />
           <button
-            onClick={() => cap > 0 && onQty(r.itemId, String(cap))}
+            onClick={() => cap > 0 && onQty(r.key, String(cap))}
             disabled={cap <= 0}
             title={cap > 0 ? (act.uncapped ? `Fill what is still short (${cap})` : `Fill the most this line can take (${cap})`) : 'Nothing available'}
             style={{ ...maxBtn, opacity: cap <= 0 ? 0.4 : 1, cursor: cap <= 0 ? 'not-allowed' : 'pointer' }}>
@@ -516,7 +600,7 @@ function CoverageBar({ r }) {
   const basis = r.bom > 0 ? r.bom : (r.reserved + r.issued + r.needed);
   if (!basis) return <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>—</span>;
   const pct = n => `${Math.max(0, Math.min(100, (n / basis) * 100))}%`;
-  const caption = r.needed === 0 ? 'covered' : r.short ? `${r.shortfallQty.toLocaleString()} missing` : `${r.needed.toLocaleString()} left to reserve`;
+  const caption = r.needed === 0 ? 'covered' : r.short ? `${r.shortfallQty.toLocaleString()} not in stock` : `${r.needed.toLocaleString()} left to reserve`;
   const capColor = r.needed === 0 ? '#15803d' : r.short ? '#b91c1c' : 'var(--text-muted)';
   return (
     <div>

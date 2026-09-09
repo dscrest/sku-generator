@@ -8,9 +8,18 @@ function rowList(zcqlRows) {
 }
 
 // Columns that must surface as JS numbers (Data Store may hand them back as strings).
-const NUM_COLS = new Set(["skuPosition", "rangeMin", "rangeMax", "seriesStart"]);
+const NUM_COLS = new Set([
+  "skuPosition", "rangeMin", "rangeMax", "seriesStart", "seriesPad",
+  // Recipe Engine (CR-104)
+  "qty", "sequence", "rate", "castWeight", "version", "recipeVersion",
+  "marginPct", "discountPct", "gstPct", "unitCost", "unitPrice", "orderValue",
+]);
 // Columns that must surface as JS booleans (Data Store may hand them back as "true"/"false").
-const BOOL_COLS = new Set(["required", "createAsItem", "createValuesAsItems"]);
+const BOOL_COLS = new Set([
+  "required", "createAsItem", "createValuesAsItems", "isDefault", "showInWidget",
+  // Recipe Engine (CR-104)
+  "allowMaterial", "allowQtyOverride", "allowComponentOverride", "enabled",
+]);
 // Tri-state booleans: null stays null so callers can tell "never set" from "set false".
 // Properties that predate CR-009 have null here and must keep their old behaviour.
 const TRIBOOL_COLS = new Set(["activeInSku", "includeInName"]);

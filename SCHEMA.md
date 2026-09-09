@@ -85,7 +85,8 @@ Top-level grouping; defines how a SKU string is assembled.
 |--------|------|---------|
 | `name` | string | Industry display name |
 | `skuSeparator` | string | Joined between SKU parts (e.g. `-`, `""`) |
-| `seriesStart` | int? | **Numerical series (CR-089).** Null/0 = off; N≥1 appends a per-property-combination 4-digit suffix (`sep + NNNN`) to generated SKUs, first number N. No counter — next = max existing suffix for the prefix + 1 (`skuSeries.js`) |
+| `seriesStart` | int? | **Numerical series on/off flag (CR-089, CR-093).** Null/0 = off; ≥1 = on. The series **always starts at 1** (CR-093) — the stored value no longer sets the start number. When on, generated SKUs get a zero-padded numeric suffix (`sep + NNN…`) shared industry-wide; next = max existing suffix + 1 (`skuSeries.js`) |
+| `seriesPad` | int? | **Series suffix width (CR-093).** Total digits of the numeric suffix (3 → `001`, 4 → `0001`). Null = default 4. Changing it restarts the series (old suffixes at a different width stop matching) |
 | `orgId` | string | Tenant key |
 
 ### Property
@@ -106,6 +107,7 @@ A configurable attribute of an industry contributing one segment to the SKU.
 | `zohoCfApiName` | string? | Zoho Books custom-field `api_name`. If set, this property's value syncs into that Books custom field on push and is read back on import |
 | `clubKey` | string? | **Clubbing (CR-025).** Properties of the same industry sharing a non-empty `clubKey` concatenate their SKU codes with **no** separator into one segment (e.g. Body + Gland). Null = standalone segment. The industry separator still applies between segments; a club renders at its first member's `skuPosition` |
 | `createValuesAsItems` | bool? | **CR-026 gate.** When true, every value of this property is created/synced to Zoho Books as an item (best-effort). Turning it on backfills existing values. Un-flagged properties never create items — replaces the per-value `PropertyValue.createAsItem` toggle |
+| `showInWidget` | bool? | **CR-108.** Property appears as a filter parameter in the CRM quote widget's "Add filter" menu. Null/false = hidden |
 | `orgId` | string | Tenant key |
 
 ### PropertyValue
@@ -120,6 +122,7 @@ Allowed options for a `List`-type property.
 | `propertyId` | string FK | Owning Property |
 | `createAsItem` | bool? | **CR-026 (superseded).** Old per-value "create as Books item" toggle; the gate moved to `Property.createValuesAsItems`. Column kept, no longer read |
 | `zohoItemId` | string? | **CR-026.** Linked Books `item_id` once created; presence = already linked (update instead of re-create) and drives the "Books items" tracking grid |
+| `isDefault` | bool? | **CR-094.** Marks the one value pre-selected for its property in the SKU generator. At most one true per property — enforced in the `POST`/`PUT /property-values` handlers (`clearOtherDefaults`), no DB-level uniqueness. Null/false = not default |
 | `orgId` | string | Tenant key |
 
 > Import can **create** PropertyValue rows: a Books custom-field value that matches
@@ -230,6 +233,12 @@ The BRD's BOM header — one per Work Order, linked to a confirmed Sales Order.
 | `bomImportedAt` | datetime? | Drives the shortfall alert (BOM import + `shortfallAlertDays`) |
 | `estimatedCost` / `actualCost` | number? | Cost-threshold alert (FR-ADO-006) |
 | `notes` | text? | |
+| `lastViewedAt` | datetime? | When the WO detail was last opened (stamped fire-and-forget by `GET /:id`) — drives the unseen-progress red dot (CR-099); org-wide, not per-user |
+| `soDate` / `shipmentDate` | string? | SO date / expected shipment date, denormalised from the Books SO and re-synced on every detail open (CR-110) |
+| `buyerOrderNo` / `buyerOrderDate` | string? | SO custom fields "Buyer Order No" / "Buyer Order Date", label-matched (CR-110) |
+| `woPriority` | string? | SO custom field "Priority" — column named `woPriority` because `priority` is a Catalyst reserved keyword; API serves it as `priority` (CR-110) |
+| `dueDate` | string? | SO custom field "WO Due Date"; due *days* are computed client-side, never stored (CR-110) |
+| `machiningDoneDate` / `fittingDoneDate` | string? | SO custom fields "Machining Completion Date" / "Fitting Completion Date" (CR-110) |
 
 ### WorkOrderFG
 One finished good on the work order (an SO line). A WO may carry several.
@@ -403,12 +412,126 @@ Grid column formulas: see [WORKORDER.md](WORKORDER.md).
 
 ---
 
+## Recipe Engine add-on (CR-104)
+
+Reusable product recipe/configuration engine — recipes compose a main ERP
+product from components with selectable materials and configurable cost
+elements; quotations freeze an immutable snapshot. **Never creates variant
+SKUs.** Routes under `/api/recipe` behind `requireAddon("recipe-engine")`;
+math in `functions/skuapi/recipe/calc.js`.
+
+### MaterialType — table id `69851000000259232`
+Central per-org rate master. Rate edits affect **new** calculations only —
+quotation snapshots freeze the rate used, so no history table.
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `orgId` | string | Tenant key |
+| `code` | string(50) | e.g. `CI`, `WCB`, `IC CF8M` |
+| `name` | string(255) | Display name (defaults to code) |
+| `rate` | number | ₹ per UOM (double 15,4) |
+| `uom` | string(20) | Default `KG` |
+| `effectiveFrom` | string(20) | Informational date |
+| `status` | string(20) | `Active` \| `Inactive` |
+
+### CostElement — table id `69851000000258095`
+Configurable cost columns. Since CR-105 each recipe version owns its elements
+(`recipeTemplateId` set); rows with blank `recipeTemplateId` are the org
+"defaults library" (lazy-seeded CASTING "CS Cost" `RATE_QTY`, MACHINING "M/C",
+DRILLING "Drill Etc", ASSEMBLY "Assembly") offered by the builder's
+"Copy default elements" button. New recipes start with zero elements.
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `orgId` | string | Tenant key |
+| `recipeTemplateId` | string(50) | Owning RecipeTemplate ROWID; blank = org-default library row (CR-105) |
+| `code` | string(50) | e.g. `CASTING` — immutable once created (keys option `fixedCostsJson`) |
+| `label` | string(100) | UI label, e.g. `CS Cost` |
+| `calcType` | string(20) | `RATE_QTY` (rate × castWeight) \| `FIXED` \| `PERCENTAGE` (% of running subtotal) |
+| `sequence` | int | Calculation/display order |
+| `rate` | number | Default value (CR-106): org default on master rows; optional per-recipe override, blank = inherit master live. Precedence: option `fixedCosts[code]` / quote override → `rate` → 0 |
+
+### RecipeTemplate — table id `69851000000261063`
+One row per (code, version); lineage = same org + code. `Draft` is the only
+writable status (`assertDraft` guards every write); publish supersedes the
+prior published version of the same code.
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `orgId` | string | Tenant key |
+| `code` | string(50) | Lineage key, e.g. `RCP-RAVS150-STD` |
+| `name` | string(255) | |
+| `productItemId` | string(50) | `SKUItem` ROWID (main ERP product; may be blank) |
+| `productCode` / `productName` | string | Denormalized for lists + snapshots |
+| `version` | int | 1, 2, 3… per code |
+| `status` | string(20) | `Draft` → `Published` → `Superseded`; `Archived` |
+| `effectiveFrom` | string(20) | |
+| `changeReason` | string(255) | Version timeline text |
+| `updatedBy` | string(50) | AppUser id |
+
+### RecipeComponent — table id `69851000000258454`
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `orgId` | string | Tenant key |
+| `recipeId` | string(50) | RecipeTemplate ROWID |
+| `code` / `name` | string | e.g. `CASING` / Casing |
+| `question` | string(255) | Wizard question shown to sales |
+| `sequence` | int | Order (drag reorder) |
+| `qty` | number | Per finished unit |
+| `uom` | string(20) | |
+| `required` | bool | |
+| `allowMaterial` | bool | Sales pick the material (configurable component) |
+| `allowQtyOverride` / `allowComponentOverride` | bool | Flags stored; no wizard behavior yet (v1) |
+| `parentComponentId` | string(50) | Nesting hook — column only, no UI (v1) |
+
+### RecipeComponentOption — table id `69851000000259591`
+Allowed material per component with its per-material costing inputs.
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `orgId` | string | Tenant key |
+| `componentId` | string(50) | RecipeComponent ROWID |
+| `recipeId` | string(50) | Denormalized — whole recipe loads in 3 flat org queries |
+| `materialId` / `materialCode` | string(50) | MaterialType ROWID + denormalized code |
+| `castWeight` | number | kg per unit — feeds `RATE_QTY` |
+| `fixedCostsJson` | text(10000) | `{"MACHINING":2000,…}` keyed by CostElement code |
+| `enabled` | bool | Unticked = hidden from sales without deleting |
+
+### RecipeQuotation — table id `69851000000258813`
+Self-contained quotation with the **immutable configuration snapshot**.
+Recipe/rate edits never touch existing rows; the snapshot is recomputed and
+frozen server-side at create (`POST /api/recipe/quotations`).
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `orgId` | string | Tenant key |
+| `qtnNo` | string(50) | `QTN-0001` via `nextNumber` (same accepted race as WO numbers) |
+| `status` | string(20) | `Quotation` → `Order` |
+| `productCode` / `productName` / `recipeCode` | string | Denormalized |
+| `recipeVersion` | int | |
+| `qty` | number | Order quantity |
+| `marginPct` / `discountPct` / `gstPct` | number | Pricing inputs (frozen) |
+| `unitCost` / `unitPrice` / `orderValue` | number | Computed at freeze |
+| `snapshotJson` | text(10000) | Full frozen config (lines, rates, element costs, labels). **Note:** Catalyst caps text at 10000 via API (100k requested, not honored) — quote create rejects >9.5 KB snapshots (413) instead of truncating; fits ~40 component lines |
+| `createdBy` | string(50) | AppUser id |
+
+---
+
 ## Schema change ledger
 
 Newest first. One row per applied schema change; link the CR that requested it.
 
 | Date | CR | Change | Applied |
 |------|----|--------|---------|
+| 2026-09-09 | [CR-110](CHANGES.md) | 8 `WorkOrder` varchar(255) nullable columns — `soDate` (69851000000260430), `shipmentDate` (69851000000264216), `buyerOrderNo` (69851000000252328), `buyerOrderDate` (69851000000260432), `woPriority` (69851000000251249, `priority` rejected as reserved keyword), `dueDate` (69851000000254597), `machiningDoneDate` (69851000000260434), `fittingDoneDate` (69851000000254599) — SO-derived header fields, re-synced from Books on every WO detail open. Added via Catalyst MCP | ✅ live |
+| 2026-09-09 | [CR-108](CHANGES.md) | `Property.showInWidget` (boolean, nullable) — property shows as a filter parameter in the CRM quote widget. Added via Catalyst MCP (column id 69851000000265151) | ✅ live |
+| 2026-09-05 | [CR-106](CHANGES.md) | `CostElement.rate` (double 15,4, nullable) — default value: org default on master rows, optional recipe-level override on per-recipe rows (blank = inherit master live). Added via Catalyst MCP (column id 69851000000251191) | ✅ live |
+| 2026-09-05 | [CR-105](CHANGES.md) | `CostElement.recipeTemplateId` (varchar 50, nullable) — owning RecipeTemplate ROWID; blank = org-default library row. Added via Catalyst MCP (column id 69851000000259980). Data backfill: RAVS150 (69851000000256208) got per-recipe copies of the 4 org elements; PC124 draft intentionally left with none | ✅ live |
+| 2026-09-05 | [CR-104](CHANGES.md) | Recipe Engine: 6 new tables via Catalyst MCP — `MaterialType` (69851000000259232), `CostElement` (69851000000258095), `RecipeTemplate` (69851000000261063), `RecipeComponent` (69851000000258454), `RecipeComponentOption` (69851000000259591), `RecipeQuotation` (69851000000258813). Deviations: `question`/`changeReason` capped at varchar(255) by the API (500 requested); text columns capped at 10000 (snapshot size guarded in code) | ✅ live |
+| 2026-09-04 | [CR-099](CHANGES.md) | `WorkOrder.lastViewedAt` (datetime, nullable) — last detail open, for the unseen-progress red dot. Added via Catalyst MCP (column id 69851000000252178). Also: new `OrgSetting` row `allowWarehouseSelect` (existing key/value table) gates per-txn warehouse overrides | ✅ live |
+| 2026-09-02 | [CR-094](CHANGES.md) | `PropertyValue.isDefault` (boolean, nullable) — the one value pre-selected for its property in the SKU generator; one-per-property is app-enforced (no DB uniqueness). Added via Catalyst MCP (column id 69851000000256009) | ✅ live |
+| 2026-09-02 | [CR-093](CHANGES.md) | `Industry.seriesPad` (int, nullable) — numerical-series suffix width (total digits); null = default 4, leading zeros = seriesPad − 1. Added via Catalyst MCP (column id 69851000000260038) | ✅ live |
 | 2026-09-01 | [CR-090](CHANGES.md) | New `Org` table — `orgId` (varchar 50, unique, mandatory), `orgName` (varchar 255, nullable) — registry of every org ever selected, for the admin console. Added via Catalyst MCP (table id 69851000000233001) | ✅ live |
 | 2026-09-01 | [CR-089](CHANGES.md) | `Industry.seriesStart` (int, nullable) — numerical-series start; null/0 = off, N≥1 appends per-combination 4-digit SKU suffix. Added via Catalyst MCP (column id 69851000000234005) | ✅ live |
 | 2026-09-01 | [CR-082](CHANGES.md) | No schema change — new `OrgSetting` row `approvalLevels` (existing generic key/value table) holds the org's required approval level count (`0`/`1`/`2`; unset = derive from approver emails) | n/a |
