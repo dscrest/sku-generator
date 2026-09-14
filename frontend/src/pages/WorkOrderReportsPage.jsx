@@ -4,7 +4,8 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import GridFooter, { usePager } from '../components/GridFooter.jsx';
 import { Empty } from '../components/MaterialsGrid.jsx';
-import { StatusChip, AccessNotice, Table, select, thStyle, cell } from '../components/woCommon.jsx';
+import { StatusChip, AccessNotice, select, thStyle, cell } from '../components/woCommon.jsx';
+import DataTable, { useGridColumns, ColumnChooser } from '../components/DataTable.jsx';
 
 /**
  * SO-BOM, shortfall and item-pipeline reports (FR-ADO-009). All read only our
@@ -12,6 +13,70 @@ import { StatusChip, AccessNotice, Table, select, thStyle, cell } from '../compo
  * they span.
  */
 const VIEWS = ['SO–BOM Status', 'Shortfall / Pending', 'Item Pipeline', 'Reconciliation', 'Warehouse Stock'];
+
+const mono = v => <span style={{ fontFamily: 'var(--font-mono)' }}>{v}</span>;
+
+const SO_BOM_COLUMNS = [
+  { key: 'woNumber', label: 'Work Order', lock: true, render: r => <b style={{ color: 'var(--blue)' }}>{r.woNumber}</b> },
+  { key: 'salesOrderNumber', label: 'Sales Order', render: r => r.salesOrderNumber },
+  { key: 'customerName', label: 'Customer', render: r => r.customerName },
+  { key: 'status', label: 'Status', render: r => <StatusChip status={r.status} /> },
+  { key: 'items', label: 'Items', align: 'right', render: r => mono(r.items) },
+  { key: 'required', label: 'Required', align: 'right', render: r => mono(r.required) },
+  { key: 'reserved', label: 'Reserved', align: 'right', render: r => mono(r.reserved) },
+  { key: 'issued', label: 'Issued', align: 'right', render: r => mono(r.issued) },
+  { key: 'ordered', label: 'On Order', align: 'right', render: r => mono(r.ordered) },
+  {
+    key: 'shortItems', label: 'Short', align: 'right',
+    render: r => mono(r.shortItems ? <span style={{ color: '#dc2626', fontWeight: 700 }}>{r.shortItems}</span> : '—'),
+  },
+];
+
+const SHORTFALL_COLUMNS = [
+  { key: 'woNumber', label: 'Work Order', lock: true, render: r => <b style={{ color: 'var(--blue)' }}>{r.woNumber}</b> },
+  { key: 'customerName', label: 'Customer', render: r => r.customerName },
+  { key: 'fgName', label: 'Finished Good', render: r => r.fgName },
+  { key: 'rmName', label: 'Raw Material', render: r => r.rmName },
+  { key: 'required', label: 'Required', align: 'right', render: r => mono(r.required) },
+  { key: 'available', label: 'Available', align: 'right', render: r => mono(r.available) },
+  { key: 'onOrder', label: 'On Order', align: 'right', render: r => mono(r.onOrder) },
+  { key: 'shortfallQty', label: 'Short By', align: 'right', render: r => mono(<span style={{ color: '#dc2626', fontWeight: 700 }}>{r.shortfallQty}</span>) },
+  { key: 'noPoRaised', label: 'PO Raised', align: 'right', render: r => mono(r.noPoRaised ? <span style={{ color: '#dc2626', fontWeight: 600 }}>No</span> : 'Yes') },
+];
+
+const PIPELINE_COLUMNS = [
+  { key: 'rmName', label: 'Item', lock: true, render: r => <b>{r.rmName || r.rmItemId}</b> },
+  { key: 'vendors', label: 'Vendors', render: r => r.vendors || '—' },
+  { key: 'requested', label: 'Requested', align: 'right', render: r => mono(r.requested) },
+  { key: 'noPo', label: 'On Draft PR', align: 'right', render: r => mono(r.noPo || '—') },
+  { key: 'onPoDraft', label: 'On Draft PO', align: 'right', render: r => mono(r.onPoDraft || '—') },
+  { key: 'onPoOpen', label: 'On Open PO', align: 'right', render: r => mono(r.onPoOpen || '—') },
+  { key: 'received', label: 'Received', align: 'right', render: r => mono(r.received) },
+  { key: 'billed', label: 'Billed', align: 'right', render: r => mono(r.billed) },
+];
+
+const RECON_COLUMNS = [
+  { key: 'woNumber', label: 'Work Order', lock: true, render: r => <b style={{ color: 'var(--blue)' }}>{r.woNumber}</b> },
+  { key: 'status', label: 'Status', render: r => <StatusChip status={r.status} /> },
+  { key: 'fgName', label: 'Finished Good', render: r => r.fgName || '—' },
+  {
+    key: 'name', label: 'Item', render: r => (
+      <span>
+        {r.name}
+        {r.removedFromBom && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: '#b91c1c' }}>removed</span>}
+      </span>
+    ),
+  },
+  { key: 'sku', label: 'SKU', render: r => r.sku || '—' },
+  { key: 'required', label: 'Required', align: 'right', render: r => mono(r.required) },
+  { key: 'reserved', label: 'Reserved', align: 'right', render: r => mono(r.reserved) },
+  { key: 'issued', label: 'Issued', align: 'right', render: r => mono(r.issued) },
+  { key: 'returned', label: 'Returned', align: 'right', render: r => mono(r.returned) },
+  {
+    key: 'leftover', label: 'Leftover', align: 'right',
+    render: r => mono(r.leftover ? <span style={{ color: '#b45309', fontWeight: 700 }}>{r.leftover}</span> : '—'),
+  },
+];
 
 export default function WorkOrderReportsPage() {
   // ?view= keeps the active report across refreshes (CR-038).
@@ -144,6 +209,16 @@ export default function WorkOrderReportsPage() {
       && (!hideZero || it.total > 0);
   });
   const { pageRows, pager } = usePager(displayed);
+  // One chooser-backed grid per fixed-column report; Warehouse Stock keeps its
+  // hand-rolled pivot (one dynamic column per warehouse — nothing to save).
+  const GRID_DEFS = {
+    [VIEWS[0]]: ['wo.reports.so-bom', SO_BOM_COLUMNS],
+    [VIEWS[1]]: ['wo.reports.shortfall', SHORTFALL_COLUMNS],
+    [VIEWS[2]]: ['wo.reports.item-pipeline', PIPELINE_COLUMNS],
+    [VIEWS[3]]: ['wo.reports.reconciliation', RECON_COLUMNS],
+  };
+  const [gridKey, gridColumns] = GRID_DEFS[view] || GRID_DEFS[VIEWS[0]];
+  const { cols, chooser } = useGridColumns(gridKey, gridColumns);
   // CSV wants flat cells, so the pivot's stocks map spreads into per-warehouse columns.
   const csvRows = view !== VIEWS[4] ? displayed : displayed.map(it => ({
     itemName: it.itemName, sku: it.sku || '',
@@ -195,6 +270,7 @@ export default function WorkOrderReportsPage() {
             </button>
           </>
         )}
+        {view !== VIEWS[4] && <ColumnChooser chooser={chooser} />}
         <button onClick={() => download(view, csvRows)} disabled={!csvRows.length} style={btn}>⬇ Export CSV</button>
       </div>
 
@@ -206,47 +282,17 @@ export default function WorkOrderReportsPage() {
             : view === VIEWS[4] ? 'No stock synced yet — run “Sync all stock”.'
             : 'No purchase request lines match.'}</Empty>
         ) : view === VIEWS[0] ? (
-          <Table
-            head={['Work Order', 'Sales Order', 'Customer', 'Status', 'Items', 'Required', 'Reserved', 'Issued', 'On Order', 'Short']}
-            rightFrom={4}
-            rows={pageRows.map(r => ({
-              key: r.id, onClick: () => navigate(`/wo/${r.id}`),
-              cells: [
-                <b style={{ color: 'var(--blue)' }}>{r.woNumber}</b>, r.salesOrderNumber, r.customerName,
-                <StatusChip status={r.status} />, r.items, r.required, r.reserved, r.issued, r.ordered,
-                r.shortItems ? <span style={{ color: '#dc2626', fontWeight: 700 }}>{r.shortItems}</span> : '—',
-              ],
-            }))}
-          />
+          <div style={{ marginTop: 12 }}>
+            <DataTable cols={cols} rows={pageRows} onRowClick={r => navigate(`/wo/${r.id}`)} />
+          </div>
         ) : view === VIEWS[2] ? (
-          <Table
-            head={['Item', 'Vendors', 'Requested', 'On Draft PR', 'On Draft PO', 'On Open PO', 'Received', 'Billed']}
-            rightFrom={2}
-            rows={pageRows.map(r => ({
-              key: r.rmItemId,
-              cells: [
-                <b>{r.rmName || r.rmItemId}</b>, r.vendors || '—',
-                r.requested, r.noPo || '—', r.onPoDraft || '—', r.onPoOpen || '—', r.received, r.billed,
-              ],
-            }))}
-          />
+          <div style={{ marginTop: 12 }}>
+            <DataTable cols={cols} rows={pageRows} rowKey="rmItemId" />
+          </div>
         ) : view === VIEWS[3] ? (
-          <Table
-            head={['Work Order', 'Status', 'Finished Good', 'Item', 'SKU', 'Required', 'Reserved', 'Issued', 'Returned', 'Leftover']}
-            rightFrom={5}
-            rows={pageRows.map((r, i) => ({
-              key: `${r.workOrderId}-${r.itemId}-${i}`, onClick: () => navigate(`/wo/${r.workOrderId}`),
-              cells: [
-                <b style={{ color: 'var(--blue)' }}>{r.woNumber}</b>, <StatusChip status={r.status} />, r.fgName || '—',
-                <span>
-                  {r.name}
-                  {r.removedFromBom && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: '#b91c1c' }}>removed</span>}
-                </span>,
-                r.sku || '—', r.required, r.reserved, r.issued, r.returned,
-                r.leftover ? <span style={{ color: '#b45309', fontWeight: 700 }}>{r.leftover}</span> : '—',
-              ],
-            }))}
-          />
+          <div style={{ marginTop: 12 }}>
+            <DataTable cols={cols} rows={pageRows} onRowClick={r => navigate(`/wo/${r.workOrderId}`)} />
+          </div>
         ) : view === VIEWS[4] ? (
           <WarehouseStock data={whMeta} displayed={displayed} pageRows={pageRows}
             whFilter={whFilter} setWhFilter={setWhFilter}
@@ -254,19 +300,9 @@ export default function WorkOrderReportsPage() {
             hideZero={hideZero} setHideZero={setHideZero}
             onRefresh={refreshItem} busyItem={busyItem} groupSync={groupSync} />
         ) : (
-          <Table
-            head={['Work Order', 'Customer', 'Finished Good', 'Raw Material', 'Required', 'Available', 'On Order', 'Short By', 'PO Raised']}
-            rightFrom={4}
-            rows={pageRows.map((r, i) => ({
-              key: `${r.workOrderId}-${r.rmItemId}-${i}`, onClick: () => navigate(`/wo/${r.workOrderId}`),
-              cells: [
-                <b style={{ color: 'var(--blue)' }}>{r.woNumber}</b>, r.customerName, r.fgName, r.rmName,
-                r.required, r.available, r.onOrder,
-                <span style={{ color: '#dc2626', fontWeight: 700 }}>{r.shortfallQty}</span>,
-                r.noPoRaised ? <span style={{ color: '#dc2626', fontWeight: 600 }}>No</span> : 'Yes',
-              ],
-            }))}
-          />
+          <div style={{ marginTop: 12 }}>
+            <DataTable cols={cols} rows={pageRows} onRowClick={r => navigate(`/wo/${r.workOrderId}`)} />
+          </div>
         )}
       </div>
       <GridFooter pager={pager} />

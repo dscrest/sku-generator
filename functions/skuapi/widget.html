@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>SKU Studio</title>
+  <title>OCTFIS Quote Maker</title>
   <script src="https://live.zwidgets.com/js-sdk/1.2/ZohoEmbededAppSDK.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -22,56 +22,46 @@
     .error { color: #c0392b; }
     .hidden { display: none !important; }
 
-    #v-picker { min-height: 100vh; padding: 16px; }
-    #card { max-width: 1280px; margin: 0 auto; height: calc(100vh - 32px); min-height: 560px; background: #fff; border-radius: 14px; box-shadow: 0 1px 2px rgba(15,23,42,.06), 0 12px 40px rgba(15,23,42,.10); overflow: hidden; display: flex; flex-direction: column; }
+    #v-picker { min-height: 100vh; }
+    #card { height: 100vh; background: #fff; overflow: hidden; display: flex; flex-direction: column; }
 
-    /* header */
-    #hdr { background: #0f172a; color: #fff; padding: 14px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-    #hdr .mark { width: 36px; height: 36px; border-radius: 9px; background: #0f766e; display: grid; place-items: center; font: 600 18px 'IBM Plex Mono', monospace; color: #fff; flex: none; }
-    #hdr .titles { flex: 1; min-width: 200px; }
-    #hdr .t1 { font-size: 16px; font-weight: 600; letter-spacing: -.01em; }
-    #hdr .t2 { font-size: 12.5px; color: #94a3b8; margin-top: 2px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    #hdr .t2 b { color: #e2e8f0; font-weight: 500; }
-    #hdr .dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; display: inline-block; margin-right: 5px; }
-    #steps { display: flex; align-items: center; gap: 6px; flex: none; }
-    .step { display: flex; align-items: center; gap: 7px; padding: 6px 11px; border-radius: 8px; background: rgba(255,255,255,.08); color: #94a3b8; font-size: 12.5px; font-weight: 500; }
-    .step .n { width: 17px; height: 17px; border-radius: 50%; background: rgba(255,255,255,.14); display: grid; place-items: center; font-size: 10.5px; }
-    .step.on { background: #15803d; color: #fff; }
-    #steps .sep { color: #475569; font-size: 12px; }
+    /* panes: filters | results | quote lines — never wrap, so the right pane's
+       footer (Push button) stays on-screen no matter how many lines are added */
+    #panes { display: flex; flex: 1; min-height: 0; }
+    #left { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-right: 1px solid #e5e7eb; }
+    #right { flex: 0 1 320px; min-width: 260px; background: #f8fafc; display: flex; flex-direction: column; min-height: 0; }
 
-    /* panes */
-    #panes { display: flex; flex: 1; min-height: 0; flex-wrap: wrap; }
-    #left { flex: 2 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-right: 1px solid #e5e7eb; }
-    #right { flex: 1 1 300px; min-width: 280px; background: #f8fafc; display: flex; flex-direction: column; min-height: 0; }
-
-    #toolbar { display: flex; gap: 8px; align-items: center; }
-    #industry { flex: none; max-width: 220px; background: #f8fafc; }
-    #searchbar { position: relative; flex: 1; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 8px 6px 12px; border: 1.5px solid #d9dfe8; border-radius: 10px; min-height: 44px; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.04); }
+    #searchbar { position: relative; flex: none; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 4px 8px 4px 12px; border: 1.5px solid #d9dfe8; border-radius: 10px; min-height: 36px; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.04); }
     #searchbar:focus-within { border-color: #0f172a; }
     #search { flex: 1; min-width: 120px; border: 0; padding: 4px 2px; font-size: 14px; }
-    .chip { display: inline-flex; align-items: center; gap: 6px; background: #eef2f7; border: 1px solid #d9dfe8; border-radius: 6px; padding: 3px 5px 3px 9px; font-size: 12.5px; }
-    .chip .cap { font: 500 10.5px 'IBM Plex Mono', monospace; color: #64748b; letter-spacing: .02em; }
-    .chip b { font-weight: 500; }
-    .chip button { border: 0; background: none; color: #94a3b8; padding: 0 2px; font-size: 14px; line-height: 1; }
-    .chip button:hover { color: #0f172a; }
-    /* open filter panel — every parameter visible at once (CR-110) */
-    #filter-panel { border-bottom: 1px solid #e5e7eb; background: #fbfcfe; flex: none; }
-    #fp-head { display: flex; align-items: center; gap: 10px; padding: 10px 20px 0; }
-    #fp-title { font-size: 13.5px; font-weight: 600; }
-    #fp-count { font-weight: 500; font-size: 12px; }
-    #fp-search { margin-left: auto; width: 210px; padding: 5px 9px; font-size: 12.5px; }
+    /* filter column — every parameter visible at once, own scrollbar (CR-110) */
+    #filter-panel { flex: 0 0 250px; min-width: 200px; border-right: 1px solid #e5e7eb; background: #fbfcfe; display: flex; flex-direction: column; min-height: 0; position: relative; }
+    #fp-head { display: flex; align-items: center; gap: 8px; padding: 12px 12px 0; flex-wrap: wrap; }
+    #fp-title { font-size: 15px; font-weight: 600; letter-spacing: -.01em; flex: 1 1 100%; }
+    #fp-search { flex: 1; min-width: 0; padding: 5px 9px; font-size: 12.5px; }
     #fp-clear { border: 0; background: none; color: #0f766e; font-size: 12.5px; font-weight: 500; padding: 0; }
     #fp-clear:hover { text-decoration: underline; }
-    #fp-toggle { border: 0; background: none; color: #64748b; font-size: 13px; padding: 2px 6px; }
-    #fp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; padding: 10px 20px 14px; max-height: 300px; overflow: auto; }
-    #fp-grid.collapsed { display: none; }
-    .fp-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 9px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
-    .fp-card.set { border-color: #0f766e; box-shadow: 0 0 0 1px rgba(15,118,110,.18); }
-    .fp-card .cap { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: #334155; min-width: 0; }
-    .fp-card .cap > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .fp-card .num { width: 16px; height: 16px; border-radius: 50%; background: #eef2f7; color: #64748b; display: grid; place-items: center; font-size: 9.5px; flex: none; }
-    .fp-card select, .fp-card input { width: 100%; font-size: 12.5px; padding: 5px 7px; border-radius: 6px; }
-    .fp-hint { grid-column: 1 / -1; color: #64748b; font-size: 12.5px; padding: 6px 0 2px; }
+    /* compact rows: click a parameter name → value popover (no inline selects) */
+    #fp-grid { display: flex; flex-direction: column; padding: 6px 6px 12px; flex: 1; overflow: auto; }
+    .fp-row { display: flex; align-items: center; gap: 7px; width: 100%; border: 0; background: none; text-align: left; padding: 6px 7px; border-radius: 7px; cursor: pointer; font-size: 12.5px; color: #334155; min-width: 0; }
+    .fp-row:hover { background: #eef2f7; }
+    .fp-row .cap { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+    .fp-row .num { width: 16px; height: 16px; border-radius: 50%; background: #eef2f7; color: #64748b; display: grid; place-items: center; font-size: 9.5px; flex: none; }
+    .fp-row .val { flex: none; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: #94a3b8; }
+    .fp-row.set { background: #f0fdfa; }
+    .fp-row.set .val { color: #0f766e; font-weight: 600; }
+    .fp-row .x { display: none; flex: none; border: 0; background: none; color: #94a3b8; font-size: 13px; line-height: 1; padding: 0 1px; cursor: pointer; }
+    .fp-row.set .x { display: block; }
+    .fp-row .x:hover { color: #dc2626; }
+    .fp-hint { color: #64748b; font-size: 12.5px; padding: 6px 6px 2px; }
+    #fp-pop { position: absolute; left: 10px; right: 10px; z-index: 30; background: #fff; border: 1px solid #d9dfe8; border-radius: 10px; box-shadow: 0 8px 24px rgba(15,23,42,.16); display: flex; flex-direction: column; overflow: hidden; }
+    #fp-pop .pop-head { font-size: 11.5px; font-weight: 600; color: #64748b; padding: 9px 11px 3px; }
+    #fp-pop input { margin: 5px 8px; font-size: 12.5px; padding: 5px 8px; border-radius: 6px; }
+    #fp-pop .pop-list { max-height: 250px; overflow: auto; padding: 4px 5px 6px; }
+    .fp-opt { padding: 6px 8px; border-radius: 6px; font-size: 12.5px; color: #0f172a; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fp-opt:hover { background: #eef2f7; }
+    .fp-opt.on { background: #f0fdfa; color: #0f766e; font-weight: 600; }
+    .fp-opt.none { color: #64748b; }
 
     #result-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 12.5px; color: #64748b; }
     #clear-btn { border: 0; background: none; color: #0f766e; font-weight: 500; padding: 0; }
@@ -131,6 +121,7 @@
     #subtotal-row { display: flex; justify-content: space-between; font-size: 12.5px; color: #64748b; }
     #subtotal { color: #0f172a; font-weight: 600; font-size: 14.5px; font-variant-numeric: tabular-nums; }
     #add-btn { padding: 11px 14px; font-size: 13.5px; font-weight: 600; border-radius: 9px; }
+    #quote-btn { padding: 10px 14px; font-size: 13px; font-weight: 600; border-radius: 9px; }
     #status { font-size: 12px; color: #0f766e; }
   </style>
 </head>
@@ -150,37 +141,19 @@
   </div></div>
 
   <div id="v-picker" class="hidden"><div id="card">
-    <div id="hdr">
-      <div class="mark">S</div>
-      <div class="titles">
-        <div class="t1">SKU Studio</div>
-        <div class="t2"><span id="quote-head"></span><span id="org-head"></span></div>
-      </div>
-      <div id="steps">
-        <div class="step" id="step-1"><span class="n">1</span>Find items</div>
-        <span class="sep">→</span>
-        <div class="step" id="step-2"><span class="n">2</span>Quote lines <span id="step-count"></span></div>
-        <span class="sep">→</span>
-        <div class="step" id="step-3"><span class="n">3</span>Update quote</div>
-      </div>
-    </div>
-    <div id="filter-panel">
-      <div id="fp-head">
-        <span id="fp-title">Filters <span id="fp-count" class="muted"></span></span>
-        <input id="fp-search" type="search" placeholder="Search parameter…" autocomplete="off" />
-        <button id="fp-clear" class="hidden" type="button">Clear all</button>
-        <button id="fp-toggle" type="button">▾</button>
-      </div>
-      <div id="fp-grid"><div class="fp-hint">Pick an industry to see its parameters.</div></div>
-    </div>
     <div id="panes">
+      <div id="filter-panel">
+        <div id="fp-head">
+          <span id="fp-title">OCTFIS Quote Maker</span>
+          <input id="fp-search" type="search" placeholder="Search parameter…" autocomplete="off" />
+          <button id="fp-clear" class="hidden" type="button">Clear all</button>
+        </div>
+        <div id="fp-grid"><div class="fp-hint">Loading parameters…</div></div>
+        <div id="fp-pop" class="hidden"></div>
+      </div>
       <div id="left">
-        <div id="toolbar">
-          <select id="industry"><option value="">All industries</option></select>
-          <div id="searchbar">
-            <span id="chips" style="display:contents"></span>
-            <input id="search" type="search" placeholder="Search by SKU or name…" autocomplete="off" />
-          </div>
+        <div id="searchbar">
+          <input id="search" type="search" placeholder="Search by SKU or name…" autocomplete="off" />
         </div>
         <div id="result-meta">
           <span id="result-summary">Type to search, or add a filter.</span>
@@ -194,9 +167,9 @@
             <label id="c-name-lab">Item name<input id="c-name" /></label>
             <label>SKU<input id="c-sku" class="mono" style="width:170px" /></label>
             <label>Rate<input id="c-rate" type="number" min="0" /></label>
-            <label>Type<select id="c-type"><option>Trading</option><option>Manufacturing</option></select></label>
+            <label>Type<select id="c-type"><option value="Trading">Trading</option><option value="Manufacturing">Manufacturing (Finished Goods)</option></select></label>
             <label>Industry<select id="c-industry"></select></label>
-            <button id="c-save" class="primary">Create &amp; add to quote</button>
+            <button id="c-save" class="primary">Create &amp; add to lines</button>
           </div>
           <div id="c-info"></div>
           <div id="c-error" class="error"></div>
@@ -208,6 +181,7 @@
         <div id="lines-foot">
           <div id="subtotal-row"><span id="subtotal-units">Subtotal</span><span id="subtotal">0.00</span></div>
           <button id="add-btn" class="primary" disabled>Push to Zoho Quote</button>
+          <button id="quote-btn" class="hidden" disabled>Create Quote</button>
           <span id="status"></span>
         </div>
       </div>
@@ -221,6 +195,7 @@ var API = '/server/skuapi';
 var APP_ORIGIN = location.origin;
 
 var recordId = null;
+var moduleName = 'Quotes';
 var lines = []; // [{ id, sku, name, values, qty, rate, disc, rateTouched, badge }] — array so ▲▼ reorder works
 var authDone = false;
 
@@ -258,10 +233,10 @@ var $ = function (id) { return document.getElementById(id); };
 
 /* ---------- boot ---------- */
 ZOHO.embeddedApp.on('PageLoad', function (data) {
-  // Only Quotes for now; Deals join once their SKU line subform exists in CRM.
-  if (data.Entity !== 'Quotes') {
-    return message('This widget works on Quotes only (got: ' + (data.Entity || 'unknown') + ').');
+  if (data.Entity !== 'Quotes' && data.Entity !== 'Deals') {
+    return message('This widget works on Quotes and Deals only (got: ' + (data.Entity || 'unknown') + ').');
   }
+  moduleName = data.Entity;
   // EntityId arrives as a string, an array, or a JSON-stringified array
   // depending on how the widget is launched — normalize all three.
   var eid = data.EntityId;
@@ -270,10 +245,10 @@ ZOHO.embeddedApp.on('PageLoad', function (data) {
   }
   recordId = Array.isArray(eid) ? eid[0] : eid;
   if (!recordId) {
-    // CreateOrCloneView = unsaved quote → no record id to write lines into.
+    // CreateOrCloneView = unsaved record → no record id to write lines into.
     return message(data.ButtonPosition === 'CreateOrCloneView'
-      ? 'This quote is not saved yet. Save it first, then open it and use the SKU button from the quote’s detail page.'
-      : 'Could not read the quote id from CRM. PageLoad data: ' + JSON.stringify(data));
+      ? 'This record is not saved yet. Save it first, then open it and use the SKU button from its detail page.'
+      : 'Could not read the record id from CRM. PageLoad data: ' + JSON.stringify(data));
   }
   probe();
 });
@@ -379,22 +354,11 @@ var industryId = '';
 var params = [];        // showInWidget properties of the chosen industry
 var valuesByProp = {};  // propertyId -> [{id, displayValue}] (lazy cache)
 var chips = [];         // { propertyId, caption, valueType, valueId?, text?, display }
-var pushed = false;     // step 3 flag
-
-function updateSteps() {
-  var step = pushed ? 3 : (lines.length ? 2 : 1);
-  [1, 2, 3].forEach(function (n) { $('step-' + n).classList.toggle('on', n === step); });
-  $('step-count').textContent = lines.length ? '(' + lines.length + ')' : '';
-}
-
 function startPicker(me) {
   show('v-picker');
   $('search').focus();
-  updateSteps();
-  if (me.orgName) {
-    $('org-head').innerHTML = '<span class="dot"></span>Books Org: <b></b>';
-    $('org-head').querySelector('b').textContent = me.orgName;
-  }
+  // On Deals, lines can also become a new Quote linked to the Deal.
+  if (moduleName === 'Deals') $('quote-btn').classList.remove('hidden');
   // Widget opens as a small CRM popup by default — ask for room to breathe.
   try {
     if (window.ZOHO && ZOHO.CRM.UI && typeof ZOHO.CRM.UI.Resize === 'function') {
@@ -402,40 +366,27 @@ function startPicker(me) {
     }
   } catch (e) { /* older SDK */ }
   discoverSubforms(); // warm the metadata cache; failures surface at add time
-  ZOHO.CRM.API.getRecord({ Entity: 'Quotes', RecordID: recordId }).then(function (res) {
-    var q = res && res.data && res.data[0];
-    if (q) {
-      $('quote-head').innerHTML = 'Quote <b></b>';
-      $('quote-head').querySelector('b').textContent = q.Subject || q.Quote_Number || recordId;
-    }
-  });
+  // Org default for the create card's Type select (SKU Settings).
+  api('/api/sku-items/settings').then(function (r) { return r.ok ? r.json() : {}; })
+    .then(function (s) { if (s.defaultItemType) $('c-type').value = s.defaultItemType; })
+    .catch(function () { /* keep Trading */ });
   api('/api/industries').then(function (r) { return r.json(); }).then(function (inds) {
     inds = Array.isArray(inds) ? inds : [];
     inds.forEach(function (ind) {
-      [$('industry'), $('c-industry')].forEach(function (sel) {
-        var opt = document.createElement('option');
-        opt.value = ind.id;
-        opt.textContent = ind.name;
-        sel.appendChild(opt);
-      });
+      var opt = document.createElement('option');
+      opt.value = ind.id;
+      opt.textContent = ind.name;
+      $('c-industry').appendChild(opt);
     });
-    if (inds.length === 1) {
-      $('industry').value = inds[0].id;
+    // No industry picker in the widget — the first industry is the working one.
+    if (inds.length) {
       industryId = String(inds[0].id);
       loadParams();
+    } else {
+      renderFilterPanel();
     }
   });
 }
-
-$('industry').addEventListener('change', function () {
-  industryId = this.value;
-  chips = []; // filters belong to the previous industry
-  valuesByProp = {};
-  lastGenKey = null;
-  renderChips();
-  loadParams();
-  triggerSearch(0);
-});
 
 function loadParams() {
   params = [];
@@ -453,18 +404,20 @@ function loadParams() {
     });
 }
 
-/* ---------- filter panel (CR-110) ---------- */
-// Every showInWidget parameter rendered at once in a grid — a select of its
-// values (List) or a free-text input (Range/other). The panel is the source of
-// truth; `chips` is rebuilt from it so search + create-card code is untouched.
-var panelCtrls = {}; // propertyId -> { prop, el, card }
+/* ---------- filter panel (CR-110, compact rows CR) ---------- */
+// Every showInWidget parameter is one slim clickable row; clicking opens a
+// shared popover with the value list (List) or a free-text input (Range/other).
+// State still lives in a detached <select>/<input> per parameter, so
+// syncChipsFromPanel + search + create-card code is untouched.
+var panelCtrls = {}; // propertyId -> { prop, el, card, val }
 
 function renderFilterPanel() {
+  closePop();
   var grid = $('fp-grid');
   grid.innerHTML = '';
   panelCtrls = {};
   if (!industryId) {
-    grid.innerHTML = '<div class="fp-hint">Pick an industry to see its parameters.</div>';
+    grid.innerHTML = '<div class="fp-hint">No industry is configured for this organization.</div>';
     return syncChipsFromPanel();
   }
   if (!params.length) {
@@ -472,22 +425,30 @@ function renderFilterPanel() {
     return syncChipsFromPanel();
   }
   params.forEach(function (p, i) {
-    var card = document.createElement('div');
-    card.className = 'fp-card';
-    card.dataset.caption = String(p.caption || '').toLowerCase();
-    var cap = document.createElement('div');
-    cap.className = 'cap';
+    var row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'fp-row';
+    row.dataset.caption = String(p.caption || '').toLowerCase();
     var num = document.createElement('span');
     num.className = 'num';
     num.textContent = i + 1;
-    var txt = document.createElement('span');
-    txt.textContent = p.caption;
-    txt.title = p.caption;
-    cap.appendChild(num);
-    cap.appendChild(txt);
-    card.appendChild(cap);
+    var cap = document.createElement('span');
+    cap.className = 'cap';
+    cap.textContent = p.caption;
+    cap.title = p.caption;
+    var val = document.createElement('span');
+    val.className = 'val';
+    val.textContent = 'Any';
+    var x = document.createElement('span');
+    x.className = 'x';
+    x.textContent = '✕';
+    x.title = 'Clear';
+    row.appendChild(num);
+    row.appendChild(cap);
+    row.appendChild(val);
+    row.appendChild(x);
     var vals = valuesByProp[p.id] || [];
-    var ctrl;
+    var ctrl; // detached state holder — never rendered
     if (vals.length) {
       ctrl = document.createElement('select');
       var any = document.createElement('option');
@@ -503,16 +464,102 @@ function renderFilterPanel() {
     } else {
       // No stored values (Range/Manual property) → free text.
       ctrl = document.createElement('input');
-      ctrl.placeholder = 'Any';
     }
-    ctrl.addEventListener('change', function () { syncChipsFromPanel(); });
-    card.appendChild(ctrl);
-    grid.appendChild(card);
-    panelCtrls[p.id] = { prop: p, el: ctrl, card: card };
+    x.addEventListener('click', function (e) {
+      e.stopPropagation();
+      closePop();
+      ctrl.value = '';
+      syncChipsFromPanel();
+    });
+    row.addEventListener('click', function () { openPop(p, row); });
+    grid.appendChild(row);
+    panelCtrls[p.id] = { prop: p, el: ctrl, card: row, val: val };
   });
   applyParamSearch();
   syncChipsFromPanel();
 }
+
+/* value popover — one shared element, anchored to the clicked row */
+var popFor = null;      // propertyId the popover is open for
+var popCommit = null;   // pending free-text commit, applied on close
+
+function closePop() {
+  if (popCommit) { var fn = popCommit; popCommit = null; fn(); }
+  $('fp-pop').classList.add('hidden');
+  popFor = null;
+}
+
+function openPop(p, row) {
+  if (popFor === p.id) return closePop(); // second click toggles
+  closePop();
+  popFor = p.id;
+  var c = panelCtrls[p.id];
+  var pop = $('fp-pop');
+  pop.innerHTML = '';
+  var head = document.createElement('div');
+  head.className = 'pop-head';
+  head.textContent = p.caption;
+  pop.appendChild(head);
+  var focusEl = null;
+  if (c.el.tagName === 'SELECT') {
+    var opts = Array.prototype.slice.call(c.el.options);
+    var list = document.createElement('div');
+    list.className = 'pop-list';
+    function renderOpts(q) {
+      list.innerHTML = '';
+      opts.forEach(function (o) {
+        var label = o.textContent;
+        if (q && o.value && label.toLowerCase().indexOf(q) === -1) return;
+        var d = document.createElement('div');
+        d.className = 'fp-opt' + (c.el.value === o.value ? ' on' : '') + (o.value ? '' : ' none');
+        d.textContent = label;
+        d.addEventListener('click', function () {
+          c.el.value = o.value;
+          closePop();
+          syncChipsFromPanel();
+        });
+        list.appendChild(d);
+      });
+    }
+    if (opts.length > 9) {
+      var filter = document.createElement('input');
+      filter.type = 'search';
+      filter.placeholder = 'Filter…';
+      filter.addEventListener('input', function () { renderOpts(filter.value.trim().toLowerCase()); });
+      pop.appendChild(filter);
+      focusEl = filter;
+    }
+    renderOpts('');
+    pop.appendChild(list);
+  } else {
+    // Free text: applied on Enter or when the popover closes.
+    var inp = document.createElement('input');
+    inp.placeholder = 'Any';
+    inp.value = c.el.value;
+    popCommit = function () {
+      var v = inp.value.trim();
+      if (c.el.value !== v) { c.el.value = v; syncChipsFromPanel(); }
+    };
+    inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') closePop(); });
+    pop.appendChild(inp);
+    focusEl = inp;
+  }
+  pop.classList.remove('hidden');
+  // Anchor beside the row, clamped inside the panel.
+  var panel = $('filter-panel');
+  var top = row.getBoundingClientRect().top - panel.getBoundingClientRect().top;
+  pop.style.top = Math.max(8, Math.min(top, panel.clientHeight - pop.offsetHeight - 8)) + 'px';
+  if (focusEl) focusEl.focus();
+}
+
+document.addEventListener('click', function (e) {
+  if (popFor === null) return;
+  if ($('fp-pop').contains(e.target)) return;
+  var t = e.target;
+  while (t && t !== document) { if (t.classList && t.classList.contains('fp-row')) return; t = t.parentNode; }
+  closePop();
+});
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closePop(); });
 
 function syncChipsFromPanel() {
   chips = [];
@@ -522,15 +569,16 @@ function syncChipsFromPanel() {
     var isSel = c.el.tagName === 'SELECT';
     var raw = isSel ? c.el.value : c.el.value.trim();
     c.card.classList.toggle('set', Boolean(raw));
-    if (!raw) return;
+    if (!raw) { c.val.textContent = 'Any'; c.val.title = ''; return; }
+    var display = isSel ? c.el.options[c.el.selectedIndex].textContent : raw;
+    c.val.textContent = display;
+    c.val.title = display;
     if (isSel) {
-      chips.push({ propertyId: p.id, caption: p.caption, valueType: p.valueType, valueId: raw,
-        display: c.el.options[c.el.selectedIndex].textContent });
+      chips.push({ propertyId: p.id, caption: p.caption, valueType: p.valueType, valueId: raw, display: display });
     } else {
-      chips.push({ propertyId: p.id, caption: p.caption, valueType: p.valueType, text: raw, display: raw });
+      chips.push({ propertyId: p.id, caption: p.caption, valueType: p.valueType, text: raw, display: display });
     }
   });
-  $('fp-count').textContent = params.length ? chips.length + '/' + params.length + ' set' : '';
   $('fp-clear').classList.toggle('hidden', !chips.length);
   renderChips();
   triggerSearch(0);
@@ -553,29 +601,9 @@ $('fp-clear').addEventListener('click', function () {
   params.forEach(function (p) { resetPanelControl(p.id); });
   syncChipsFromPanel();
 });
-$('fp-toggle').addEventListener('click', function () {
-  var g = $('fp-grid');
-  g.classList.toggle('collapsed');
-  this.textContent = g.classList.contains('collapsed') ? '▸' : '▾';
-});
+// Selections live in the filter panel only (CR: no chips in the search bar) —
+// this just keeps the Clear button in sync.
 function renderChips() {
-  var box = $('chips');
-  box.innerHTML = '';
-  chips.forEach(function (c, i) {
-    var span = document.createElement('span');
-    span.className = 'chip';
-    var cap = document.createElement('span');
-    cap.className = 'cap';
-    cap.textContent = c.caption;
-    var val = document.createElement('b');
-    val.textContent = c.display;
-    var x = document.createElement('button');
-    x.type = 'button';
-    x.textContent = '×';
-    x.addEventListener('click', function () { resetPanelControl(c.propertyId); syncChipsFromPanel(); });
-    span.appendChild(cap); span.appendChild(val); span.appendChild(x);
-    box.appendChild(span);
-  });
   $('clear-btn').classList.toggle('hidden', !chips.length && !$('search').value.trim());
 }
 $('clear-btn').addEventListener('click', function () {
@@ -673,7 +701,6 @@ function addToCart(it, opts) {
     rateTouched: Boolean(opts.rate), badge: opts.badge || null,
   };
   lines.push(line);
-  pushed = false;
   renderCart();
   if (line.rateTouched) return;
   // Prefill the rate from the CRM Product's Unit_Price (async, keeps manual edits).
@@ -701,11 +728,12 @@ function updateTotals() {
   $('subtotal-units').textContent = 'Subtotal · ' + units + (units === 1 ? ' unit' : ' units');
   $('subtotal').textContent = subtotal.toFixed(2);
   $('add-btn').disabled = !lines.length;
+  $('quote-btn').disabled = !lines.length;
+  var target = 'Zoho ' + moduleName.replace(/s$/, '');
   $('add-btn').textContent = lines.length
-    ? 'Push ' + lines.length + (lines.length === 1 ? ' line' : ' lines') + ' to Zoho Quote'
-    : 'Push to Zoho Quote';
+    ? 'Push ' + lines.length + (lines.length === 1 ? ' line' : ' lines') + ' to ' + target
+    : 'Push to ' + target;
   $('lines-clear').classList.toggle('hidden', !lines.length);
-  updateSteps();
 }
 $('lines-clear').addEventListener('click', function () {
   lines = [];
@@ -847,7 +875,7 @@ function refreshCreateCard() {
     $('c-save').disabled = false;
     if (!nameTouched && !$('c-name').value) $('c-name').value = $('search').value.trim();
     setCreateInfo(industryId ? 'Add filters above to auto-generate the SKU from parameters.'
-      : 'Pick an industry to auto-generate the SKU from parameters.');
+      : 'No industry configured — SKU is typed by hand.');
     return;
   }
   var b = buildSelectedValues();
@@ -966,8 +994,9 @@ function findOrCreateProduct(it) {
   });
 }
 
-// Metadata-driven subform discovery: which key holds the standard line items,
-// and does the Quote have a custom subform to mirror item details into?
+// Metadata-driven subform discovery: which key holds the standard line items
+// (Quotes only — Deals has none), and is there a custom subform to mirror
+// item details into (Deals: "Product Information")?
 // Cached; a META failure degrades to { stdKey: null, custom: null } and the
 // add flow falls back to record-read detection (standard subform only).
 var subformInfo = null;
@@ -976,17 +1005,33 @@ function discoverSubforms() {
   if (!window.ZOHO || !ZOHO.CRM.META || typeof ZOHO.CRM.META.getFields !== 'function') {
     return Promise.resolve({ stdKey: null, custom: null });
   }
-  return ZOHO.CRM.META.getFields({ Entity: 'Quotes' }).then(function (res) {
+  return ZOHO.CRM.META.getFields({ Entity: moduleName }).then(function (res) {
     var fields = (res && res.fields) || [];
     var subs = fields.filter(function (f) { return f.data_type === 'subform'; });
-    var std = subs.find(function (f) { return f.api_name === 'Quoted_Items'; });
-    var custom = subs.find(function (f) { return f.api_name !== 'Quoted_Items'; });
-    // Old-style orgs list no subform field for line items → classic Product_Details.
-    var info = { stdKey: std ? 'Quoted_Items' : 'Product_Details', custom: null };
+    var std = null, custom = null, info;
+    if (moduleName === 'Quotes') {
+      std = subs.find(function (f) { return f.api_name === 'Quoted_Items'; });
+      custom = subs.find(function (f) { return f.api_name !== 'Quoted_Items'; });
+      // Old-style orgs list no subform field for line items → classic Product_Details.
+      info = { stdKey: std ? 'Quoted_Items' : 'Product_Details', custom: null };
+    } else {
+      // Deals: no standard line-items subform — write only the custom one
+      // ("Product Information"; fall back to whatever subform exists).
+      custom = subs.find(function (f) {
+        return normLabel(f.field_label) === 'productinformation';
+      }) || subs[0];
+      info = { stdKey: null, custom: null };
+    }
     if (!custom) { subformInfo = info; return info; }
     var mod = (custom.subform && custom.subform.module) || custom.api_name;
     return ZOHO.CRM.META.getFields({ Entity: mod }).then(function (r2) {
-      info.custom = { key: custom.api_name, columns: (r2 && r2.fields) || [] };
+      var cols = (r2 && r2.fields) || [];
+      // A lookup-to-Products column (if any) gets the found/created product id.
+      var prodCol = cols.find(function (f) {
+        var m = f.lookup && (f.lookup.module && f.lookup.module.api_name || f.lookup.module);
+        return f.data_type === 'lookup' && m === 'Products';
+      });
+      info.custom = { key: custom.api_name, columns: cols, productCol: prodCol ? prodCol.api_name : null };
       subformInfo = info;
       return info;
     }, function () { subformInfo = info; return info; }); // columns unreadable → std only
@@ -1004,10 +1049,12 @@ var FIXED_COLS = {
   rate: 'rate', price: 'rate', listprice: 'rate', unitprice: 'rate',
   disc: 'disc', discount: 'disc', discountpercent: 'disc',
 };
-function customRow(columns, line) {
+function customRow(custom, line, pid) {
+  var columns = custom.columns;
   var vals = {};
   Object.keys(line.values).forEach(function (cap) { vals[normLabel(cap)] = line.values[cap]; });
   var row = {};
+  if (custom.productCol && pid) row[custom.productCol] = { id: pid };
   columns.forEach(function (f) {
     if (f.read_only || f.data_type === 'lookup' || f.data_type === 'subform' || f.api_name === 'id') return;
     var l = normLabel(f.field_label);
@@ -1027,51 +1074,194 @@ function keepRows(rows) {
   return (rows || []).map(function (r) { return r.id ? { id: r.id } : r; });
 }
 
+// Zoho SDK rejects with plain objects, not Errors — stringify those.
+function errText(err) {
+  return err && err.message ? err.message
+    : (typeof err === 'object' ? JSON.stringify(err) : String(err));
+}
+
+// Writes the cart lines into the current record's subforms.
+async function pushLines() {
+  setStatus('Reading record…');
+  var info = await discoverSubforms();
+  var res = await ZOHO.CRM.API.getRecord({ Entity: moduleName, RecordID: recordId });
+  var rec = res && res.data && res.data[0];
+  if (!rec) throw new Error('Could not read the record.');
+  // Metadata names the standard subform; the record-read guess (which fails
+  // on empty quotes) is only the META-less fallback, defaulting to v2.
+  // Deals has no standard line-items subform — custom rows only.
+  var stdKey = moduleName === 'Quotes'
+    ? (info.stdKey || (rec.Quoted_Items ? 'Quoted_Items' : 'Product_Details'))
+    : null;
+  var v3 = stdKey === 'Quoted_Items';
+  // A Products record is only needed for the std subform / a Products lookup column.
+  var needsProduct = Boolean(stdKey || (info.custom && info.custom.productCol));
+  if (!stdKey && !info.custom) throw new Error('No line-item subform found on this ' + moduleName.replace(/s$/, '') + '.');
+  // Parameter values (Size etc.) go into the line description column and any
+  // matching custom subform columns.
+  var stdDescCol = null, stdCols = null;
+  if (stdKey) {
+    var qMeta = await getQuotesLineMeta();
+    if (qMeta.key === stdKey) { stdDescCol = qMeta.descCol; stdCols = qMeta.columns; }
+    else if (stdKey === 'Product_Details') stdDescCol = 'product_description';
+  }
+
+  var stdRows = [], custRows = [];
+  for (var i = 0; i < lines.length; i++) {
+    setStatus('Item ' + (i + 1) + ' of ' + lines.length + ': ' + lines[i].sku + '…');
+    var pid = needsProduct ? await findOrCreateProduct(lines[i]) : null;
+    // CRM's subform Discount is an amount, not a percent.
+    var discAmt = lines[i].qty * lines[i].rate * lines[i].disc / 100;
+    if (stdKey) {
+      var srow = v3
+        ? { Product_Name: { id: pid }, Quantity: lines[i].qty, List_Price: lines[i].rate, Discount: discAmt }
+        : { product: { id: pid }, quantity: lines[i].qty, list_price: lines[i].rate, Discount: discAmt };
+      var d = lineDesc(lines[i]);
+      if (d && stdDescCol) srow[stdDescCol] = d;
+      applyParamCols(stdCols, lines[i], srow);
+      stdRows.push(srow);
+    }
+    if (info.custom) custRows.push(customRow(info.custom, lines[i], pid));
+  }
+
+  setStatus('Updating record…');
+  // Subform updates REPLACE all rows — existing rows must be re-sent.
+  var upd = { id: recordId };
+  if (stdKey) upd[stdKey] = keepRows(rec[stdKey]).concat(stdRows);
+  if (info.custom) upd[info.custom.key] = keepRows(rec[info.custom.key]).concat(custRows);
+  var out = await ZOHO.CRM.API.updateRecord({ Entity: moduleName, APIData: upd, Trigger: [] });
+  var row = out && out.data && out.data[0];
+  if (!row || row.code !== 'SUCCESS') throw new Error('Update failed: ' + JSON.stringify(row && row.message));
+}
+
 $('add-btn').addEventListener('click', async function () {
   var btn = $('add-btn');
   btn.disabled = true;
   try {
-    setStatus('Reading quote…');
-    var info = await discoverSubforms();
-    var res = await ZOHO.CRM.API.getRecord({ Entity: 'Quotes', RecordID: recordId });
-    var rec = res && res.data && res.data[0];
-    if (!rec) throw new Error('Could not read the quote.');
-    // Metadata names the standard subform; the record-read guess (which fails
-    // on empty quotes) is only the META-less fallback, defaulting to v2.
-    var stdKey = info.stdKey || (rec.Quoted_Items ? 'Quoted_Items' : 'Product_Details');
-    var v3 = stdKey === 'Quoted_Items';
+    await pushLines();
+    setStatus('Done.');
+    ZOHO.CRM.UI.Popup.closeReload();
+  } catch (err) {
+    setStatus(errText(err) || 'Add to ' + moduleName.replace(/s$/, '').toLowerCase() + ' failed.', true);
+    btn.disabled = false;
+  }
+});
 
-    var stdRows = [], custRows = [];
+/* ---------- Deal → Quote ---------- */
+// Quotes line-item metadata: the standard subform key (v3 Quoted_Items vs
+// classic Product_Details), its description column, and the Quotes custom
+// subform ("Product Information" — where the Size/parameter columns live),
+// mirroring discoverSubforms which is bound to the Deal here.
+var quotesLineMeta = null;
+function getQuotesLineMeta() {
+  if (quotesLineMeta) return Promise.resolve(quotesLineMeta);
+  var classic = { key: 'Product_Details', v3: false, descCol: 'product_description', columns: null, custom: null };
+  return ZOHO.CRM.META.getFields({ Entity: 'Quotes' }).then(function (res) {
+    var subs = ((res && res.fields) || []).filter(function (f) { return f.data_type === 'subform'; });
+    var std = subs.find(function (f) { return f.api_name === 'Quoted_Items'; });
+    var meta = std
+      ? { key: 'Quoted_Items', v3: true, descCol: null, columns: null, custom: null }
+      : classic;
+    var cust = subs.find(function (f) { return normLabel(f.field_label) === 'productinformation'; })
+      || subs.find(function (f) { return f.api_name !== 'Quoted_Items'; });
+
+    var loadStd = !std ? Promise.resolve() :
+      ZOHO.CRM.META.getFields({ Entity: (std.subform && std.subform.module) || 'Quoted_Items' })
+        .then(function (r2) {
+          meta.columns = (r2 && r2.fields) || [];
+          var desc = meta.columns.find(function (f) {
+            return normLabel(f.field_label) === 'description' && !f.read_only;
+          });
+          meta.descCol = desc ? desc.api_name : null;
+        }, function () { /* std columns unreadable — description skipped */ });
+
+    var loadCust = !cust ? Promise.resolve() :
+      ZOHO.CRM.META.getFields({ Entity: (cust.subform && cust.subform.module) || cust.api_name })
+        .then(function (r3) {
+          var cols = (r3 && r3.fields) || [];
+          var prodCol = cols.find(function (f) {
+            var m = f.lookup && (f.lookup.module && f.lookup.module.api_name || f.lookup.module);
+            return f.data_type === 'lookup' && m === 'Products';
+          });
+          meta.custom = { key: cust.api_name, columns: cols, productCol: prodCol ? prodCol.api_name : null };
+        }, function () { /* custom columns unreadable — skipped */ });
+
+    return Promise.all([loadStd, loadCust]).then(function () {
+      quotesLineMeta = meta;
+      return meta;
+    });
+  }, function () { quotesLineMeta = classic; return quotesLineMeta; });
+}
+
+// "Size: 42 · Colour: Red" from the item's stored parameter values.
+function lineDesc(l) {
+  var vals = l.values || {};
+  return Object.keys(vals).map(function (c) { return c + ': ' + vals[c]; }).join(' · ');
+}
+
+// Map the item's parameter values onto matching subform columns by label
+// (column "Size" ↔ property "Size") — same rule as the Deal's custom subform.
+// Never overwrites a field the row already carries (qty, rate, description…).
+function applyParamCols(columns, line, row) {
+  if (!columns) return;
+  var vals = {};
+  Object.keys(line.values || {}).forEach(function (cap) { vals[normLabel(cap)] = line.values[cap]; });
+  columns.forEach(function (f) {
+    if (f.read_only || f.data_type === 'lookup' || f.data_type === 'subform' || f.api_name === 'id') return;
+    if (row[f.api_name] !== undefined) return;
+    var v = vals[normLabel(f.field_label)];
+    if (v === undefined || v === null || v === '') return;
+    var numeric = f.data_type === 'double' || f.data_type === 'integer' || f.data_type === 'currency';
+    row[f.api_name] = numeric ? Number(v) || 0 : String(v);
+  });
+}
+
+// Creates a new Quote linked to this Deal straight from the cart lines — the
+// Deal record itself is not touched (use "Push to Zoho Deal" for that).
+$('quote-btn').addEventListener('click', async function () {
+  var btn = $('quote-btn');
+  btn.disabled = true;
+  $('add-btn').disabled = true;
+  try {
+    setStatus('Reading deal…');
+    var res = await ZOHO.CRM.API.getRecord({ Entity: 'Deals', RecordID: recordId });
+    var deal = res && res.data && res.data[0];
+    if (!deal) throw new Error('Could not read the deal.');
+
+    var meta = await getQuotesLineMeta();
+    var rows = [], custRows = [];
     for (var i = 0; i < lines.length; i++) {
       setStatus('Item ' + (i + 1) + ' of ' + lines.length + ': ' + lines[i].sku + '…');
       var pid = await findOrCreateProduct(lines[i]);
       // CRM's subform Discount is an amount, not a percent.
       var discAmt = lines[i].qty * lines[i].rate * lines[i].disc / 100;
-      stdRows.push(v3
+      var qrow = meta.v3
         ? { Product_Name: { id: pid }, Quantity: lines[i].qty, List_Price: lines[i].rate, Discount: discAmt }
-        : { product: { id: pid }, quantity: lines[i].qty, list_price: lines[i].rate, Discount: discAmt });
-      if (info.custom) custRows.push(customRow(info.custom.columns, lines[i]));
+        : { product: { id: pid }, quantity: lines[i].qty, list_price: lines[i].rate, Discount: discAmt };
+      var d = lineDesc(lines[i]);
+      if (d && meta.descCol) qrow[meta.descCol] = d;
+      applyParamCols(meta.columns, lines[i], qrow);
+      rows.push(qrow);
+      // The Quote's custom subform (Product Information) carries the Size and
+      // other parameter columns — same mapping as the Quotes-mode push.
+      if (meta.custom) custRows.push(customRow(meta.custom, lines[i], pid));
     }
 
-    setStatus('Updating quote…');
-    // Subform updates REPLACE all rows — existing rows must be re-sent.
-    var upd = { id: recordId };
-    upd[stdKey] = keepRows(rec[stdKey]).concat(stdRows);
-    if (info.custom) upd[info.custom.key] = keepRows(rec[info.custom.key]).concat(custRows);
-    var out = await ZOHO.CRM.API.updateRecord({ Entity: 'Quotes', APIData: upd, Trigger: [] });
+    setStatus('Creating quote…');
+    var data = { Subject: deal.Deal_Name || 'Quote', Deal_Name: { id: recordId } };
+    if (deal.Account_Name && deal.Account_Name.id) data.Account_Name = { id: deal.Account_Name.id };
+    if (deal.Contact_Name && deal.Contact_Name.id) data.Contact_Name = { id: deal.Contact_Name.id };
+    data[meta.key] = rows;
+    if (meta.custom) data[meta.custom.key] = custRows;
+    var out = await ZOHO.CRM.API.insertRecord({ Entity: 'Quotes', APIData: data, Trigger: [] });
     var row = out && out.data && out.data[0];
-    if (!row || row.code !== 'SUCCESS') throw new Error('Quote update failed: ' + JSON.stringify(row && row.message));
-
-    pushed = true;
-    updateSteps();
-    setStatus('Done.');
+    if (!row || row.code !== 'SUCCESS') throw new Error('Quote create failed: ' + JSON.stringify(row && row.message));
+    setStatus('Quote created.');
     ZOHO.CRM.UI.Popup.closeReload();
   } catch (err) {
-    // Zoho SDK rejects with plain objects, not Errors — stringify those.
-    var msg = err && err.message ? err.message
-      : (typeof err === 'object' ? JSON.stringify(err) : String(err));
-    setStatus(msg || 'Add to quote failed.', true);
-    btn.disabled = false;
+    setStatus(errText(err), true);
+    btn.disabled = !lines.length;
+    $('add-btn').disabled = !lines.length;
   }
 });
 </script>

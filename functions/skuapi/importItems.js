@@ -1,7 +1,7 @@
 "use strict";
 const { rowList, out, orgClause, reqOrg, isActive, findSkuRowId } = require("./store");
 const { assemble } = require("./skuBuild");
-const { nextSeriesSku } = require("./skuSeries");
+const { applySeries } = require("./skuSeries");
 const { saveItemValues } = require("./itemValues");
 
 const TABLE = "SKUItem";
@@ -111,10 +111,7 @@ async function processImport(catalyst, industryId, rows) {
         throw new Error(`Required fields missing: ${asm.missingRequired.join(", ")}`);
       if (!asm.sku) throw new Error("No SKU produced — every property cell is blank");
 
-      let finalSku = asm.sku;
-      if (Number(industry.seriesStart) > 0) {
-        finalSku = await nextSeriesSku(catalyst, industryId, asm.sku, sep, Number(industry.seriesPad) || 4);
-      }
+      const finalSku = await applySeries(catalyst, industry, asm.sku, selectedValues);
       if (await findSkuRowId(catalyst, finalSku)) throw new Error(`Duplicate SKU: ${finalSku}`);
 
       const item = out(

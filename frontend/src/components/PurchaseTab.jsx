@@ -4,19 +4,20 @@ import toast from 'react-hot-toast';
 import { Empty, Banner } from './MaterialsGrid.jsx';
 import Modal, { ModalFooter, ModalBtn, CloseX } from './Modal.jsx';
 import { ItemPicker } from './WoItemsTab.jsx';
-import { StatusChip, btn, select, thStyle, cell } from './woCommon.jsx';
+import { StatusChip, ZStatusChip, can, btn, select, thStyle, cell } from './woCommon.jsx';
 import { fmtMoney } from '../format.js';
 
 // The Purchase workflow of one work order: shortfall → purchase request →
 // vendor per line → confirm → draft POs in Zoho Books. Moved verbatim from
 // WorkOrderPage (CR-018) so the global /wo/purchase page can reuse it.
-export default function PurchaseTab({ workOrderId, wo, onChanged }) {
+export default function PurchaseTab({ workOrderId, wo, onChanged, user }) {
+  // Action-level grants (CR-125) — server enforces; this only hides buttons.
+  const mayCreate = can(user, 'wo.action.po.create');
   const [shortfall, setShortfall] = useState(null);
   const [vendors, setVendors] = useState([]);
   const [vendorErr, setVendorErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [selectedPo, setSelectedPo] = useState(null);
-  const [confirmDeletePr, setConfirmDeletePr] = useState(null); // pr → confirm modal
 
   function loadVendors() {
     setVendorErr(null);
@@ -43,6 +44,90 @@ export default function PurchaseTab({ workOrderId, wo, onChanged }) {
       toast.error(err.response?.data?.error || 'Could not create the purchase request');
     } finally { setBusy(false); }
   }
+
+  // Unique POs of this work order, derived from the PR lines already loaded.
+  const pos = [];
+  {
+    const seen = new Set();
+    for (const pr of wo.purchaseRequests || []) for (const l of pr.lines || []) {
+      if (l.poId && !seen.has(l.poId)) {
+        seen.add(l.poId);
+        pos.push({ id: l.poId, number: l.poNumber, status: l.poStatus, vendorName: l.vendorName, prNumber: pr.prNumber });
+      }
+    }
+  }
+
+  if (selectedPo) {
+    return (
+      <PoSplit
+        pos={pos}
+        selectedPo={selectedPo}
+        onSelect={setSelectedPo}
+        onClose={() => setSelectedPo(null)}
+        onChanged={onChanged}
+      />
+    );
+  }
+
+  return (
+    <div style={{ height: '100%', overflow: 'auto', padding: '14px 20px 24px' }}>
+      {shortfall === null ? <Empty>Checking for shortfalls…</Empty> : shortfall.length > 0 && (
+        <div style={{ marginBottom: 18, border: '1px solid #fecaca', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+          <div style={{ padding: '10px 14px', background: '#fef2f2', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <b style={{ fontSize: 13, color: '#b91c1c' }}>{shortfall.length} item(s) short</b>
+            <span style={{ fontSize: 12, color: '#7f1d1d' }}>
+              Quantities already on order or on a draft purchase request are excluded, so nothing gets ordered twice. Adjust a quantity before raising if needed.
+            </span>
+            <div style={{ flex: 1 }} />
+            {mayCreate && (
+              <button onClick={raise} disabled={busy} style={{ ...btn, background: '#dc2626', color: '#fff', borderColor: '#dc2626', fontWeight: 600 }}>
+                Raise request
+              </button>
+            )}
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr>{['Item', 'To purchase'].map((h, i) => <th key={h} style={{ ...thStyle, textAlign: i ? 'right' : 'left' }}>{h}</th>)}</tr></thead>
+            <tbody>
+              {shortfall.map((l, i) => (
+                <tr key={`${l.rmItemId}-${i}`} style={{ borderBottom: '1px solid var(--border)' }}>
+                  <td style={cell}>
+                    {l.rmName || l.rmItemId}
+                    {l.prHint && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{l.prHint}</div>}
+                  </td>
+                  <td style={{ ...cell, textAlign: 'right' }}>
+                    <QtyInput
+                      line={l}
+                      onCommit={qty => setShortfall(s => s.map((x, j) => j === i ? { ...x, purchaseQty: qty } : x))}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {vendorErr && wo.purchaseRequests?.some(pr => pr.status === 'Draft') && (
+        <div style={{ marginBottom: 12 }}>
+          <Banner tone="warn">Vendor list failed to load: {vendorErr}. Press ⟳ next to a vendor field to retry.</Banner>
+        </div>
+      )}
+
+      {!wo.purchaseRequests?.length ? (
+        shortfall?.length === 0 && <Empty>Nothing is short on this work order — no purchase needed.</Empty>
+      ) : wo.purchaseRequests.map(pr => (
+        <PrCard key={pr.id} pr={pr} vendors={vendors} onLoadVendors={loadVendors} onChanged={onChanged} onOpenPo={setSelectedPo} mayCreate={mayCreate} />
+      ))}
+    </div>
+  );
+}
+
+// One PR card: header actions + editable lines. Extracted from PurchaseTab so
+// the global purchase page can edit a PR (incl. consolidated cross-WO ones)
+// without a work order in scope — everything here is keyed by pr/line id.
+export function PrCard({ pr, vendors, onLoadVendors, onChanged, onOpenPo, mayCreate = true }) {
+  const [busy, setBusy] = useState(false);
+  const [confirmDeletePr, setConfirmDeletePr] = useState(null);
 
   async function setLine(lineId, patch) {
     try {
@@ -83,158 +168,93 @@ export default function PurchaseTab({ workOrderId, wo, onChanged }) {
     } finally { setBusy(false); }
   }
 
-  // Unique POs of this work order, derived from the PR lines already loaded.
-  const pos = [];
-  {
-    const seen = new Set();
-    for (const pr of wo.purchaseRequests || []) for (const l of pr.lines || []) {
-      if (l.poId && !seen.has(l.poId)) {
-        seen.add(l.poId);
-        pos.push({ id: l.poId, number: l.poNumber, status: l.poStatus, vendorName: l.vendorName, prNumber: pr.prNumber });
-      }
-    }
-  }
-
-  if (selectedPo) {
-    return (
-      <PoSplit
-        pos={pos}
-        selectedPo={selectedPo}
-        onSelect={setSelectedPo}
-        onClose={() => setSelectedPo(null)}
-        onChanged={onChanged}
-      />
-    );
-  }
-
   return (
-    <div style={{ height: '100%', overflow: 'auto', padding: '14px 20px 24px' }}>
-      {shortfall === null ? <Empty>Checking for shortfalls…</Empty> : shortfall.length > 0 && (
-        <div style={{ marginBottom: 18, border: '1px solid #fecaca', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-          <div style={{ padding: '10px 14px', background: '#fef2f2', display: 'flex', alignItems: 'center', gap: 12 }}>
-            <b style={{ fontSize: 13, color: '#b91c1c' }}>{shortfall.length} item(s) short</b>
-            <span style={{ fontSize: 12, color: '#7f1d1d' }}>
-              Quantities already on order or on a draft purchase request are excluded, so nothing gets ordered twice. Adjust a quantity before raising if needed.
-            </span>
-            <div style={{ flex: 1 }} />
-            <button onClick={raise} disabled={busy} style={{ ...btn, background: '#dc2626', color: '#fff', borderColor: '#dc2626', fontWeight: 600 }}>
-              Raise request
+    <div style={{ marginBottom: 16, border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+      <div style={{ padding: '10px 14px', background: 'var(--bg-page)', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <b style={{ fontSize: 13 }}>{pr.prNumber}</b>
+        <StatusChip status={pr.status} />
+        <div style={{ flex: 1 }} />
+        {pr.status === 'Draft' && mayCreate && (
+          <>
+            <button onClick={() => setConfirmDeletePr(pr)} disabled={busy} style={{ ...btn, color: '#b91c1c', borderColor: '#fca5a5' }}>
+              Delete request
             </button>
-          </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr>{['Item', 'To purchase'].map((h, i) => <th key={h} style={{ ...thStyle, textAlign: i ? 'right' : 'left' }}>{h}</th>)}</tr></thead>
-            <tbody>
-              {shortfall.map((l, i) => (
-                <tr key={`${l.rmItemId}-${i}`} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={cell}>
-                    {l.rmName || l.rmItemId}
-                    {l.prHint && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{l.prHint}</div>}
-                  </td>
-                  <td style={{ ...cell, textAlign: 'right' }}>
-                    <QtyInput
-                      line={l}
-                      onCommit={qty => setShortfall(s => s.map((x, j) => j === i ? { ...x, purchaseQty: qty } : x))}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {vendorErr && wo.purchaseRequests?.some(pr => pr.status === 'Draft') && (
-        <div style={{ marginBottom: 12 }}>
-          <Banner tone="warn">Vendor list failed to load: {vendorErr}. Press ⟳ next to a vendor field to retry.</Banner>
-        </div>
-      )}
-
-      {!wo.purchaseRequests?.length ? (
-        shortfall?.length === 0 && <Empty>Nothing is short on this work order — no purchase needed.</Empty>
-      ) : wo.purchaseRequests.map(pr => (
-        <div key={pr.id} style={{ marginBottom: 16, border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-          <div style={{ padding: '10px 14px', background: 'var(--bg-page)', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <b style={{ fontSize: 13 }}>{pr.prNumber}</b>
-            <StatusChip status={pr.status} />
-            <div style={{ flex: 1 }} />
-            {pr.status === 'Draft' && (
-              <>
-                <button onClick={() => setConfirmDeletePr(pr)} disabled={busy} style={{ ...btn, color: '#b91c1c', borderColor: '#fca5a5' }}>
-                  Delete request
-                </button>
-                <button onClick={() => confirm(pr.id)} disabled={busy} style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
-                  Confirm → create draft POs
-                </button>
-              </>
-            )}
-          </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>{['Item', 'Vendor', 'Qty', 'PO', 'Received', 'Billed', ''].map((h, i) => (
-                <th key={h || 'x'} style={{ ...thStyle, textAlign: i < 2 ? 'left' : 'right' }}>{h}</th>
-              ))}</tr>
-            </thead>
-            <tbody>
-              {pr.lines.map(l => (
-                <tr key={l.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={cell}>{l.rmName || l.rmItemId}</td>
-                  <td style={cell}>
-                    {l.poNumber ? (l.vendorName || '—') : (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                        <select
-                          value={l.vendorId || ''}
-                          onChange={e => {
-                            const v = vendors.find(x => x.id === e.target.value);
-                            setLine(l.id, { vendorId: v?.id || '', vendorName: v?.name || '' });
-                          }}
-                          style={{ ...select, maxWidth: 220, borderColor: l.vendorId ? 'var(--border)' : '#fca5a5' }}
-                        >
-                          <option value="">Pick a vendor…</option>
-                          {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                        </select>
-                        <button onClick={loadVendors} title="Refresh vendors from Zoho Books — use after adding a vendor there" style={btn}>⟳</button>
-                      </span>
-                    )}
-                  </td>
-                  <td style={{ ...cell, textAlign: 'right' }}>
-                    {l.poNumber ? <span style={{ fontFamily: 'var(--font-mono)' }}>{l.purchaseQty}</span> : (
-                      <QtyInput line={l} onCommit={qty => setLine(l.id, { purchaseQty: qty })} />
-                    )}
-                  </td>
-                  <td style={{ ...cell, textAlign: 'right', fontSize: 12 }}>
-                    {l.poNumber ? (
-                      <>
-                        <button
-                          onClick={() => setSelectedPo(l.poId)}
-                          title="Open purchase order"
-                          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--blue)', fontWeight: 700, fontSize: 12 }}
-                        >
-                          {l.poNumber}
-                        </button>
-                        <div style={{ color: 'var(--text-muted)' }}>{l.poStatus}</div>
-                      </>
-                    ) : '—'}
-                  </td>
-                  <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{l.receivedQty}</td>
-                  <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{l.billedQty}</td>
-                  <td style={{ ...cell, width: 34, textAlign: 'right' }}>
-                    {!l.poNumber && (
-                      <button
-                        onClick={() => deleteLine(l.id)}
-                        title="Remove line — the item returns to the shortfall"
-                        style={{ ...btn, padding: '2px 7px', color: '#b91c1c' }}
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {pr.status === 'Draft' && <AddLineRow prId={pr.id} onAdded={onChanged} />}
-        </div>
-      ))}
+            <button onClick={() => confirm(pr.id)} disabled={busy} style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
+              Confirm → create draft POs
+            </button>
+          </>
+        )}
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>{['Item', 'Vendor', 'Req Qty', 'Qty', 'PO', 'Received', 'Billed', ''].map((h, i) => (
+            <th key={h || 'x'} style={{ ...thStyle, textAlign: i < 2 ? 'left' : 'right' }}>{h}</th>
+          ))}</tr>
+        </thead>
+        <tbody>
+          {pr.lines.map(l => (
+            <tr key={l.id} style={{ borderBottom: '1px solid var(--border)' }}>
+              <td style={cell}>
+                {l.rmName || l.rmItemId}
+              </td>
+              <td style={cell}>
+                {l.poNumber ? (l.vendorName || '—') : (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <select
+                      value={l.vendorId || ''}
+                      onChange={e => {
+                        const v = vendors.find(x => x.id === e.target.value);
+                        setLine(l.id, { vendorId: v?.id || '', vendorName: v?.name || '' });
+                      }}
+                      style={{ ...select, maxWidth: 220, borderColor: l.vendorId ? 'var(--border)' : '#fca5a5' }}
+                    >
+                      <option value="">Pick a vendor…</option>
+                      {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                    </select>
+                    <button onClick={onLoadVendors} title="Refresh vendors from Zoho Books — use after adding a vendor there" style={btn}>⟳</button>
+                  </span>
+                )}
+              </td>
+              <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>
+                {l.isExtra ? '—' : l.requiredQty}
+              </td>
+              <td style={{ ...cell, textAlign: 'right' }}>
+                {l.poNumber ? <span style={{ fontFamily: 'var(--font-mono)' }}>{l.purchaseQty}</span> : (
+                  <QtyInput line={l} onCommit={qty => setLine(l.id, { purchaseQty: qty })} />
+                )}
+              </td>
+              <td style={{ ...cell, textAlign: 'right', fontSize: 12 }}>
+                {l.poNumber ? (
+                  <>
+                    <button
+                      onClick={() => onOpenPo(l.poId)}
+                      title="Open purchase order"
+                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--blue)', fontWeight: 700, fontSize: 12 }}
+                    >
+                      {l.poNumber}
+                    </button>
+                    <div style={{ color: 'var(--text-muted)' }}>{l.poStatus}</div>
+                  </>
+                ) : '—'}
+              </td>
+              <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{l.receivedQty}</td>
+              <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{l.billedQty}</td>
+              <td style={{ ...cell, width: 34, textAlign: 'right' }}>
+                {!l.poNumber && (
+                  <button
+                    onClick={() => deleteLine(l.id)}
+                    title="Remove line — the item returns to the shortfall"
+                    style={{ ...btn, padding: '2px 7px', color: '#b91c1c' }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {pr.status === 'Draft' && <AddLineRow prId={pr.id} onAdded={onChanged} />}
 
       {confirmDeletePr && (
         <Modal title={`Delete ${confirmDeletePr.prNumber}?`} onClose={() => setConfirmDeletePr(null)} width={440}>
@@ -378,8 +398,8 @@ export function PoSplit({ pos, selectedPo, onSelect, onClose, onChanged }) {
     ['Date', detail?.date],
     ['Reference (SO)', detail?.referenceNumber || '—'],
     ['Total', detail ? fmtMoney(detail.total) : ''],
-    ['Receive Status', detail?.receivedStatus || '—'],
-    ['Bill Status', detail?.billedStatus || '—'],
+    ['Receive Status', <ZStatusChip status={detail?.receivedStatus} />],
+    ['Bill Status', <ZStatusChip status={detail?.billedStatus} />],
   ];
 
   return (

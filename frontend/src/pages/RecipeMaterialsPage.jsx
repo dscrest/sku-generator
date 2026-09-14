@@ -5,20 +5,60 @@ import Toolbar from '../components/Toolbar.jsx';
 import Modal, { ModalFooter, ModalBtn, ConfirmModal } from '../components/Modal.jsx';
 import RowMenu from '../components/RowMenu.jsx';
 import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
+import DateInput from '../components/DateInput.jsx';
+import DataTable, { useGridColumns, ColumnChooser } from '../components/DataTable.jsx';
 
-const thStyle = {
-  padding: '10px 16px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
-  textAlign: 'left', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap',
-  background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)',
-};
-const tdStyle = { padding: '10px 16px' };
 const inputStyle = {
   height: 36, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
   padding: '0 10px', fontSize: 13, fontFamily: 'var(--font)', width: '100%',
 };
 const labelStyle = { fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 4, display: 'block' };
 
-const EMPTY = { code: '', name: '', rate: '', uom: 'KG', effectiveFrom: '', status: 'Active' };
+const EMPTY = { code: '', name: '', rate: '', uom: 'KG', effectiveFrom: '', status: 'Active', zohoItemId: '', zohoItemName: '' };
+
+// Typeahead against the Books catalog (CR-143): links a material to the raw
+// -material Books item used as a mapped line when recipes push composites.
+function BooksItemPicker({ value, onChange }) {
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState(null); // null = closed
+  useEffect(() => {
+    if (q.trim().length < 2) { setHits(null); return; }
+    const t = setTimeout(async () => {
+      try { setHits((await axios.get('/api/recipe/books-items', { params: { q } })).data); }
+      catch { setHits([]); }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  if (value) {
+    return (
+      <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--bg-secondary)' }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value.name || value.id}</span>
+        <button type="button" onClick={() => onChange(null)} title="Unlink"
+          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '0 2px' }}>×</button>
+      </div>
+    );
+  }
+  return (
+    <div style={{ position: 'relative' }}>
+      <input style={inputStyle} value={q} onChange={e => setQ(e.target.value)} placeholder="Search Books items…" />
+      {hits !== null && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 20, maxHeight: 180, overflow: 'auto',
+          background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-md, 0 4px 12px rgba(0,0,0,.1))',
+        }}>
+          {hits.length === 0 && <div style={{ padding: '8px 10px', fontSize: 12.5, color: 'var(--text-muted)' }}>No matches</div>}
+          {hits.map(it => (
+            <button key={it.id} type="button" onClick={() => { onChange(it); setQ(''); setHits(null); }}
+              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 12.5 }}>
+              {it.name}{it.sku ? <span style={{ color: 'var(--text-muted)' }}> ({it.sku})</span> : null}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function RecipeMaterialsPage() {
   const [rows, setRows] = useState([]);
@@ -49,11 +89,33 @@ export default function RecipeMaterialsPage() {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortCol(col); setSortDir('asc'); }
   }
-  const SortArrow = ({ col }) => (
-    <span style={{ marginLeft: 4, opacity: 0.5, fontSize: 10 }}>
-      {sortCol === col ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
-    </span>
-  );
+
+  // COLUMNS lives in the component: the actions column needs setEditing/setConfirmDel.
+  const COLUMNS = [
+    { key: 'code', label: 'Code', lock: true, sortKey: 'code', render: m => <span style={{ fontWeight: 600 }}>{m.code}</span> },
+    { key: 'name', label: 'Name', sortKey: 'name', render: m => m.name },
+    { key: 'rate', label: 'Rate', align: 'right', sortKey: 'rate', render: m => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>₹{Number(m.rate || 0).toLocaleString('en-IN')}</span> },
+    { key: 'uom', label: 'UOM', sortKey: 'uom', render: m => <span style={{ color: 'var(--text-muted)' }}>{m.uom}</span> },
+    { key: 'effectiveFrom', label: 'Effective From', sortKey: 'effectiveFrom', render: m => <span style={{ color: 'var(--text-muted)' }}>{m.effectiveFrom || '—'}</span> },
+    { key: 'zohoItem', label: 'Books Item', sortKey: 'zohoItemName', render: m => m.zohoItemName ? m.zohoItemName : <span style={{ color: 'var(--text-muted)' }}>—</span> },
+    {
+      key: 'status', label: 'Status', sortKey: 'status', render: m => (
+        <span style={{
+          fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
+          background: m.status === 'Active' ? '#dcfce7' : 'var(--bg-secondary)',
+          color: m.status === 'Active' ? '#15803d' : 'var(--text-muted)',
+        }}>{m.status || 'Active'}</span>
+      ),
+    },
+    {
+      key: 'actions', label: 'Actions', lock: true, width: 60, render: m => (
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
+          <RowMenu onEdit={() => setEditing({ ...m })} onDelete={() => setConfirmDel(m)} />
+        </div>
+      ),
+    },
+  ];
+  const { cols, chooser } = useGridColumns('recipe.materials', COLUMNS);
 
   async function save() {
     if (!editing.code) return toast.error('Code is required');
@@ -86,52 +148,22 @@ export default function RecipeMaterialsPage() {
           <Toolbar
             onAdd={() => setEditing({ ...EMPTY })}
             onRefresh={load}
-            right={<FilterSelect label="statuses" value={fStatus} onChange={setFStatus} options={distinct(rows, 'status')} />}
+            right={
+              <div style={{ display: 'flex', gap: 8 }}>
+                <ColumnChooser chooser={chooser} />
+                <FilterSelect label="statuses" value={fStatus} onChange={setFStatus} options={distinct(rows, 'status')} />
+              </div>
+            }
           />
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr>
-                <th style={thStyle} onClick={() => toggleSort('code')}>Code <SortArrow col="code" /></th>
-                <th style={thStyle} onClick={() => toggleSort('name')}>Name <SortArrow col="name" /></th>
-                <th style={{ ...thStyle, textAlign: 'right' }} onClick={() => toggleSort('rate')}>Rate <SortArrow col="rate" /></th>
-                <th style={thStyle} onClick={() => toggleSort('uom')}>UOM <SortArrow col="uom" /></th>
-                <th style={thStyle} onClick={() => toggleSort('effectiveFrom')}>Effective From <SortArrow col="effectiveFrom" /></th>
-                <th style={thStyle} onClick={() => toggleSort('status')}>Status <SortArrow col="status" /></th>
-                <th style={{ ...thStyle, width: 60 }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.length === 0 && (
-                <tr><td colSpan={7} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No materials yet. Add one, or seed the RAVS150 demo from the Recipes page.</td></tr>
-              )}
-              {pageRows.map(m => (
-                <tr key={m.id}
-                  onClick={() => setEditing({ ...m })}
-                  style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <td style={{ ...tdStyle, fontWeight: 600 }}>{m.code}</td>
-                  <td style={tdStyle}>{m.name}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>₹{Number(m.rate || 0).toLocaleString('en-IN')}</td>
-                  <td style={{ ...tdStyle, color: 'var(--text-muted)' }}>{m.uom}</td>
-                  <td style={{ ...tdStyle, color: 'var(--text-muted)' }}>{m.effectiveFrom || '—'}</td>
-                  <td style={tdStyle}>
-                    <span style={{
-                      fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
-                      background: m.status === 'Active' ? '#dcfce7' : 'var(--bg-secondary)',
-                      color: m.status === 'Active' ? '#15803d' : 'var(--text-muted)',
-                    }}>{m.status || 'Active'}</span>
-                  </td>
-                  <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                      <RowMenu onEdit={() => setEditing({ ...m })} onDelete={() => setConfirmDel(m)} />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          {pageRows.length === 0 ? (
+            <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+              No materials yet. Add one, or seed the RAVS150 demo from the Recipes page.
+            </div>
+          ) : (
+            <DataTable cols={cols} rows={pageRows} onRowClick={m => setEditing({ ...m })} sort={{ key: sortCol, dir: sortDir }} onSort={toggleSort} />
+          )}
         </div>
       </div>
 
@@ -149,11 +181,16 @@ export default function RecipeMaterialsPage() {
             <div><label style={labelStyle}>UOM</label>
               <input style={inputStyle} value={editing.uom} onChange={e => setEditing(v => ({ ...v, uom: e.target.value }))} /></div>
             <div><label style={labelStyle}>Effective from</label>
-              <input style={inputStyle} type="date" value={editing.effectiveFrom} onChange={e => setEditing(v => ({ ...v, effectiveFrom: e.target.value }))} /></div>
+              <DateInput style={inputStyle} value={editing.effectiveFrom} onChange={e => setEditing(v => ({ ...v, effectiveFrom: e.target.value }))} /></div>
             <div><label style={labelStyle}>Status</label>
               <select style={{ ...inputStyle, background: 'var(--bg-card)' }} value={editing.status} onChange={e => setEditing(v => ({ ...v, status: e.target.value }))}>
                 <option>Active</option><option>Inactive</option>
               </select></div>
+            <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Books item (for recipe BOM push)</label>
+              <BooksItemPicker
+                value={editing.zohoItemId ? { id: editing.zohoItemId, name: editing.zohoItemName } : null}
+                onChange={it => setEditing(v => ({ ...v, zohoItemId: it ? it.id : '', zohoItemName: it ? it.name : '' }))}
+              /></div>
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
             Existing quotations keep the rate frozen in their snapshot; only new calculations use the updated rate.

@@ -172,7 +172,9 @@ function pickSerialsBatches(item, fromWarehouseId, qty, name) {
   }
 
   // Batch: allocate qty across batches, oldest first (Zoho lists them in order).
-  const pool = ((fromWh && fromWh.batches) || item.batches || []);
+  // .length guard: an EMPTY warehouse batches[] must fall through to the
+  // item-level pool (withBatchFallback patches it there).
+  const pool = (fromWh && (fromWh.batches || []).length ? fromWh.batches : item.batches) || [];
   const batches = [];
   let need = qty;
   for (const b of pool) {
@@ -187,10 +189,94 @@ function pickSerialsBatches(item, fromWarehouseId, qty, name) {
   return { batches };
 }
 
+/**
+ * Live per-item batch records. Zoho's /items/{id} detail returns
+ * locations[].batches as [] even when batch records exist (verified live:
+ * receive-created batches show balances here but not on the item detail) —
+ * the only reliable source is GET /items/batches?item_id=. Per-warehouse
+ * availability sits in associated_locations[].balance_quantity.
+ * Returns the same shape pickSerialsBatches reads: batch_available_stock.
+ */
+async function listItemBatchRecords(catalyst, itemId, fromWarehouseId) {
+  const data = await apiRequest(catalyst, "GET", `/items/batches?item_id=${itemId}`, null, "inventory");
+  return (data.batches || [])
+    .map((b) => {
+      const locs = b.associated_locations;
+      const loc = (locs || []).find((l) => String(l.location_id) === String(fromWarehouseId));
+      const available = locs ? (loc ? num(loc.balance_quantity) : 0) : num(b.balance_quantity);
+      return { batch_id: String(b.batch_id || ""), batch_number: b.batch_number, batch_available_stock: available };
+    })
+    .filter((b) => b.batch_available_stock > 0);
+}
+
+/**
+ * Patch item.batches from the live batch endpoint when the detail payload has
+ * none at the source warehouse — pickSerialsBatches/listSerialsBatches then
+ * find the pool via their item-level fallback. Serial items untouched (no such
+ * detail-payload gap observed for serials).
+ */
+async function withBatchFallback(catalyst, item, itemId, fromWarehouseId) {
+  if (!item || !(item.is_batch_tracked || item.track_batch_number)) return item;
+  const fromWh = [...(item.warehouses || []), ...(item.locations || [])]
+    .find((w) => whId(w) === String(fromWarehouseId));
+  if ((fromWh && (fromWh.batches || []).length) || (item.batches || []).length) return item;
+  item.batches = await listItemBatchRecords(catalyst, itemId, fromWarehouseId);
+  return item;
+}
+
 // Fetch the item detail then pick its serial/batch numbers for a transfer line.
 async function availableSerialsBatches(catalyst, itemId, fromWarehouseId, qty, name) {
   if (qty <= 0) return {};
-  return pickSerialsBatches(await getItemStock(catalyst, itemId), fromWarehouseId, qty, name);
+  const item = await withBatchFallback(catalyst, await getItemStock(catalyst, itemId), itemId, fromWarehouseId);
+  return pickSerialsBatches(item, fromWarehouseId, qty, name);
+}
+
+/**
+ * Pure: the FULL serial/batch pool at a warehouse — what the picker dialog
+ * offers (CR-121). Same defensive reads as pickSerialsBatches, but returns
+ * everything instead of slicing the first qty.
+ * → { tracking: 'serial'|'batch'|null, serials?: [...], batches?: [{batch_id, batch_number, available}] }
+ */
+function listSerialsBatches(item, fromWarehouseId) {
+  if (!item) return { tracking: null };
+  const isSerial = Boolean(item.is_serial_number_tracked || item.track_serial_number);
+  const isBatch = Boolean(item.is_batch_tracked || item.track_batch_number);
+  if (!isSerial && !isBatch) return { tracking: null };
+  const fromWh = [...(item.warehouses || []), ...(item.locations || [])]
+    .find((w) => whId(w) === String(fromWarehouseId));
+  if (isSerial) {
+    const serials = ((fromWh && fromWh.serial_numbers) || item.serial_numbers || [])
+      .map((s) => (typeof s === "string" ? s : s.serial_number || s.serialnumber))
+      .filter(Boolean);
+    return { tracking: "serial", serials };
+  }
+  const batches = ((fromWh && (fromWh.batches || []).length ? fromWh.batches : item.batches) || [])
+    .map((b) => ({
+      batch_id: String(b.batch_id || ""),
+      batch_number: b.batch_number,
+      available: num(b.batch_available_stock ?? b.quantity_in ?? b.quantity ?? b.batch_quantity),
+    }))
+    .filter((b) => b.available > 0);
+  return { tracking: "batch", batches };
+}
+
+// Pure: a user's explicit picks ({serials:[...]}|{batches:[{batch_id,batch_number,qty}]},
+// the MaterialTxnLine.trackingJson shape) → the Zoho transfer-line fields.
+function trackingToLine(tracking) {
+  if (!tracking) return null;
+  if (Array.isArray(tracking.serials) && tracking.serials.length) {
+    return { serial_numbers: tracking.serials.map(String) };
+  }
+  if (Array.isArray(tracking.batches) && tracking.batches.length) {
+    return {
+      batches: tracking.batches.map((b) => ({
+        batch_id: String(b.batch_id || ""),
+        batch_number: b.batch_number,
+        quantity_transfer: num(b.qty),
+      })),
+    };
+  }
+  return null;
 }
 
 /**
@@ -207,13 +293,25 @@ async function availableSerialsBatches(catalyst, itemId, fromWarehouseId, qty, n
  *   dropped by Zoho (verified against the live org).
  */
 async function createTransferOrder(catalyst, { date, fromWarehouseId, toWarehouseId, lines, reason, numberHint, soId }) {
-  const line_items = await Promise.all(lines.map(async (l) => ({
-    item_id: String(l.rmItemId),
-    name: l.name || String(l.rmItemId),
-    quantity_transfer: Number(l.qty) || 0,
-    // Serial/batch-tracked items must carry their numbers or Zoho rejects the line.
-    ...(await availableSerialsBatches(catalyst, l.rmItemId, fromWarehouseId, Number(l.qty) || 0, l.name)),
-  })));
+  const line_items = await Promise.all(lines.map(async (l) => {
+    // Serial/batch-tracked items must carry their numbers or Zoho rejects the
+    // line. An explicit user pick (CR-121, l.tracking) wins; otherwise FIFO
+    // auto-pick — keeps auto-return sweeps and API callers working untouched.
+    const picked = trackingToLine(l.tracking)
+      || await availableSerialsBatches(catalyst, l.rmItemId, fromWarehouseId, Number(l.qty) || 0, l.name);
+    return {
+      item_id: String(l.rmItemId),
+      name: l.name || String(l.rmItemId),
+      quantity_transfer: Number(l.qty) || 0,
+      ...(picked && picked.serial_numbers ? { serial_numbers: picked.serial_numbers } : {}),
+      // TO batch lines take out_quantity, NOT quantity_transfer (Zoho rejects
+      // with "Invalid value passed for out_quantity") — same shape the bundle
+      // path already uses.
+      ...(picked && picked.batches
+        ? { batches: picked.batches.map((b) => ({ batch_id: String(b.batch_id || ""), out_quantity: num(b.quantity_transfer) })) }
+        : {}),
+    };
+  }));
   const body = {
     date,
     // Location ids are the required pair (warehouse ids are the legacy alias);
@@ -262,6 +360,68 @@ async function createTransferOrder(catalyst, { date, fromWarehouseId, toWarehous
   return { ...to, pickedLines: line_items };
 }
 
+/**
+ * Assemble a composite item (CR-126): POST /bundles consumes component stock
+ * at the source (Issue) warehouse and produces the composite's stock at the
+ * target warehouse in one document. Tracked components get FIFO-picked
+ * serial/batch numbers (same pool logic as transfer orders); a tracked
+ * composite gets generated finished-product numbers from the reference.
+ *
+ * components: [{ rmItemId, qty, name }]
+ * ponytail: doc-verified field names (reference_number, quantity_to_bundle,
+ * line_items[].quantity_consumed, batches[].out_quantity,
+ * finished_product_serial_numbers/_batches) — confirm against the live org on
+ * the first real assembly; account_id is documented required but omitted here
+ * (composite carries its own accounts), retry surface if code demands it.
+ */
+async function createBundle(catalyst, {
+  date, referenceNumber, compositeItemId, compositeItemName, compositeItemSku,
+  qty, components, fromWarehouseId, toWarehouseId, description,
+}) {
+  const line_items = await Promise.all(components.map(async (c) => {
+    const picked = await availableSerialsBatches(catalyst, c.rmItemId, fromWarehouseId, Number(c.qty) || 0, c.name);
+    return {
+      item_id: String(c.rmItemId),
+      name: c.name || String(c.rmItemId),
+      quantity_consumed: Number(c.qty) || 0,
+      // Components are consumed from the source warehouse; ids are /locations
+      // ids in this org (same as transfer orders) — send both aliases.
+      location_id: String(fromWarehouseId),
+      warehouse_id: String(fromWarehouseId),
+      ...(picked.serial_numbers ? { serial_numbers: picked.serial_numbers } : {}),
+      ...(picked.batches
+        ? { batches: picked.batches.map((b) => ({ batch_id: b.batch_id, out_quantity: b.quantity_transfer })) }
+        : {}),
+    };
+  }));
+  // A serial/batch-tracked composite needs numbers for the produced units too.
+  const fgItem = await getItemStock(catalyst, compositeItemId);
+  const fgSerial = Boolean(fgItem.is_serial_number_tracked || fgItem.track_serial_number);
+  const fgBatch = Boolean(fgItem.is_batch_tracked || fgItem.track_batch_number);
+  const units = Number(qty) || 0;
+  const body = {
+    reference_number: String(referenceNumber),
+    date,
+    description: description || undefined,
+    composite_item_id: String(compositeItemId),
+    composite_item_name: compositeItemName,
+    composite_item_sku: compositeItemSku || undefined,
+    quantity_to_bundle: units,
+    location_id: String(toWarehouseId),
+    warehouse_id: String(toWarehouseId),
+    line_items,
+    is_completed: true,
+    ...(fgSerial
+      ? { finished_product_serial_numbers: Array.from({ length: units }, (_, i) => `${referenceNumber}-${i + 1}`) }
+      : {}),
+    ...(fgBatch
+      ? { finished_product_batches: [{ batch_number: String(referenceNumber), in_quantity: units }] }
+      : {}),
+  };
+  const data = await apiRequest(catalyst, "POST", "/bundles", body, "inventory");
+  return data; // { bundle_id, transaction_number, ... }
+}
+
 async function getTransferOrder(catalyst, transferOrderId) {
   const data = await apiRequest(catalyst, "GET", `/transferorders/${transferOrderId}`, null, "inventory");
   return data.transfer_order;
@@ -270,7 +430,7 @@ async function getTransferOrder(catalyst, transferOrderId) {
 module.exports = {
   getCompositeItem, updateCompositeItem, updateCompositeItemFields, listCompositeItems, createCompositeItem,
   listWarehouses, getItemStock, listItemsWithStock, createTransferOrder, getTransferOrder,
-  availableSerialsBatches, pickSerialsBatches,
+  availableSerialsBatches, pickSerialsBatches, listSerialsBatches, withBatchFallback, listItemBatchRecords, trackingToLine, createBundle,
 };
 
 // ponytail self-check: `node functions/skuapi/zoho/inventoryApi.js --selftest`
@@ -309,6 +469,26 @@ if (require.main === module && process.argv.includes("--selftest")) {
     ],
   });
   assert.throws(() => pickSerialsBatches(batItem, "W1", 99), /No batch numbers/);
+
+  // listSerialsBatches: full pool for the picker (CR-121).
+  assert.deepStrictEqual(listSerialsBatches(null, "W1"), { tracking: null });
+  assert.deepStrictEqual(listSerialsBatches({ item_id: "1" }, "W1"), { tracking: null });
+  assert.deepStrictEqual(listSerialsBatches(serItem, "W1"), { tracking: "serial", serials: ["S1", "S2", "S3"] });
+  assert.deepStrictEqual(listSerialsBatches(batItem, "W1"), {
+    tracking: "batch",
+    batches: [
+      { batch_id: "b1", batch_number: "B1", available: 3 },
+      { batch_id: "b2", batch_number: "B2", available: 5 },
+    ],
+  });
+
+  // trackingToLine: explicit picks → transfer-line fields; empty/absent → null.
+  assert.strictEqual(trackingToLine(null), null);
+  assert.strictEqual(trackingToLine({ serials: [] }), null);
+  assert.deepStrictEqual(trackingToLine({ serials: ["S2", "S3"] }), { serial_numbers: ["S2", "S3"] });
+  assert.deepStrictEqual(trackingToLine({ batches: [{ batch_id: "b2", batch_number: "B2", qty: 2 }] }), {
+    batches: [{ batch_id: "b2", batch_number: "B2", quantity_transfer: 2 }],
+  });
 
   console.log("zoho/inventoryApi.js self-check passed");
 }

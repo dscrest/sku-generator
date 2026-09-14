@@ -140,13 +140,18 @@ async function apiRequest(catalyst, method, path, body, service = "books") {
 // dialog; defaults (serial + Finished Goods) keep non-dialog paths unchanged.
 // ponytail: serial/batch keys are `track_serial_number`/`track_batch_number` per
 // Books v3; verify against the org on first live push.
-async function createItem(catalyst, name, sku, description, opts = {}, customFields) {
+// `extra` (optional): imported Books fields (booksImport.pushableBooksFields
+// shape — rate, hsn_or_sac, unit, product_type, item_type, tax_id, ...) spread
+// over the defaults so a sheet-supplied value wins; absent keys keep behaving
+// exactly as before. custom_fields is applied after the spread — it never
+// comes from `extra`.
+async function createItem(catalyst, name, sku, description, opts = {}, customFields, extra) {
   const inventoryAccountId = opts.inventoryAccountId || (await getFinishedGoodsAccountId(catalyst));
   const tracking = opts.tracking || "serial";
   // Default tax so India-GST orgs get a line-level tax on every transaction built
   // from this item (null on non-GST orgs → field omitted). See getGstTaxId.
   const taxId = await getDefaultTaxId(catalyst);
-  const data = await apiRequest(catalyst, "POST", "/items", {
+  const body = {
     name,
     sku,
     description: description || undefined,
@@ -161,13 +166,23 @@ async function createItem(catalyst, name, sku, description, opts = {}, customFie
     inventory_valuation_method: "fifo",
     inventory_account_id: inventoryAccountId || undefined,
     rate: 0,
+    ...(extra || {}),
     custom_fields: customFields && customFields.length ? customFields : undefined,
-  });
+  };
+  // Books rejects inventory-only fields on non-inventory items (sales/purchase-only).
+  if (body.item_type !== "inventory") {
+    delete body.track_serial_number;
+    delete body.track_batch_number;
+    delete body.inventory_valuation_method;
+    delete body.inventory_account_id;
+    delete body.reorder_level;
+  }
+  const data = await apiRequest(catalyst, "POST", "/items", body);
   return data.item;
 }
 
-async function updateItem(catalyst, zohoItemId, name, sku, description, customFields) {
-  const body = { name, sku, unit: "pcs" };
+async function updateItem(catalyst, zohoItemId, name, sku, description, customFields, extra) {
+  const body = { name, sku, unit: "pcs", ...(extra || {}) };
   if (description !== undefined) {
     body.description = description;
     body.purchase_description = description;
@@ -262,6 +277,12 @@ async function getSalesOrder(catalyst, soId) {
   return data.salesorder;
 }
 
+// Invoice detail (packing-list widget: resolves the linked SO for line items).
+async function getInvoice(catalyst, invoiceId) {
+  const data = await apiRequest(catalyst, "GET", `/invoices/${invoiceId}`);
+  return data.invoice;
+}
+
 // The 50 most recent SOs (optionally number-searched). Confirmed-only gating is
 // done by the caller on the status field — Zoho's salesorders filter_by enum
 // silently matches nothing for Status.Confirmed, so it can't be used here.
@@ -320,7 +341,7 @@ async function listVendors(catalyst) {
  * originating Sales Order and delivered into the Reserve warehouse, so received
  * stock lands already allocated to the project.
  *
- * lines: [{ rmItemId, qty, rate?, description?, soId? }] — soId lands on the
+ * lines: [{ rmItemId, name?, qty, rate?, description?, soId? }] — soId lands on the
  * line's cf_so_no item custom field so each line names its Sales Order. The
  * field is a LOOKUP to Sales Orders: the value must be the salesorder_id, a
  * plain SO number string is silently dropped by Zoho.
@@ -352,6 +373,10 @@ async function createPurchaseOrder(catalyst, { vendorId, date, referenceNumber, 
     // org ever connects, move location_id back to the header for it.
     line_items: lines.map((l) => ({
       item_id: String(l.rmItemId),
+      // Books can leave the display name blank when only item_id is sent —
+      // pass the item name explicitly (and mirror it into the description in
+      // createPoForLines) so the PO line is readable.
+      name: l.name || undefined,
       quantity: Number(l.qty) || 0,
       rate: l.rate === undefined || l.rate === null ? undefined : Number(l.rate),
       description: l.description || undefined,
@@ -430,6 +455,7 @@ module.exports = {
   deleteItem,
   listItemCustomFields,
   getSalesOrder,
+  getInvoice,
   listSalesOrders,
   listPurchaseOrdersForItem,
   listPurchaseOrders,
@@ -440,6 +466,7 @@ module.exports = {
   deletePurchaseOrder,
   setPurchaseOrderStatus,
   pickGstTax,
+  getGstTaxId,
 };
 
 // ponytail self-check: `node functions/skuapi/zoho/booksApi.js --selftest`

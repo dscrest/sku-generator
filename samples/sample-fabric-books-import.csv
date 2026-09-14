@@ -1,0 +1,4 @@
+Item Name,SKU,HSN/SAC,Sales Description,Selling Price,Purchase Price,Unit,Product Type,Item Type,Intra State Tax Name,Intra State Tax Type,Intra State Tax Rate,Inter State Tax Name,Inter State Tax Type,Inter State Tax Rate,Category (Custom Field),Content (Custom Field),Dye Type (Custom Field),Weave (Custom Field),Surface Ornamentation (Custom Field),GSM (Custom Field),Width (Custom Field),Colour (Custom Field)
+,,5208,White embroidered cotton bed linen fabric,450,380,mtr,goods,Inventory,GST5,Group,5,IGST5,Simple,5,Fabric,Cotton,Piece Dyed,Plain,Embroidery,500,220,
+Linen Twill Printed,,5309,Printed yarn-dyed linen twill,780,640,mtr,goods,Inventory,GST5,Group,5,IGST5,Simple,5,Fabric,Linen,Yarn Dyed,Twill,Printing,320,150,
+Grey Jacquard Cotton,,5208,Grey jacquard cotton fabric for dyeing,999,850,mtr,goods,Inventory,GST5,Group,5,IGST5,Simple,5,Fabric,Cotton,Grey Fabric,Jacquard,Not Applicable,420,180,

@@ -52,6 +52,12 @@ const SETTING_KEYS = [
   { key: "woNumberPrefix", label: "Work order prefix", type: "text", group: "Document numbering" },
   { key: "prNumberPrefix", label: "Purchase request prefix", type: "text", group: "Document numbering" },
   { key: "txnNumberPrefix", label: "Material transaction prefix", type: "text", group: "Document numbering" },
+  // Company block on printed documents (CR-122). Logo is a plain URL —
+  // ponytail: Stratus upload if anyone ever needs hosted logos.
+  { key: "companyName", label: "Company name", type: "text", group: "Company details", hint: "Shown on printed work orders and movement slips" },
+  { key: "companyAddress", label: "Company address", type: "text", group: "Company details" },
+  { key: "companyGstin", label: "GSTIN", type: "text", group: "Company details" },
+  { key: "companyLogoUrl", label: "Logo URL", type: "text", group: "Company details", hint: "Public image URL, printed top-left" },
 ];
 
 // Per-request memo: settings are read once per request, never cached across

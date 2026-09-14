@@ -5,6 +5,7 @@ import { readDealId, readParam } from '../components/CrmInfoCard';
 import { buildEstimate, computeTotals, ddmmyyyy, validUntil } from './estimateParser';
 import { TermsSheet, HeadBand, FootBand, Cols, FillTable, COMPANY } from './EstimateTerms.jsx';
 import { loadTerms, saveTerms, DEFAULT_TERMS, EXPORT_TERMS } from './estimateTerms.js';
+import DateInput from '../components/DateInput.jsx';
 
 // Estimate ("Techno Commercial Proposal") print page. Two CRM entry points:
 // a Deal button (/#/estimate?dealId=<id>) lists the deal's Quotes with
@@ -790,7 +791,7 @@ function RevFields({ value, onChange, label }) {
         <input type="text" style={{ width: 80 }} value={v.revNo || ''} onChange={(e) => set({ revNo: e.target.value })} />
       </label>
       <label style={{ fontSize: 12 }}>Revision Date{' '}
-        <input type="date" value={v.revDate || ''} onChange={(e) => set({ revDate: e.target.value })} />
+        <DateInput value={v.revDate || ''} onChange={(e) => set({ revDate: e.target.value })} />
       </label>
     </span>
   );

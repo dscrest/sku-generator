@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<!--
+  Packing List widget — Zoho Books, Invoice + Sales Order detail pages.
+  Registered as Hosting "External" → https://<catalyst>/server/skuapi/packing
+  (served by index.js with a frame-ancestors CSP; see the /widget comment there).
+
+  Line items come from the SO linked to the invoice (or the SO itself). The user
+  builds box/pallet rows by hand; the plan persists per SO/invoice via
+  /api/packing (routes/packing.js). Print = Export or Domestic variant, iframe
+  srcdoc + contentWindow.print() (same pattern as estimate-prototype).
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Packing List</title>
+<script src="https://js.zohostatic.com/zohofinance/v1/zf_sdk.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { font: 13px/1.45 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; margin: 0; background: #f6f7f9; color: #1d2129; }
+  .hidden { display: none !important; }
+  .wrap { padding: 12px 16px 24px; }
+  .center { display: grid; place-items: center; min-height: 220px; text-align: center; padding: 24px; }
+  .banner { background: #fff7df; border: 1px solid #e8c96a; color: #6b5310; padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; }
+  .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .toolbar h1 { font-size: 15px; margin: 0 auto 0 0; }
+  .btn { border: 1px solid #c8cdd4; background: #fff; border-radius: 6px; padding: 6px 14px; cursor: pointer; font: inherit; }
+  .btn.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .seg { display: inline-flex; border: 1px solid #c8cdd4; border-radius: 6px; overflow: hidden; }
+  .seg label { padding: 6px 12px; cursor: pointer; background: #fff; }
+  .seg input { display: none; }
+  .seg input:checked + span { font-weight: 600; }
+  .seg label:has(input:checked) { background: #e7f0fe; color: #1f6feb; }
+  fieldset { border: 1px solid #dde1e6; border-radius: 8px; background: #fff; margin: 0 0 12px; padding: 10px 12px 12px; }
+  legend { font-weight: 600; font-size: 12px; color: #57606a; padding: 0 4px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 12px; }
+  .grid label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: #57606a; }
+  .grid input, .grid textarea { font: inherit; border: 1px solid #c8cdd4; border-radius: 5px; padding: 5px 7px; }
+  .grid textarea { resize: vertical; min-height: 44px; }
+  .span2 { grid-column: span 2; }
+  table { border-collapse: collapse; width: 100%; background: #fff; }
+  th, td { border: 1px solid #dde1e6; padding: 4px 7px; text-align: left; font-size: 12px; }
+  th { background: #f0f2f5; font-weight: 600; white-space: nowrap; }
+  td input, td select { width: 100%; font: inherit; border: 1px solid #c8cdd4; border-radius: 4px; padding: 3px 5px; }
+  td.num, th.num { text-align: right; }
+  td input.num { text-align: right; }
+  .rowbtn { border: none; background: none; cursor: pointer; padding: 1px 4px; font-size: 13px; }
+  .muted { color: #77808a; }
+  #saved-note { font-size: 12px; color: #1a7f37; }
+  #summary td, #summary th { font-size: 11px; padding: 3px 7px; }
+</style>
+</head>
+<body>
+
+<div id="v-loading" class="center">Loading…</div>
+
+<div id="v-message" class="center hidden">
+  <div>
+    <p id="message-text"></p>
+    <button id="signin-btn" class="btn primary hidden">Sign in</button>
+  </div>
+</div>
+
+<div id="v-org" class="center hidden">
+  <div>
+    <p>Select your organization:</p>
+    <select id="org-select"></select>
+    <button id="org-btn" class="btn primary">Continue</button>
+  </div>
+</div>
+
+<div id="v-main" class="wrap hidden">
+  <div id="org-warn" class="banner hidden"></div>
+  <div class="toolbar">
+    <h1 id="doc-title">Packing List</h1>
+    <span class="seg">
+      <label><input type="radio" name="variant" value="export" checked><span>Export</span></label>
+      <label><input type="radio" name="variant" value="domestic"><span>Domestic</span></label>
+    </span>
+    <span id="saved-note" class="hidden">Saved ✓</span>
+    <button id="save-btn" class="btn">Save</button>
+    <button id="print-btn" class="btn primary">Print</button>
+    <button id="close-btn" class="btn">Close</button>
+  </div>
+
+  <fieldset>
+    <legend>Consignor / Consignee</legend>
+    <div class="grid">
+      <label>Consignor (Exporter) name<input data-h="consignorName"></label>
+      <label class="span2">Consignor address &amp; emails<textarea data-h="consignorAddress"></textarea></label>
+      <label>Consignee (Importer) name<input data-h="consigneeName"></label>
+      <label class="span2">Consignee address, RFC, emails<textarea data-h="consigneeAddress"></textarea></label>
+    </div>
+  </fieldset>
+
+  <fieldset id="ref-fields">
+    <legend>References</legend>
+    <div class="grid">
+      <label class="exp">Exporter's Ref. No.<input data-h="exporterRef"></label>
+      <label>Invoice No. &amp; Date<input data-h="invoiceNoDate"></label>
+      <label class="exp">Country &amp; Origin of Goods<input data-h="countryOrigin" placeholder="India"></label>
+      <label>Workorder No. &amp; Date<input data-h="workorderNoDate"></label>
+      <label class="exp">Port of Loading<input data-h="portLoading"></label>
+      <label class="exp">Place of Receipt By<input data-h="placeReceipt" placeholder="Pre-Carrier"></label>
+      <label class="exp">Port of Discharge<input data-h="portDischarge"></label>
+      <label class="exp">AD Code No.<input data-h="adCode"></label>
+      <label class="exp">Pre-Carriage<input data-h="preCarriage" placeholder="By Sea"></label>
+      <label class="exp">Inco Terms<input data-h="incoTerms" placeholder="CIF - …"></label>
+      <label>Buyer Order No. &amp; Date<input data-h="buyerOrderNoDate"></label>
+      <label class="exp">LC No.<input data-h="lcNo" placeholder="N/A"></label>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Order lines (packed / ordered)</legend>
+    <table id="summary"><thead><tr><th>Item</th><th>HSN</th><th class="num">Ordered</th><th class="num">Packed</th></tr></thead><tbody></tbody></table>
+  </fieldset>
+
+  <fieldset>
+    <legend>Boxes &amp; pallets</legend>
+    <table id="boxes">
+      <thead><tr>
+        <th>#</th><th>Type</th><th style="min-width:180px">Item</th><th style="width:70px" class="num">Qty</th>
+        <th style="width:80px" class="num">Wt/pc (kg)</th><th class="num">Net (kg)</th><th style="width:90px" class="num">Gross (kg)</th>
+        <th style="min-width:150px">Box size</th><th style="width:80px"></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <p><button id="add-box" class="btn">+ Add box / pallet</button></p>
+  </fieldset>
+</div>
+
+<!-- Print: A4 sheet cloned into the iframe; only these styles travel with it. -->
+<style id="printStyles">
+  @page { size: A4 landscape; margin: 8mm; }
+  body { font-family: "Times New Roman", Georgia, serif; color: #000; margin: 0; }
+  .pl-sheet { width: 100%; }
+  .pl-sheet table { border-collapse: collapse; width: 100%; }
+  .pl-sheet td, .pl-sheet th { border: 1.5px solid #000; padding: 3px 6px; font-size: 12px; vertical-align: top; }
+  .pl-title { text-align: center; font-size: 22px; font-weight: bold; padding: 6px; }
+  .pl-part { font-weight: bold; font-size: 15px; }
+  .pl-lbl { text-align: center; }
+  .pl-val { text-align: center; font-weight: bold; }
+  .num { text-align: right; }
+  .ctr { text-align: center; }
+  .boxdim { font-weight: bold; font-size: 11px; }
+  .pl-sign { height: 70px; vertical-align: bottom; text-align: right; font-weight: bold; }
+  tr { break-inside: avoid; }
+</style>
+<iframe id="ifPrint" style="display:none"></iframe>
+
+<script>
+'use strict';
+/* ---------- shared plumbing (same conventions as widget.html) ---------- */
+// Books has no External widget hosting, so this file also ships inside the
+// books-widget zip and then runs on a *.zappsusercontent.* origin — every
+// backend URL must be absolute and the auth popup origin pinned.
+// ponytail: hardcoded Dev origin, swap when a custom/prod domain arrives.
+var CATALYST = 'https://sku-gen-octfis-925638796.development.catalystserverless.com';
+var API = CATALYST + '/server/skuapi';
+var APP_ORIGIN = CATALYST;
+var $ = function (id) { return document.getElementById(id); };
+
+var authDone = false;
+var sessionToken = null;
+try { sessionToken = localStorage.getItem('sku_token'); } catch (e) { /* storage blocked */ }
+
+function api(path, opts) {
+  opts = opts || {};
+  opts.headers = {};
+  // JSON rides as text/plain so cross-origin requests stay CORS-"simple" (no
+  // OPTIONS preflight — the Catalyst gateway answers preflights itself without
+  // CORS headers). The backend re-parses text/plain bodies (index.js).
+  if (opts.body) opts.headers['Content-Type'] = 'text/plain';
+  // Token rides ?t= — Catalyst's gateway hijacks Authorization headers.
+  if (sessionToken) path += (path.indexOf('?') > -1 ? '&' : '?') + 't=' + encodeURIComponent(sessionToken);
+  return fetch(API + path, opts);
+}
+
+function show(id) {
+  ['v-loading', 'v-message', 'v-org', 'v-main'].forEach(function (v) {
+    $(v).classList.toggle('hidden', v !== id);
+  });
+}
+function message(text, withSignin) {
+  $('message-text').textContent = text;
+  $('signin-btn').classList.toggle('hidden', !withSignin);
+  show('v-message');
+}
+
+/* ---------- state ---------- */
+var entity = null;        // { invoiceId } | { soId }
+var booksOrgId = null;    // org of the Books page we're embedded in
+var docKey = null;
+var source = null;        // { soNumber, invoiceNumber, invoiceDate, customer, lines }
+var company = null;       // { name, address, gstin, logoUrl }
+var header = {};          // header field values (data-h inputs)
+var boxes = [];           // [{ kind, dims, itemId, qty, weightPc, grossWeight }] — one item per box row
+// ponytail: UI is one item per box; the API/schema already take an items[] array
+// if mixed-item boxes are ever needed.
+
+/* ---------- boot: Books SDK first, then app auth ---------- */
+window.onload = function () {
+  // Standalone mode (opened from the app, e.g. Work Order → Print Packing
+  // List): ?woId=/?soId=/?invoiceId= in the URL — skip the Books SDK entirely.
+  var qp = new URLSearchParams(location.search);
+  if (qp.get('woId') || qp.get('soId') || qp.get('invoiceId')) {
+    entity = qp.get('woId') ? { woId: qp.get('woId') }
+      : qp.get('invoiceId') ? { invoiceId: qp.get('invoiceId') }
+        : { soId: qp.get('soId') };
+    return probe();
+  }
+  if (!window.ZFAPPS) return message('This page must be opened as a widget inside Zoho Books.');
+  ZFAPPS.extension.init().then(function () {
+    ZFAPPS.invoke('RESIZE', { height: '760px', width: '1150px' });
+    return ZFAPPS.get('organization').then(function (od) {
+      booksOrgId = od && od.organization ? String(od.organization.organization_id) : null;
+      // Invoice page answers 'invoice'; SO page answers 'salesorder'.
+      return ZFAPPS.get('invoice').then(function (d) {
+        var inv = d && d.invoice;
+        if (inv && (inv.invoice_id || inv.entity_id)) { entity = { invoiceId: inv.invoice_id || inv.entity_id }; return; }
+        throw new Error('no invoice');
+      }).catch(function () {
+        return ZFAPPS.get('salesorder').then(function (d) {
+          var so = d && d.salesorder;
+          if (so && (so.salesorder_id || so.entity_id)) { entity = { soId: so.salesorder_id || so.entity_id }; return; }
+          throw new Error('no record');
+        });
+      });
+    });
+  }).then(function () { probe(); })
+    .catch(function (e) { message('Could not read the record from Zoho Books: ' + (e && e.message ? e.message : e)); });
+};
+
+/* ---------- auth (copied from widget.html; no addon gate) ---------- */
+function probe() {
+  api('/auth/me').then(function (r) {
+    if (r.status === 401) {
+      var hadToken = Boolean(sessionToken);
+      sessionToken = null;
+      try { localStorage.removeItem('sku_token'); } catch (e) { /* storage blocked */ }
+      if (authDone) {
+        return message(hadToken
+          ? 'Sign-in worked but the server rejected the session token. Please try again.'
+          : 'Sign-in finished without a session token. Please try again.', true);
+      }
+      return silentAuth();
+    }
+    if (!r.ok) return r.json().then(function (d) { message(d.error || ('Error ' + r.status)); });
+    return r.json().then(function (me) {
+      if (!me.orgId) return orgStep();
+      if (booksOrgId && String(me.orgId) !== booksOrgId) {
+        $('org-warn').textContent = 'Warning: you are signed in to org ' + (me.orgName || me.orgId) +
+          ' but this Books page belongs to a different organization (' + booksOrgId + '). Saved plans go to the signed-in org.';
+        $('org-warn').classList.remove('hidden');
+      }
+      loadDoc();
+    });
+  }).catch(function () { message('Cannot reach the SKU Generator API.'); });
+}
+
+window.addEventListener('message', function (e) {
+  if (e.origin !== APP_ORIGIN || !e.data) return;
+  if (e.data.type === 'sku-auth-ready') {
+    e.source.postMessage({ type: 'sku-auth-hello' }, APP_ORIGIN);
+  } else if (e.data.type === 'sku-auth-token') {
+    var f = $('silent-frame');
+    if (f) f.remove();
+    if (!e.data.token) return message('Sign-in failed: ' + (e.data.error || 'no session token issued') + '.', true);
+    sessionToken = e.data.token;
+    try { localStorage.setItem('sku_token', e.data.token); } catch (err) { /* storage blocked */ }
+    authDone = true;
+    show('v-loading');
+    probe();
+  }
+});
+
+function silentAuth() {
+  var f = document.createElement('iframe');
+  f.id = 'silent-frame';
+  f.name = 'sku-auth';
+  f.src = API + '/auth/zoho';
+  f.style.display = 'none';
+  document.body.appendChild(f);
+  setTimeout(function () {
+    if (authDone) return;
+    f.remove();
+    message('Sign in to the SKU Generator to continue.', true);
+  }, 6000);
+}
+$('signin-btn').addEventListener('click', function () {
+  var w = window.open(API + '/auth/zoho', 'sku-auth', 'width=620,height=720');
+  if (!w) return message('Popup blocked — allow popups for this page, then try again.', true);
+  message('Waiting for sign-in to finish…');
+});
+
+function orgStep() {
+  api('/auth/zoho/orgs').then(function (r) { return r.json(); }).then(function (orgs) {
+    if (!Array.isArray(orgs) || !orgs.length) return message('No Zoho Books organization found for this account.');
+    if (orgs.length === 1) return selectOrg(orgs[0]);
+    var sel = $('org-select');
+    sel.innerHTML = '';
+    orgs.forEach(function (o, i) {
+      var opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = o.name;
+      sel.appendChild(opt);
+    });
+    $('org-btn').onclick = function () { selectOrg(orgs[Number(sel.value)]); };
+    show('v-org');
+  }).catch(function () { message('Failed to load organizations.'); });
+}
+function selectOrg(o) {
+  show('v-loading');
+  api('/auth/zoho/select-org', {
+    method: 'POST',
+    body: JSON.stringify({ orgId: o.organization_id, orgName: o.name }),
+  }).then(function () { probe(); });
+}
+
+/* ---------- document load ---------- */
+function loadDoc() {
+  var q = entity.woId ? 'woId=' + entity.woId
+    : entity.invoiceId ? 'invoiceId=' + entity.invoiceId
+      : 'soId=' + entity.soId;
+  api('/api/packing/doc?' + q).then(function (r) {
+    if (!r.ok) return r.json().then(function (d) { message(d.error || ('Error ' + r.status)); });
+    return r.json().then(function (doc) {
+      docKey = doc.docKey;
+      source = doc.source;
+      company = doc.company;
+      var saved = doc.saved;
+      header = (saved && saved.header) || doc.prefillHeader || {};
+      // Doc-specific fields always come from the live record, not the prefill.
+      if (!saved || !saved.header) {
+        header.invoiceNoDate = [source.invoiceNumber, fmtDate(source.invoiceDate)].filter(Boolean).join(' | ');
+        header.buyerOrderNoDate = '';
+        header.workorderNoDate = '';
+        header.consigneeName = source.customer.name || '';
+        header.consigneeAddress = source.customer.address || '';
+      }
+      if (!header.consignorName) header.consignorName = company.name || '';
+      if (!header.consignorAddress) header.consignorAddress = company.address || '';
+      if (!header.countryOrigin) header.countryOrigin = 'India';
+      boxes = ((saved && saved.boxes) || []).map(function (b) {
+        var it = (b.items && b.items[0]) || {};
+        return { kind: b.kind, dims: b.dims, itemId: it.itemId || '', qty: it.qty || 0, weightPc: it.weightPc || 0, grossWeight: it.grossWeight || 0 };
+      });
+      var v = (saved && saved.variant) || 'export';
+      document.querySelectorAll('[name=variant]').forEach(function (r) { r.checked = r.value === v; });
+      $('doc-title').textContent = 'Packing List — ' + (source.soNumber || source.invoiceNumber || '');
+      renderHeader();
+      renderBoxes();
+      applyVariant();
+      show('v-main');
+    });
+  }).catch(function () { message('Failed to load the document.'); });
+}
+
+function fmtDate(s) {
+  if (!s) return '';
+  var p = String(s).split('-'); // Books dates are yyyy-mm-dd
+  return p.length === 3 ? p[2] + '-' + p[1] + '-' + p[0] : s;
+}
+
+/* ---------- header fields ---------- */
+function renderHeader() {
+  document.querySelectorAll('[data-h]').forEach(function (el) {
+    el.value = header[el.getAttribute('data-h')] || '';
+    el.oninput = function () { header[el.getAttribute('data-h')] = el.value; dirty(); };
+  });
+}
+function variant() { return document.querySelector('[name=variant]:checked').value; }
+function applyVariant() {
+  var exp = variant() === 'export';
+  document.querySelectorAll('.exp').forEach(function (el) { el.classList.toggle('hidden', !exp); });
+}
+document.querySelectorAll('[name=variant]').forEach(function (r) {
+  r.addEventListener('change', function () { applyVariant(); dirty(); });
+});
+
+/* ---------- boxes ---------- */
+function lineById(id) { return source.lines.find(function (l) { return l.itemId === id; }); }
+function netOf(b) { return (Number(b.qty) || 0) * (Number(b.weightPc) || 0); }
+
+function renderBoxes() {
+  var tb = $('boxes').querySelector('tbody');
+  tb.innerHTML = '';
+  var nBox = 0, nPallet = 0;
+  boxes.forEach(function (b, i) {
+    var no = b.kind === 'pallet' ? ++nPallet : ++nBox;
+    var tr = document.createElement('tr');
+
+    tr.appendChild(cell((b.kind === 'pallet' ? 'PALLET ' : 'BOX ') + no));
+
+    var kind = document.createElement('select');
+    kind.innerHTML = '<option value="box">Box</option><option value="pallet">Pallet</option>';
+    kind.value = b.kind;
+    kind.onchange = function () { b.kind = kind.value; dirty(); renderBoxes(); };
+    tr.appendChild(wrap(kind));
+
+    var item = document.createElement('select');
+    item.innerHTML = '<option value="">— item —</option>' + source.lines.map(function (l) {
+      return '<option value="' + l.itemId + '">' + esc(l.name) + '</option>';
+    }).join('');
+    item.value = b.itemId;
+    item.onchange = function () { b.itemId = item.value; dirty(); renderSummary(); };
+    tr.appendChild(wrap(item));
+
+    tr.appendChild(numInput(b, 'qty'));
+    tr.appendChild(numInput(b, 'weightPc'));
+    var net = cell(netOf(b).toFixed(2));
+    net.className = 'num muted';
+    tr.appendChild(net);
+    tr.appendChild(numInput(b, 'grossWeight'));
+
+    var dims = document.createElement('input');
+    dims.value = b.dims || '';
+    dims.placeholder = '120 X 120 X 33 (Centimeter)';
+    dims.oninput = function () { b.dims = dims.value; dirty(); };
+    tr.appendChild(wrap(dims));
+
+    var act = document.createElement('td');
+    [['↑', -1], ['↓', 1]].forEach(function (m) {
+      var btn = document.createElement('button');
+      btn.className = 'rowbtn';
+      btn.textContent = m[0];
+      btn.onclick = function () {
+        var j = i + m[1];
+        if (j < 0 || j >= boxes.length) return;
+        boxes.splice(j, 0, boxes.splice(i, 1)[0]);
+        dirty(); renderBoxes();
+      };
+      act.appendChild(btn);
+    });
+    var del = document.createElement('button');
+    del.className = 'rowbtn';
+    del.textContent = '✕';
+    del.onclick = function () { boxes.splice(i, 1); dirty(); renderBoxes(); };
+    act.appendChild(del);
+    tr.appendChild(act);
+
+    tb.appendChild(tr);
+  });
+  renderSummary();
+
+  function cell(t) { var td = document.createElement('td'); td.textContent = t; return td; }
+  function wrap(el) { var td = document.createElement('td'); td.appendChild(el); return td; }
+  function numInput(obj, key) {
+    var inp = document.createElement('input');
+    inp.type = 'number';
+    inp.className = 'num';
+    inp.min = '0';
+    inp.step = 'any';
+    inp.value = obj[key] || '';
+    inp.oninput = function () { obj[key] = Number(inp.value) || 0; dirty(); renderSummary(); refreshNets(); };
+    var td = document.createElement('td');
+    td.appendChild(inp);
+    return td;
+  }
+  function refreshNets() {
+    // cheap full re-render would drop focus; just update the net cells in place
+    var rows = tb.querySelectorAll('tr');
+    boxes.forEach(function (b, i) { rows[i].children[5].textContent = netOf(b).toFixed(2); });
+  }
+}
+
+$('add-box').addEventListener('click', function () {
+  var prev = boxes[boxes.length - 1];
+  boxes.push(prev
+    ? { kind: prev.kind, dims: prev.dims, itemId: prev.itemId, qty: prev.qty, weightPc: prev.weightPc, grossWeight: prev.grossWeight }
+    : { kind: 'box', dims: '', itemId: (source.lines[0] || {}).itemId || '', qty: 0, weightPc: 0, grossWeight: 0 });
+  dirty();
+  renderBoxes();
+});
+
+function renderSummary() {
+  var tb = $('summary').querySelector('tbody');
+  tb.innerHTML = '';
+  source.lines.forEach(function (l) {
+    var packed = boxes.filter(function (b) { return b.itemId === l.itemId; })
+      .reduce(function (s, b) { return s + (Number(b.qty) || 0); }, 0);
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + esc(l.name) + '</td><td>' + esc(l.hsn) + '</td>' +
+      '<td class="num">' + l.qty + '</td>' +
+      '<td class="num"' + (packed === l.qty ? ' style="color:#1a7f37;font-weight:600"' : ' style="color:#b35900"') + '>' + packed + '</td>';
+    tb.appendChild(tr);
+  });
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+
+/* ---------- save ---------- */
+function dirty() { $('saved-note').classList.add('hidden'); }
+$('save-btn').addEventListener('click', function () {
+  var payload = {
+    variant: variant(),
+    header: header,
+    boxes: boxes.map(function (b) {
+      var l = lineById(b.itemId) || {};
+      return {
+        kind: b.kind, dims: b.dims,
+        items: [{
+          itemId: b.itemId, name: l.name || '', hsn: l.hsn || '', size: '',
+          qty: b.qty, weightPc: b.weightPc, netWeight: netOf(b), grossWeight: b.grossWeight,
+        }],
+      };
+    }),
+  };
+  $('save-btn').disabled = true;
+  // POST not PUT — PUT is never CORS-simple, its preflight dies at the gateway.
+  api('/api/packing/' + encodeURIComponent(docKey), { method: 'POST', body: JSON.stringify(payload) })
+    .then(function (r) {
+      $('save-btn').disabled = false;
+      if (!r.ok) return r.json().then(function (d) { alert(d.error || ('Save failed (' + r.status + ')')); });
+      $('saved-note').classList.remove('hidden');
+    })
+    .catch(function () { $('save-btn').disabled = false; alert('Save failed — network error.'); });
+});
+
+$('close-btn').addEventListener('click', function () {
+  if (window.ZFAPPS && ZFAPPS.closeModal) ZFAPPS.closeModal();
+});
+
+/* ---------- print ---------- */
+$('print-btn').addEventListener('click', function () {
+  var iframe = $('ifPrint');
+  iframe.onload = function () {
+    iframe.contentWindow.focus();
+    iframe.contentWindow.print();
+  };
+  iframe.srcdoc = '<html><head>' + $('printStyles').outerHTML + '</head><body>' + buildSheet() + '</body></html>';
+});
+
+function buildSheet() {
+  var exp = variant() === 'export';
+  var h = header;
+  var nBox = 0, nPallet = 0;
+  var totQty = 0, totNet = 0, totGross = 0;
+
+  var rows = boxes.map(function (b, i) {
+    var l = lineById(b.itemId) || {};
+    var no = b.kind === 'pallet' ? ('PALLET NO.:- ' + (++nPallet)) : ('BOX NO.:- ' + (++nBox));
+    var net = netOf(b);
+    totQty += Number(b.qty) || 0;
+    totNet += net;
+    totGross += Number(b.grossWeight) || 0;
+    return '<tr>' +
+      '<td class="ctr">' + (i + 1) + '</td>' +
+      '<td>' + esc(l.name || '') + (b.dims ? '<div class="boxdim">' + (b.kind === 'pallet' ? 'PALLET' : 'BOX') + ' SIZE (cm):- ' + esc(b.dims) + '</div>' : '') + '</td>' +
+      '<td class="ctr">' + esc(l.hsn || '') + '</td>' +
+      '<td class="ctr">' + esc(l.description || '') + '</td>' +
+      '<td class="num">' + (b.qty || 0) + '</td>' +
+      '<td class="num">' + (b.weightPc || 0) + '</td>' +
+      '<td class="num">' + net.toFixed(2) + '</td>' +
+      '<td class="num">' + net.toFixed(2) + '</td>' +
+      '<td class="num">' + (Number(b.grossWeight) || 0).toFixed(2) + '</td>' +
+      '<td>' + no + '</td>' +
+      '</tr>';
+  }).join('');
+
+  var refRows = exp
+    ? '<tr><td class="pl-lbl">Exporter\'s Ref. No.</td><td class="pl-lbl">Invoice No. &amp; Date</td><td class="pl-lbl">Country &amp; Origin Of Goods</td><td class="pl-lbl">Workorder No. &amp; Date</td></tr>' +
+      '<tr><td class="pl-val">' + esc(h.exporterRef) + '</td><td class="pl-val">' + esc(h.invoiceNoDate) + '</td><td class="pl-val">' + esc(h.countryOrigin) + '</td><td class="pl-val">' + esc(h.workorderNoDate) + '</td></tr>' +
+      '<tr><td class="pl-lbl">Port Of Loading</td><td class="pl-lbl">Place Of Receipt By</td><td class="pl-lbl">Port Of Discharge</td><td class="pl-lbl">AD CODE NO.</td></tr>' +
+      '<tr><td class="pl-val">' + esc(h.portLoading) + '</td><td class="pl-val">' + esc(h.placeReceipt) + '</td><td class="pl-val">' + esc(h.portDischarge) + '</td><td class="pl-val">' + esc(h.adCode) + '</td></tr>' +
+      '<tr><td class="pl-lbl">Pre-Carriage</td><td class="pl-lbl">Inco Terms</td><td class="pl-lbl">Buyer Order No. &amp; Date</td><td class="pl-lbl">LC NO</td></tr>' +
+      '<tr><td class="pl-val">' + esc(h.preCarriage) + '</td><td class="pl-val">' + esc(h.incoTerms) + '</td><td class="pl-val">' + esc(h.buyerOrderNoDate) + '</td><td class="pl-val">' + esc(h.lcNo || 'N/A') + '</td></tr>'
+    : '<tr><td class="pl-lbl">Invoice No. &amp; Date</td><td class="pl-lbl">Buyer Order No. &amp; Date</td><td class="pl-lbl" colspan="2">Workorder No. &amp; Date</td></tr>' +
+      '<tr><td class="pl-val">' + esc(h.invoiceNoDate) + '</td><td class="pl-val">' + esc(h.buyerOrderNoDate) + '</td><td class="pl-val" colspan="2">' + esc(h.workorderNoDate) + '</td></tr>';
+
+  return '<div class="pl-sheet"><table>' +
+    '<tr><td colspan="4" class="pl-title">PACKING LIST' + (exp ? ' - Export' : '') + '</td></tr>' +
+    '<tr><td colspan="2" class="pl-part">Consignor (Exporter)</td><td colspan="2" class="pl-part">Consignee (' + (exp ? 'Importer' : 'Buyer') + ')</td></tr>' +
+    '<tr><td colspan="2"><span class="pl-part">M/S. ' + esc(h.consignorName) + '</span><br>' + esc(h.consignorAddress).replace(/\n/g, '<br>') + '</td>' +
+    '<td colspan="2"><span class="pl-part">M/S. ' + esc(h.consigneeName) + '</span><br>' + esc(h.consigneeAddress).replace(/\n/g, '<br>') + '</td></tr>' +
+    refRows +
+    '</table>' +
+    '<table style="margin-top:-1.5px">' +
+    '<tr><th>SR.<br>NO.</th><th>PRODUCT DESCRIPTION</th><th>HSN CODE</th><th>SIZE</th><th>QTY.</th><th>WEIGHT / PSC. (KGS)</th><th>TOTAL WEIGHT (KGS)</th><th>TOTAL NET WEIGHT (KGS)</th><th>TOTAL GROSS WEIGHT (KGS)</th><th>PACKING DETAILS</th></tr>' +
+    rows +
+    '<tr><td colspan="4" class="pl-part ctr">TOTAL</td><td class="num pl-part">' + totQty + '</td><td></td><td></td>' +
+    '<td class="num pl-part">' + totNet.toFixed(2) + '</td><td class="num pl-part">' + totGross.toFixed(2) + '</td>' +
+    '<td class="pl-part">' + (nBox ? nBox + ' BOX' + (nBox > 1 ? 'ES' : '') : '') + (nBox && nPallet ? ', ' : '') + (nPallet ? nPallet + ' PALLET' + (nPallet > 1 ? 'S' : '') : '') + '</td></tr>' +
+    '<tr><td colspan="7" style="border-right:none"></td><td colspan="3" class="pl-sign" style="border-left:none">For ' + esc(h.consignorName) + '<br><br><br>Authorised Signatory</td></tr>' +
+    '</table></div>';
+}
+</script>
+</body>
+</html>

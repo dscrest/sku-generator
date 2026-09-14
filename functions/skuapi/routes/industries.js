@@ -13,6 +13,17 @@ router.get("/", async (req, res) => {
     const rows = rowList(
       await req.catalyst.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE ${orgClause(req.catalyst)} ORDER BY name`),
     );
+    if (!rows.length) {
+      // The Industries menu is admin-only (CR-094); regular orgs never create
+      // one by hand, and the generator can't work without an industry — so
+      // the first list call seeds a Default.
+      const row = await req.catalyst.datastore().table(TABLE).insertRow({
+        name: "Default",
+        skuSeparator: "-",
+        orgId: req.orgId,
+      });
+      return res.json([out(row)]);
+    }
     res.json(rows.map(out));
   } catch (err) {
     res.status(500).json({ error: err.message });

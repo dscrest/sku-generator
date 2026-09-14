@@ -7,6 +7,7 @@ import Modal, { ModalFooter, ModalBtn, CloseX } from '../components/Modal.jsx';
 import { readDealId } from '../components/CrmInfoCard';
 import RowMenu from '../components/RowMenu.jsx';
 import GridFooter, { usePager } from '../components/GridFooter.jsx';
+import DataTable, { useGridColumns, ColumnChooser } from '../components/DataTable.jsx';
 import { fmtDate } from '../format.js';
 
 const inputStyle = {
@@ -17,12 +18,6 @@ const inputStyle = {
 const labelStyle = {
   fontSize: 10, fontWeight: 600, color: 'var(--text-muted)',
   textTransform: 'uppercase', letterSpacing: '0.07em', display: 'block', marginBottom: 5,
-};
-
-const thStyle = {
-  padding: '10px 16px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
-  textAlign: 'left', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap',
-  background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)',
 };
 
 // Edited after the last Books push → the row in Books is out of date. The 5s
@@ -278,15 +273,65 @@ export default function SKUItemsPage() {
     load();
   }
 
-  const SortArrow = ({ col }) => (
-    <span style={{ marginLeft: 4, opacity: 0.5, fontSize: 10 }}>
-      {sortCol === col ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
-    </span>
-  );
-
   // Detail mode needs the fresh row for the read-only bits (industry, Zoho);
   // editForm keeps the user's in-progress edits.
   const selectedItem = selected != null ? items.find(i => String(i.id) === String(selected)) : null;
+
+  // Columns need page handlers (push, edit, delete), so they're built in-render.
+  const COLUMNS = [
+    { key: 'name', label: 'Name', lock: true, sortKey: 'name', render: item => <span style={{ fontWeight: 500 }}>{item.name}</span> },
+    { key: 'sku', label: 'SKU', sortKey: 'sku', render: item => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--blue)', fontWeight: 500 }}>{item.sku}</span> },
+    {
+      key: 'description', label: 'Description', sortKey: 'description', render: item => (
+        <div style={{ color: 'var(--text-secondary)', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description || '—'}</div>
+      ),
+    },
+    {
+      key: 'type', label: 'Type', sortKey: 'type', render: item => (
+        <span style={{ fontSize: 11, fontWeight: 500, padding: '2px 8px', borderRadius: 10, background: item.type === 'Trading' ? '#f0fdf4' : '#faf5ff', color: item.type === 'Trading' ? '#16a34a' : '#7c3aed', border: `1px solid ${item.type === 'Trading' ? '#bbf7d0' : '#e9d5ff'}` }}>
+          {item.type}
+        </span>
+      ),
+    },
+    { key: 'industry', label: 'Industry', sortKey: 'industry', render: item => <span style={{ color: 'var(--text-secondary)' }}>{item.industry?.name || '—'}</span> },
+    { key: 'createdAt', label: 'Created', sortKey: 'createdAt', render: item => <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{fmtDate(item.createdAt)}</span> },
+    {
+      key: 'zoho', label: 'Zoho', width: 110, render: item => {
+        const stale = isStale(item);
+        return (
+          <button
+            onClick={e => openPushDialog(item, e)}
+            disabled={pushingId === item.id}
+            title={stale ? 'Edited since the last push — Books is out of date. Click to re-push.'
+              : item.zohoItemId ? `Synced to Zoho Books (ID ${item.zohoItemId}) — click to re-push updates` : 'Push to Zoho Books'}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '4px 10px', fontSize: 11, fontWeight: 600,
+              background: stale ? '#fefce8' : item.zohoItemId ? '#f0fdf4' : '#fff7ed',
+              color: stale ? '#a16207' : item.zohoItemId ? '#16a34a' : '#ea580c',
+              border: `1px solid ${stale ? '#fde68a' : item.zohoItemId ? '#bbf7d0' : '#fed7aa'}`,
+              borderRadius: 'var(--radius-sm)',
+              cursor: pushingId === item.id ? 'wait' : 'pointer',
+              opacity: pushingId === item.id ? 0.6 : 1, whiteSpace: 'nowrap',
+            }}
+          >
+            <span style={{ fontWeight: 700 }}>Z</span>
+            {pushingId === item.id ? 'Pushing…'
+              : stale ? 'Edited · Re-push'
+              : item.zohoItemId ? '✓ Synced · Re-push' : 'Push'}
+          </button>
+        );
+      },
+    },
+    {
+      key: 'actions', label: '', lock: true, width: 76, render: item => (
+        <div onClick={e => e.stopPropagation()}>
+          <RowMenu onEdit={() => openDetail(item)} onDelete={() => setConfirmDelete(item)} />
+        </div>
+      ),
+    },
+  ];
+  const { cols, chooser } = useGridColumns('sku.items', COLUMNS);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -408,85 +453,16 @@ export default function SKUItemsPage() {
         <>
           <div style={{ flex: 1, overflow: 'auto', padding: '20px 24px' }}>
             <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-              <Toolbar onRefresh={load} />
+              <Toolbar onRefresh={load} right={<ColumnChooser chooser={chooser} />} />
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                  <thead>
-                    <tr>
-                      {[['name', 'Name'], ['sku', 'SKU'], ['description', 'Description'], ['type', 'Type'], ['industry', 'Industry'], ['createdAt', 'Created']].map(([col, label]) => (
-                        <th
-                          key={col} style={thStyle} role="button" tabIndex={0}
-                          aria-label={`Sort by ${label}`}
-                          onClick={() => toggleSort(col)}
-                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort(col); } }}
-                        >{label} <SortArrow col={col} /></th>
-                      ))}
-                      <th style={{ ...thStyle, width: 110 }}>Zoho</th>
-                      <th style={{ ...thStyle, width: 76 }}></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sorted.length === 0 && (
-                      <tr><td colSpan={8} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>{loaded ? 'No SKU items yet. Click "+ New" to generate one.' : 'Loading…'}</td></tr>
-                    )}
-                    {paged.map(item => {
-                      return (
-                        <tr
-                          key={item.id}
-                          title="Click to edit"
-                          onClick={() => openDetail(item)}
-                          style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
-                          onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
-                          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                        >
-                          <td style={{ padding: '10px 16px', fontWeight: 500 }}>{item.name}</td>
-                          <td style={{ padding: '10px 16px', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--blue)', fontWeight: 500 }}>{item.sku}</td>
-                          <td style={{ padding: '10px 16px', color: 'var(--text-secondary)', maxWidth: 240 }}>
-                            <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description || '—'}</div>
-                          </td>
-                          <td style={{ padding: '10px 16px' }}>
-                            <span style={{ fontSize: 11, fontWeight: 500, padding: '2px 8px', borderRadius: 10, background: item.type === 'Trading' ? '#f0fdf4' : '#faf5ff', color: item.type === 'Trading' ? '#16a34a' : '#7c3aed', border: `1px solid ${item.type === 'Trading' ? '#bbf7d0' : '#e9d5ff'}` }}>
-                              {item.type}
-                            </span>
-                          </td>
-                          <td style={{ padding: '10px 16px', color: 'var(--text-secondary)' }}>{item.industry?.name || '—'}</td>
-                          <td style={{ padding: '10px 16px', color: 'var(--text-muted)', fontSize: 12 }}>{fmtDate(item.createdAt)}</td>
-                          <td style={{ padding: '8px 16px' }}>
-                            {(() => {
-                              const stale = isStale(item);
-                              return (
-                                <button
-                                  onClick={e => openPushDialog(item, e)}
-                                  disabled={pushingId === item.id}
-                                  title={stale ? 'Edited since the last push — Books is out of date. Click to re-push.'
-                                    : item.zohoItemId ? `Synced to Zoho Books (ID ${item.zohoItemId}) — click to re-push updates` : 'Push to Zoho Books'}
-                                  style={{
-                                    display: 'flex', alignItems: 'center', gap: 5,
-                                    padding: '4px 10px', fontSize: 11, fontWeight: 600,
-                                    background: stale ? '#fefce8' : item.zohoItemId ? '#f0fdf4' : '#fff7ed',
-                                    color: stale ? '#a16207' : item.zohoItemId ? '#16a34a' : '#ea580c',
-                                    border: `1px solid ${stale ? '#fde68a' : item.zohoItemId ? '#bbf7d0' : '#fed7aa'}`,
-                                    borderRadius: 'var(--radius-sm)',
-                                    cursor: pushingId === item.id ? 'wait' : 'pointer',
-                                    opacity: pushingId === item.id ? 0.6 : 1, whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  <span style={{ fontWeight: 700 }}>Z</span>
-                                  {pushingId === item.id ? 'Pushing…'
-                                    : stale ? 'Edited · Re-push'
-                                    : item.zohoItemId ? '✓ Synced · Re-push' : 'Push'}
-                                </button>
-                              );
-                            })()}
-                          </td>
-                          <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
-                            <RowMenu onEdit={() => openDetail(item)} onDelete={() => setConfirmDelete(item)} />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                <DataTable
+                  cols={cols} rows={paged}
+                  onRowClick={openDetail}
+                  sort={{ key: sortCol, dir: sortDir }} onSort={toggleSort}
+                />
+                {sorted.length === 0 && (
+                  <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>{loaded ? 'No SKU items yet. Click "+ New" to generate one.' : 'Loading…'}</div>
+                )}
               </div>
             </div>
           </div>

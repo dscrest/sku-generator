@@ -14,9 +14,13 @@ const {
   getSalesOrder, listSalesOrders, listVendors, findItemByName, findItemBySku, createComponentItem, searchItems,
 } = require("../zoho/booksApi");
 const { getUserById, requireAdmin } = require("../session");
-const { updateCompositeItem, listCompositeItems, createCompositeItem } = require("../zoho/inventoryApi");
+const { assertAction } = require("../perms");
 const {
-  SETTING_KEYS, settings, setSetting, nextNumber, logActivity, byOrg, inList, creatableSalesOrders, requiredLevelsMet, approvalLevelCount,
+  updateCompositeItem, listCompositeItems, createCompositeItem,
+  getItemStock, listSerialsBatches, pickSerialsBatches, withBatchFallback,
+} = require("../zoho/inventoryApi");
+const {
+  SETTING_KEYS, settings, setSetting, nextNumber, logActivity, byOrg, inList, creatableSalesOrders, requiredLevelsMet, approvalLevelCount, routeFor,
 } = require("../workorder/store");
 const bom = require("../workorder/bom");
 const { buildGrid, buildGridsBulk } = require("../workorder/grid");
@@ -24,6 +28,7 @@ const txn = require("../workorder/txn");
 const purchase = require("../workorder/purchase");
 const reports = require("../workorder/reports");
 const { warehouseOptions, reconcileOrg, syncItem } = require("../workorder/sync");
+const assembly = require("../workorder/assembly");
 const { soFields, woHeaderFields, USER_OWNED } = require("../workorder/soFields");
 
 const router = express.Router();
@@ -123,6 +128,13 @@ router.get("/sales-orders", ok(async (req, res) => {
   res.json(creatableSalesOrders(sos, taken));
 }));
 
+// Preview of the number the next WO will get (new-WO page header pill). The
+// real number is assigned at create time and may differ under concurrency.
+router.get("/next-number", ok(async (req, res) => {
+  const s = await settings(req.catalyst, req.orgId);
+  res.json({ number: await nextNumber(req.catalyst, req.orgId, "WorkOrder", "woNumber", s.woNumberPrefix) });
+}));
+
 router.get("/so/:soId", ok(async (req, res) => {
   const so = await getSalesOrder(req.catalyst, req.params.soId);
   const f = soFields(so);
@@ -155,6 +167,36 @@ router.get("/items", ok(async (req, res) => {
   res.json(items.map((i) => ({
     id: String(i.item_id), name: i.name, sku: i.sku || null, unit: i.unit || "",
   })));
+}));
+
+// Serial/batch pool + FIFO prefill for the picker dialog (CR-121). The source
+// warehouse comes from the movement type's route, so de-reserve/issue offer
+// what sits in Reserve and return offers what sits in Issue. Static path —
+// must stay above /:id.
+router.get("/tracking-options", ok(async (req, res) => {
+  const { itemId, type } = req.query;
+  const qty = n(req.query.qty);
+  if (!itemId || !type) { const e = new Error("itemId and type are required"); e.status = 400; throw e; }
+  const fromWarehouseId = req.query.fromWarehouseId
+    ? String(req.query.fromWarehouseId)
+    : (await routeFor(req.catalyst, req.orgId, String(type))).fromWarehouseId;
+  const item = await withBatchFallback(
+    req.catalyst, await getItemStock(req.catalyst, String(itemId)), String(itemId), fromWarehouseId,
+  );
+  const pool = listSerialsBatches(item, fromWarehouseId);
+  if (!pool.tracking) return res.json({ tracking: null });
+  // FIFO prefill — same picks the silent auto-pick would make; short stock is
+  // not an error here (the picker shows what exists, confirm re-validates).
+  let prefill = null;
+  try { prefill = qty > 0 ? pickSerialsBatches(item, fromWarehouseId, qty) : null; } catch { /* short */ }
+  res.json({
+    ...pool,
+    prefill: prefill
+      ? (prefill.serial_numbers
+        ? { serials: prefill.serial_numbers }
+        : { batches: (prefill.batches || []).map((b) => ({ batch_id: b.batch_id, batch_number: b.batch_number, qty: b.quantity_transfer })) })
+      : null,
+  });
 }));
 
 // ---- composite-item BOM (CR-028) ------------------------------------------
@@ -330,7 +372,7 @@ router.get("/purchase/shortfall-by-item", ok(async (req, res) => {
   const tagged = [];
   pairs.forEach(({ wo }, i) => {
     for (const l of purchase.shortfallLines(grids[i])) {
-      tagged.push({ ...l, woId: String(wo.ROWID), woNumber: wo.woNumber, salesOrderNumber: wo.salesOrderNumber });
+      tagged.push({ ...l, woId: String(wo.ROWID), woNumber: wo.woNumber, salesOrderNumber: wo.salesOrderNumber, salesOrderId: wo.salesOrderId });
     }
   });
 
@@ -362,7 +404,7 @@ router.get("/purchase/shortfall-by-item", ok(async (req, res) => {
       const received = Number(l.receivedQty) || 0;
       return {
         rmItemId: l.rmItemId, rmName: l.rmName,
-        workOrderId: l.workOrderId, woNumber: woOf(l).woNumber, salesOrderNumber: woOf(l).salesOrderNumber,
+        workOrderId: l.workOrderId, woNumber: woOf(l).woNumber, salesOrderNumber: woOf(l).salesOrderNumber, salesOrderId: woOf(l).salesOrderId,
         qty,
         status: received >= qty ? "Fulfilled" : received > 0 ? "PartiallyReceived" : "PORaised",
         poNumber: l.zohoPoNumber || "",
@@ -370,10 +412,11 @@ router.get("/purchase/shortfall-by-item", ok(async (req, res) => {
     }),
     ...draftLines.map((l) => ({
       rmItemId: l.rmItemId, rmName: l.rmName,
-      workOrderId: l.workOrderId, woNumber: woOf(l).woNumber, salesOrderNumber: woOf(l).salesOrderNumber,
+      workOrderId: l.workOrderId, woNumber: woOf(l).woNumber, salesOrderNumber: woOf(l).salesOrderNumber, salesOrderId: woOf(l).salesOrderId,
       qty: Number(l.purchaseQty) || 0,
       status: "Requested",
       poNumber: l.prNumber || "",
+      prId: String(l.purchaseRequestId),
     })),
   ];
   res.json(purchase.shortfallByItem(purchase.applyDraftCoverage(tagged, draftLines), orderedEntries));
@@ -382,6 +425,7 @@ router.get("/purchase/shortfall-by-item", ok(async (req, res) => {
 // One-step item-wise raise (CR-023): selected items + one vendor → consolidated
 // PR + a grouped draft PO. Static path — must stay above /:id.
 router.post("/purchase/raise", ok(async (req, res) => {
+  await assertAction(req.catalyst, req.orgId, req.userId, "wo.action.po.create");
   const { vendorId, vendorName, items } = req.body || {};
   res.json(await purchase.raiseItemPO(req.catalyst, req.orgId, { vendorId, vendorName, items }, req.userId));
 }));
@@ -413,6 +457,8 @@ router.get("/reports/warehouse-stock", ok(async (req, res) => {
 // ---- material transactions (ids are not work-order ids → before /:id) ------
 
 router.post("/txn/:txnId/confirm", ok(async (req, res) => {
+  const draft = await txn.loadTxn(req.catalyst, req.orgId, req.params.txnId);
+  await assertAction(req.catalyst, req.orgId, req.userId, `wo.action.${draft.type}`);
   res.json(await txn.confirmTxn(req.catalyst, req.orgId, req.params.txnId, req.userId));
 }));
 
@@ -433,6 +479,7 @@ router.post("/pr/:prId/lines", ok(async (req, res) => {
 }));
 
 router.post("/pr/:prId/confirm", ok(async (req, res) => {
+  await assertAction(req.catalyst, req.orgId, req.userId, "wo.action.po.create");
   res.json(await purchase.confirmPR(req.catalyst, req.orgId, req.params.prId, req.userId));
 }));
 
@@ -447,14 +494,17 @@ router.get("/po/:poId", ok(async (req, res) => {
 }));
 
 router.put("/po/:poId", ok(async (req, res) => {
+  await assertAction(req.catalyst, req.orgId, req.userId, "wo.action.po.modify");
   res.json(await purchase.updatePoLines(req.catalyst, req.orgId, req.params.poId, (req.body || {}).lines, req.userId));
 }));
 
 router.delete("/po/:poId", ok(async (req, res) => {
+  await assertAction(req.catalyst, req.orgId, req.userId, "wo.action.po.modify");
   res.json(await purchase.deletePo(req.catalyst, req.orgId, req.params.poId, req.userId));
 }));
 
 router.post("/po/:poId/status", ok(async (req, res) => {
+  await assertAction(req.catalyst, req.orgId, req.userId, "wo.action.po.modify");
   res.json(await purchase.setPoStatus(req.catalyst, req.orgId, req.params.poId, String((req.body || {}).status || ""), req.userId));
 }));
 
@@ -499,7 +549,7 @@ router.get("/", ok(async (req, res) => {
  * whose item is not a composite comes back as a clear error naming it.
  */
 router.post("/", ok(async (req, res) => {
-  const { salesOrderId, projectName, fgLines, woDate } = req.body || {};
+  const { salesOrderId, projectName, fgLines, woDate, notes } = req.body || {};
   if (!salesOrderId || !Array.isArray(fgLines) || !fgLines.length) {
     const e = new Error("Pick a sales order and at least one finished good");
     e.status = 400;
@@ -524,7 +574,7 @@ router.post("/", ok(async (req, res) => {
     bomImportedAt: null,
     estimatedCost: n(so.total),
     actualCost: 0,
-    notes: "",
+    notes: String(notes || ""),
     ...woHeaderFields(so, req.body),
   });
 
@@ -562,7 +612,7 @@ router.post("/", ok(async (req, res) => {
 
 router.get("/:id", ok(async (req, res) => {
   const wo = await loadWo(req);
-  const [fgs, prs, txns, approvals, procMap, values, so] = await Promise.all([
+  const [fgs, prs, txns, approvals, procMap, values, so, asms] = await Promise.all([
     byOrg(req.catalyst, req.orgId, "WorkOrderFG", `workOrderId = ${zStr(String(wo.ROWID))}`),
     purchase.listPRs(req.catalyst, req.orgId, wo.ROWID),
     txn.listTxns(req.catalyst, req.orgId, wo.ROWID),
@@ -575,6 +625,7 @@ router.get("/:id", ok(async (req, res) => {
     // SO header fields re-sync on every open (CR-110); Books being down just
     // means the stored values serve this view.
     getSalesOrder(req.catalyst, wo.salesOrderId).catch(() => null),
+    assembly.listAssemblies(req.catalyst, req.orgId, wo.ROWID),
   ]);
   // One write: clears the unseen-progress red dot and refreshes any SO-derived
   // fields that changed in Books. Fire-and-forget so a slow write never delays
@@ -588,11 +639,6 @@ router.get("/:id", ok(async (req, res) => {
     }
   }
   req.catalyst.datastore().table("WorkOrder").updateRow(patch).catch(() => {});
-  // ponytail: live-read from the fetched SO (no WorkOrder column); "—" when Books is down.
-  const soCf = (label) => {
-    const f = (so?.custom_fields || []).find((c) => String(c.label || "").trim().toLowerCase() === label);
-    return f ? String(f.value ?? "").trim() || null : null;
-  };
   res.json({
     id: String(wo.ROWID),
     woNumber: wo.woNumber,
@@ -601,8 +647,6 @@ router.get("/:id", ok(async (req, res) => {
     salesOrderNumber: wo.salesOrderNumber,
     customerName: wo.customerName,
     projectName: wo.projectName || null,
-    rowType: soCf("row type"),
-    panelType: soCf("panel type"),
     soDate: wo.soDate || null,
     shipmentDate: wo.shipmentDate || null,
     buyerOrderNo: wo.buyerOrderNo || null,
@@ -622,6 +666,10 @@ router.get("/:id", ok(async (req, res) => {
     nextStatuses: FLOW[String(wo.status)] || [],
     fgs: fgs.map((f) => ({
       id: String(f.ROWID), fgItemId: String(f.fgItemId), name: f.fgName, sku: f.fgSku || null, qty: n(f.fgQty),
+      // Assembly progress (CR-126): Closed once assembledQty covers fgQty.
+      assembledQty: n(f.assembledQty),
+      status: f.status || null,
+      assemblies: asms.filter((a) => a.workOrderFgId === String(f.ROWID)),
     })),
     purchaseRequests: prs,
     transactions: txns,
@@ -698,6 +746,7 @@ router.delete("/:id", ok(async (req, res) => {
 router.post("/:id/status", ok(async (req, res) => {
   const wo = await loadWo(req);
   const to = String((req.body || {}).status || "");
+  if (to === "Closed") await assertAction(req.catalyst, req.orgId, req.userId, "wo.action.close");
   const allowed = FLOW[String(wo.status)] || [];
   if (!allowed.includes(to)) {
     const e = new Error(
@@ -1002,6 +1051,7 @@ router.get("/:id/grid", ok(async (req, res) => {
 router.post("/:id/txn", ok(async (req, res) => {
   const wo = await loadWo(req);
   const { fgId, type, requested, notes, confirm, fromWarehouseId, toWarehouseId } = req.body || {};
+  if (type) await assertAction(req.catalyst, req.orgId, req.userId, `wo.action.${type}`);
   const draft = await txn.createDraft(
     req.catalyst, req.orgId,
     { workOrderId: wo.ROWID, workOrderFgId: fgId, type, requested, notes, fromWarehouseId, toWarehouseId },
@@ -1011,6 +1061,14 @@ router.post("/:id/txn", ok(async (req, res) => {
   // separate step for people who want to stage an action.
   if (confirm) return res.json(await txn.confirmTxn(req.catalyst, req.orgId, draft.id, req.userId));
   res.json(draft);
+}));
+
+// Assemble a finished good (CR-126): Zoho bundle consumes Issue-warehouse
+// material and produces the composite's stock in Main. Body: { qty }.
+router.post("/:id/fg/:fgId/assemble", ok(async (req, res) => {
+  await assertAction(req.catalyst, req.orgId, req.userId, "wo.action.assemble");
+  const wo = await loadWo(req);
+  res.json(await assembly.assembleFg(req.catalyst, req.orgId, wo.ROWID, req.params.fgId, (req.body || {}).qty, req.userId));
 }));
 
 router.post("/:id/recompute", ok(async (req, res) => {
@@ -1043,6 +1101,7 @@ router.get("/:id/shortfall", ok(async (req, res) => {
 }));
 
 router.post("/:id/purchase-request", ok(async (req, res) => {
+  await assertAction(req.catalyst, req.orgId, req.userId, "wo.action.po.create");
   const wo = await loadWo(req);
   res.json(await purchase.createPR(req.catalyst, req.orgId, { workOrderId: wo.ROWID, lines: (req.body || {}).lines }, req.userId));
 }));
@@ -1050,6 +1109,7 @@ router.post("/:id/purchase-request", ok(async (req, res) => {
 // ---- approvals (FR-ADO-007) -----------------------------------------------
 
 router.post("/:id/approve", ok(async (req, res) => {
+  await assertAction(req.catalyst, req.orgId, req.userId, "wo.action.approve");
   const wo = await loadWo(req);
   const level = n((req.body || {}).level);
   const status = String((req.body || {}).status || "Approved");

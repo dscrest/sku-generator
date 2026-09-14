@@ -1,0 +1,4 @@
+Item Name,SKU,HSN/SAC,Sales Description,Selling Price,Purchase Price,Unit,Product Type,Item Type,Intra State Tax Name,Intra State Tax Type,Intra State Tax Rate,Inter State Tax Name,Inter State Tax Type,Inter State Tax Rate,Category (Custom Field),Content (Custom Field),Yarn Type (Custom Field),Ply/Count (Custom Field),Twist Type (Custom Field),Colour (Custom Field)
+,,5205,Combed cotton yarn 2 ply 60 count S-twist,310,260,kg,goods,Inventory,GST5,Group,5,IGST5,Simple,5,Yarn,Cotton,Combed,2 Ply 60 Count,S-Twist,
+,,5205,Carded cotton yarn 3 ply 40 count Z-twist,280,235,kg,goods,Inventory,GST5,Group,5,IGST5,Simple,5,Yarn,Cotton,Carded,3 Ply 40 Count,Z-Twist,
+Compact Linen Yarn 2/80,,5306,Compact linen yarn 2 ply 80 count double twist,520,455,kg,goods,Inventory,GST5,Group,5,IGST5,Simple,5,Yarn,Linen,Compact,2 Ply 80 Count,Double Twist,

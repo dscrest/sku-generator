@@ -6,13 +6,7 @@ import Toolbar from '../components/Toolbar.jsx';
 import RowMenu from '../components/RowMenu.jsx';
 import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
 import { StatusPill, inr } from './recipeShared.jsx';
-
-const thStyle = {
-  padding: '10px 16px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
-  textAlign: 'left', userSelect: 'none', whiteSpace: 'nowrap',
-  background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)',
-};
-const tdStyle = { padding: '10px 16px' };
+import DataTable, { useGridColumns, ColumnChooser } from '../components/DataTable.jsx';
 
 export default function RecipeQuotationsPage() {
   const [rows, setRows] = useState([]);
@@ -33,6 +27,26 @@ export default function RecipeQuotationsPage() {
     (!fStatus || r.status === fStatus) && (!fProduct || r.productCode === fProduct));
   const { pageRows, pager } = usePager(filtered);
 
+  // COLUMNS lives in the component: the actions column needs navigate.
+  const COLUMNS = [
+    { key: 'qtnNo', label: 'Quotation', lock: true, render: r => <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: 12.5 }}>{r.qtnNo}</span> },
+    { key: 'productCode', label: 'Product', render: r => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{r.productCode || '—'}</span> },
+    { key: 'recipeCode', label: 'Recipe', render: r => <span style={{ color: 'var(--text-secondary)' }}>{r.recipeCode} <span style={{ color: 'var(--text-muted)' }}>v{r.recipeVersion}</span></span> },
+    { key: 'qty', label: 'Qty', align: 'right', render: r => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{r.qty}</span> },
+    { key: 'unitPrice', label: 'Unit price', align: 'right', render: r => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{inr(r.unitPrice)}</span> },
+    { key: 'orderValue', label: 'Order value', align: 'right', render: r => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, fontWeight: 600 }}>{inr(r.orderValue)}</span> },
+    { key: 'status', label: 'Status', render: r => <StatusPill status={r.status} /> },
+    { key: 'createdAt', label: 'Created', render: r => <span style={{ color: 'var(--text-muted)' }}>{(r.createdAt || '').slice(0, 10)}</span> },
+    {
+      key: 'actions', label: 'Actions', lock: true, width: 60, render: r => (
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
+          <RowMenu editLabel="View snapshot" onEdit={() => navigate(`/recipe/quotations/${r.id}`)} />
+        </div>
+      ),
+    },
+  ];
+  const { cols, chooser } = useGridColumns('recipe.quotations', COLUMNS);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', padding: '0 24px', height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
@@ -52,53 +66,21 @@ export default function RecipeQuotationsPage() {
             onRefresh={load}
             right={
               <div style={{ display: 'flex', gap: 8 }}>
+                <ColumnChooser chooser={chooser} />
                 <FilterSelect label="products" value={fProduct} onChange={setFProduct} options={distinct(rows, 'productCode')} />
                 <FilterSelect label="statuses" value={fStatus} onChange={setFStatus} options={distinct(rows, 'status')} />
               </div>
             }
           />
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr>
-                <th style={thStyle}>Quotation</th>
-                <th style={thStyle}>Product</th>
-                <th style={thStyle}>Recipe</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Qty</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Unit price</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Order value</th>
-                <th style={thStyle}>Status</th>
-                <th style={thStyle}>Created</th>
-                <th style={{ ...thStyle, width: 60 }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.length === 0 && (
-                <tr><td colSpan={9} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No quotations yet — configure a product to create one.</td></tr>
-              )}
-              {pageRows.map(r => (
-                <tr key={r.id}
-                  onClick={() => navigate(`/recipe/quotations/${r.id}`)}
-                  style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <td style={{ ...tdStyle, fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: 12.5 }}>{r.qtnNo}</td>
-                  <td style={{ ...tdStyle, fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{r.productCode || '—'}</td>
-                  <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{r.recipeCode} <span style={{ color: 'var(--text-muted)' }}>v{r.recipeVersion}</span></td>
-                  <td style={{ ...tdStyle, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{r.qty}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{inr(r.unitPrice)}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12.5, fontWeight: 600 }}>{inr(r.orderValue)}</td>
-                  <td style={tdStyle}><StatusPill status={r.status} /></td>
-                  <td style={{ ...tdStyle, color: 'var(--text-muted)' }}>{(r.createdAt || '').slice(0, 10)}</td>
-                  <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                      <RowMenu editLabel="View snapshot" onEdit={() => navigate(`/recipe/quotations/${r.id}`)} />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          {pageRows.length === 0 ? (
+            <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+              No quotations yet — configure a product to create one.
+            </div>
+          ) : (
+            <DataTable cols={cols} rows={pageRows} onRowClick={r => navigate(`/recipe/quotations/${r.id}`)} />
+          )}
         </div>
       </div>
 

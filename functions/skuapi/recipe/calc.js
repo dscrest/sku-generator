@@ -108,7 +108,47 @@ function computeQuote({ components, options, materials, costElements, selections
   return { lines, qty: q, unitCost, unitPrice, orderValue: round2(unitPrice * q) };
 }
 
-module.exports = { optionCost, computeQuote, round2 };
+/**
+ * Books composite BOM from a recipe (CR-143). Default material = first
+ * enabled option per component (the calc.js opts[0] rule, applied to
+ * configurable components too — recipe-level push ignores per-order picks).
+ * perUnitQty = component.qty × option.castWeight (material consumed per one
+ * finished unit). Lines deduped by zohoItemId (Zoho rejects duplicates).
+ */
+function bomLines({ components, options, materials }) {
+  const matById = new Map(materials.map((m) => [String(m.id), m]));
+  const optsByComp = new Map();
+  for (const o of options) {
+    if (o.enabled === false) continue;
+    const k = String(o.componentId);
+    if (!optsByComp.has(k)) optsByComp.set(k, []);
+    optsByComp.get(k).push(o);
+  }
+  const byItem = new Map(); // zohoItemId -> line
+  const unlinked = new Map(); // material id -> {code, name}
+  const skipped = [];
+  const sorted = [...components].sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+  for (const c of sorted) {
+    const opt = (optsByComp.get(String(c.id)) || [])[0] || null;
+    const qty = round2((Number(c.qty) || 1) * (opt ? Number(opt.castWeight) || 0 : 0));
+    if (!opt || qty <= 0) { skipped.push(c.name || c.code || String(c.id)); continue; }
+    const material = matById.get(String(opt.materialId)) || null;
+    if (!material || !material.zohoItemId) {
+      unlinked.set(String(opt.materialId), {
+        code: (material && material.code) || opt.materialCode || String(opt.materialId),
+        name: (material && material.name) || "",
+      });
+      continue;
+    }
+    const key = String(material.zohoItemId);
+    const line = byItem.get(key);
+    if (line) line.perUnitQty = round2(line.perUnitQty + qty);
+    else byItem.set(key, { rmItemId: key, perUnitQty: qty, materialCode: material.code || "", componentName: c.name || "" });
+  }
+  return { lines: [...byItem.values()], unlinked: [...unlinked.values()], skipped };
+}
+
+module.exports = { optionCost, computeQuote, bomLines, round2 };
 
 // ponytail self-check: `node recipe/calc.js --selftest` — RAVS150 costing-sheet figures.
 if (require.main === module && process.argv.includes("--selftest")) {
@@ -184,5 +224,36 @@ if (require.main === module && process.argv.includes("--selftest")) {
     qty: 1,
   });
   console.assert(oq.unitCost === 6000 + 2500 + 1000 + 500, `override quote 10000, got ${oq.unitCost}`);
+  // bomLines: dedupe by zohoItemId, skip no-option/zero-qty, collect unlinked.
+  const bom = bomLines({
+    components: [
+      { id: "1", name: "Casing", qty: 1, sequence: 1 },
+      { id: "2", name: "Side Cover", qty: 2, sequence: 2 },   // same material as casing -> dedupe
+      { id: "3", name: "Fasteners", qty: 1, sequence: 3 },    // unlinked material
+      { id: "4", name: "Gasket", qty: 1, sequence: 4 },       // no option -> skipped
+      { id: "5", name: "Label", qty: 3, sequence: 5 },        // castWeight 0 -> skipped
+    ],
+    options: [
+      { componentId: "1", materialId: "m1", castWeight: 55, enabled: true },
+      { componentId: "2", materialId: "m1", castWeight: 46, enabled: true },
+      { componentId: "3", materialId: "m3", castWeight: 1.2, enabled: true },
+      { componentId: "5", materialId: "m1", castWeight: 0, enabled: true },
+    ],
+    materials: [
+      { id: "m1", code: "WCB", zohoItemId: "z-100" },
+      { id: "m3", code: "HRS", name: "HR Sheet" }, // no zohoItemId
+    ],
+  });
+  console.assert(bom.lines.length === 1 && bom.lines[0].rmItemId === "z-100", "dedupe by zohoItemId");
+  console.assert(bom.lines[0].perUnitQty === 55 + 2 * 46, `deduped qty 147, got ${bom.lines[0].perUnitQty}`);
+  console.assert(bom.unlinked.length === 1 && bom.unlinked[0].code === "HRS", "unlinked material collected");
+  console.assert(bom.skipped.length === 2 && bom.skipped.includes("Gasket") && bom.skipped.includes("Label"), "no-option and zero-qty skipped");
+  // Disabled-only options -> skipped, not unlinked.
+  const dis = bomLines({
+    components: [{ id: "1", name: "Casing", qty: 1 }],
+    options: [{ componentId: "1", materialId: "m1", castWeight: 55, enabled: false }],
+    materials: [{ id: "m1", code: "WCB", zohoItemId: "z-100" }],
+  });
+  console.assert(dis.lines.length === 0 && dis.skipped.length === 1, "disabled option contributes nothing");
   console.log("recipe/calc.js self-check passed");
 }

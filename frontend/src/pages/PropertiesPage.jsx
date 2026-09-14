@@ -6,13 +6,7 @@ import Toolbar from '../components/Toolbar.jsx';
 import { ConfirmModal } from '../components/Modal.jsx';
 import RowMenu from '../components/RowMenu.jsx';
 import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
-
-const thStyle = {
-  padding: '10px 16px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
-  textAlign: 'left', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap',
-  background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)',
-};
-const tdStyle = { padding: '10px 16px' };
+import DataTable, { useGridColumns, ColumnChooser } from '../components/DataTable.jsx';
 
 export default function PropertiesPage() {
   const [props, setProps] = useState([]);
@@ -59,11 +53,32 @@ export default function PropertiesPage() {
     finally { setConfirmDel(null); }
   }
 
-  const SortArrow = ({ col }) => (
-    <span style={{ marginLeft: 4, opacity: 0.5, fontSize: 10 }}>
-      {sortCol === col ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
-    </span>
-  );
+  // Columns need navigate + delete state, so they're built in-render.
+  const COLUMNS = [
+    {
+      key: 'industryName', label: 'Industry', lock: true, sortKey: 'industryName', render: p => (
+        <a
+          onClick={e => { e.stopPropagation(); navigate(`/sku/industries/${p.industryId}/properties`); }}
+          style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'none' }}
+          title="Open in property manager"
+        >{p.industryName || p.industryId} ›</a>
+      ),
+    },
+    { key: 'name', label: 'Name', sortKey: 'name', render: p => <span style={{ fontWeight: 500 }}>{p.name}</span> },
+    { key: 'caption', label: 'Caption', sortKey: 'caption', render: p => p.caption },
+    { key: 'valueType', label: 'Type', sortKey: 'valueType', render: p => p.valueType },
+    { key: 'skuPosition', label: 'SKU Pos', sortKey: 'skuPosition', align: 'right', render: p => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{p.skuPosition}</span> },
+    { key: 'unit', label: 'Unit', sortKey: 'unit', render: p => <span style={{ color: 'var(--text-muted)' }}>{p.unit || '—'}</span> },
+    { key: 'required', label: 'Required', sortKey: 'required', render: p => p.required ? 'Yes' : 'No' },
+    {
+      key: 'actions', label: '', lock: true, width: 84, render: p => (
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
+          <RowMenu editLabel="Edit in manager" onEdit={() => navigate(`/sku/industries/${p.industryId}/properties`)} onDelete={() => setConfirmDel(p)} />
+        </div>
+      ),
+    },
+  ];
+  const { cols, chooser } = useGridColumns('sku.properties', COLUMNS);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -80,60 +95,21 @@ export default function PropertiesPage() {
             onRefresh={load}
             right={
               <div style={{ display: 'flex', gap: 8 }}>
+                <ColumnChooser chooser={chooser} />
                 <FilterSelect label="industries" value={fIndustry} onChange={setFIndustry} options={distinct(props, 'industryName')} />
                 <FilterSelect label="types" value={fType} onChange={setFType} options={distinct(props, 'valueType')} />
                 <FilterSelect label="required" value={fRequired} onChange={setFRequired} options={['Yes', 'No']} />
               </div>
             }
           />
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr>
-                <th style={thStyle} onClick={() => toggleSort('industryName')}>Industry <SortArrow col="industryName" /></th>
-                <th style={thStyle} onClick={() => toggleSort('name')}>Name <SortArrow col="name" /></th>
-                <th style={thStyle} onClick={() => toggleSort('caption')}>Caption <SortArrow col="caption" /></th>
-                <th style={thStyle} onClick={() => toggleSort('valueType')}>Type <SortArrow col="valueType" /></th>
-                <th style={{ ...thStyle, textAlign: 'right' }} onClick={() => toggleSort('skuPosition')}>SKU Pos <SortArrow col="skuPosition" /></th>
-                <th style={thStyle} onClick={() => toggleSort('unit')}>Unit <SortArrow col="unit" /></th>
-                <th style={thStyle} onClick={() => toggleSort('required')}>Required <SortArrow col="required" /></th>
-                <th style={{ ...thStyle, width: 84 }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.length === 0 && (
-                <tr><td colSpan={8} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No properties found.</td></tr>
-              )}
-              {pageRows.map(p => (
-                <tr
-                  key={p.id}
-                  title="Click to open in property manager"
-                  onClick={() => navigate(`/sku/industries/${p.industryId}/properties`)}
-                  style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <td style={tdStyle}>
-                    <a
-                      onClick={e => { e.stopPropagation(); navigate(`/sku/industries/${p.industryId}/properties`); }}
-                      style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'none' }}
-                      title="Open in property manager"
-                    >{p.industryName || p.industryId} ›</a>
-                  </td>
-                  <td style={{ ...tdStyle, fontWeight: 500 }}>{p.name}</td>
-                  <td style={tdStyle}>{p.caption}</td>
-                  <td style={tdStyle}>{p.valueType}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12 }}>{p.skuPosition}</td>
-                  <td style={{ ...tdStyle, color: 'var(--text-muted)' }}>{p.unit || '—'}</td>
-                  <td style={tdStyle}>{p.required ? 'Yes' : 'No'}</td>
-                  <td style={{ padding: '8px 12px' }} onClick={e => e.stopPropagation()}>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                      <RowMenu editLabel="Edit in manager" onEdit={() => navigate(`/sku/industries/${p.industryId}/properties`)} onDelete={() => setConfirmDel(p)} />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <DataTable
+            cols={cols} rows={pageRows}
+            onRowClick={p => navigate(`/sku/industries/${p.industryId}/properties`)}
+            sort={{ key: sortCol, dir: sortDir }} onSort={toggleSort}
+          />
+          {pageRows.length === 0 && (
+            <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No properties found.</div>
+          )}
         </div>
       </div>
 

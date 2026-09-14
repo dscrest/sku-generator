@@ -9,11 +9,17 @@ const STATUS_COLORS = {
   Order: ['#dcfce7', '#15803d'],
 };
 
+// Short codes keep grid columns narrow; full status on hover.
+const STATUS_ABBREV = {
+  Published: 'PUB', Draft: 'DRF', Superseded: 'SUP', Archived: 'ARC',
+  Quotation: 'QTN', Order: 'ORD',
+};
+
 export function StatusPill({ status }) {
   const [bg, fg] = STATUS_COLORS[status] || ['var(--bg-secondary)', 'var(--text-muted)'];
   return (
-    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 9px', borderRadius: 10, background: bg, color: fg, whiteSpace: 'nowrap' }}>
-      {status}
+    <span title={status} style={{ fontSize: 11, fontWeight: 600, padding: '2px 9px', borderRadius: 10, background: bg, color: fg, whiteSpace: 'nowrap' }}>
+      {STATUS_ABBREV[status] || String(status || '').slice(0, 3).toUpperCase()}
     </span>
   );
 }

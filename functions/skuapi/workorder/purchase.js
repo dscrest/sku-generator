@@ -102,16 +102,20 @@ function groupByVendor(lines) {
  * per finished good, so one raw material needed by two FGs arrives as two
  * lines; persisting both would put the same item twice on one PO and make the
  * received/billed refresh (matched by rmItemId) double-count.
- * Keyed by (item, soNumber): lines tracing to different Sales Orders stay
- * separate so each PO line carries exactly one SO in cf_so_no.
+ * Keyed by (item, soNumber, isExtra): lines tracing to different Sales Orders
+ * stay separate so each PO line carries exactly one SO in cf_so_no, and
+ * buyer-added extra qty stays its own PO line instead of merging into the
+ * required one.
  */
 function collapseLines(lines) {
   const byItem = new Map();
   for (const l of lines) {
     const qty = n(l.purchaseQty) || n(l.requiredQty);
-    const key = `${l.rmItemId}|${l.soNumber || ""}`;
+    // Catalyst booleans read back as strings — "false" is truthy, normalize.
+    const extra = l.isExtra === true || l.isExtra === "true";
+    const key = `${l.rmItemId}|${l.soNumber || ""}|${extra ? 1 : 0}`;
     const cur = byItem.get(key);
-    if (!cur) byItem.set(key, { ...l, purchaseQty: qty });
+    if (!cur) byItem.set(key, { ...l, isExtra: extra, purchaseQty: qty });
     else {
       cur.requiredQty = n(cur.requiredQty) + n(l.requiredQty);
       cur.purchaseQty += qty;
@@ -149,6 +153,7 @@ function shortfallByItem(lines, orderedLines = []) {
       workOrderId: l.woId ? String(l.woId) : "",
       woNumber: l.woNumber || "",
       salesOrderNumber: l.salesOrderNumber || "",
+      salesOrderId: l.salesOrderId ? String(l.salesOrderId) : "",
       qty,
       status: "Pending",
       poNumber: "",
@@ -163,9 +168,11 @@ function shortfallByItem(lines, orderedLines = []) {
       workOrderId: l.workOrderId ? String(l.workOrderId) : "",
       woNumber: l.woNumber || "",
       salesOrderNumber: l.salesOrderNumber || "",
+      salesOrderId: l.salesOrderId ? String(l.salesOrderId) : "",
       qty,
       status: l.status || "Requested",
       poNumber: l.poNumber || "",
+      prId: l.prId ? String(l.prId) : "",
     });
   }
   return [...byItem.values()];
@@ -297,6 +304,7 @@ async function addPRLine(catalyst, orgId, prId, { rmItemId, rmName, purchaseQty,
     rmName: rmName || "",
     requiredQty: 0,
     purchaseQty: n(purchaseQty),
+    isExtra: true, // ad-hoc line = extra material by definition (CR-120)
     vendorId: vendorId ? String(vendorId) : "",
     vendorName: vendorName || "",
     zohoPoId: "", zohoPoNumber: "", poStatus: "",
@@ -364,8 +372,13 @@ async function createPoForLines(catalyst, orgId, group, { referenceNumber, notes
     notes: notes || "",
     lines: collapseLines(group.lines).map((l) => ({
       rmItemId: l.rmItemId,
+      name: l.rmName || undefined,
       qty: n(l.purchaseQty),
-      description: l.soNumber ? `SO ${l.soNumber}` : description || undefined,
+      description: [
+        l.rmName,
+        l.isExtra ? "Extra" : "",
+        l.soNumber ? `SO ${l.soNumber}` : description || "",
+      ].filter(Boolean).join(" · ") || undefined,
       // Lands on the PO line's cf_so_no item custom field (booksApi) — the
       // field is an SO lookup, so it takes the salesorder_id.
       soId: l.soId || undefined,
@@ -447,7 +460,9 @@ async function confirmPR(catalyst, orgId, prId, userId) {
  * (no single workOrderId) with one line per (item, contributing WO) so each WO
  * keeps its own received tracking, then one grouped draft PO for the vendor.
  * `items = [{ rmItemId, rmName, qty, breakdown: [{ workOrderId, woNumber, qty }] }]`.
- * When the buyer edits an item's total, the WO breakdown is scaled to match.
+ * When the buyer lowers an item's total the WO breakdown is scaled down to
+ * match; raising it keeps the WO shares and adds the excess as a separate
+ * isExtra line (its own PO line, no SO attribution).
  */
 async function raiseItemPO(catalyst, orgId, { vendorId, vendorName, items }, userId) {
   if (!vendorId) { const e = new Error("Pick a vendor before raising the purchase order"); e.status = 400; throw e; }
@@ -473,27 +488,41 @@ async function raiseItemPO(catalyst, orgId, { vendorId, vendorName, items }, use
     if (target <= 0) continue;
     // Draft-covered/extra order: nothing pending to attribute it to — one
     // unattributed line (empty workOrderId/SO), same as older consolidated lines.
-    if (!bd.length) bd.push({ workOrderId: "", woNumber: "", salesOrderNumber: "", qty: target });
+    if (!bd.length) bd.push({ workOrderId: "", woNumber: "", salesOrderNumber: "", salesOrderId: "", qty: target });
     const bdSum = bd.reduce((sum, b) => sum + n(b.qty), 0);
-    // Scale the WO breakdown when the buyer edited the total; last WO absorbs rounding.
-    let acc = 0;
-    const shares = bd.map((b, i) => {
-      const q = i === bd.length - 1
-        ? target - acc
-        : (bdSum > 0 ? Math.round((n(b.qty) * target) / bdSum) : 0);
-      acc += q;
-      return { ...b, qty: q };
-    });
+    // Buyer raised the total above the requirement: keep the WO shares at
+    // their required qty and put the excess on its own unattributed extra
+    // line, so the PO shows required vs extra separately (collapseLines keys
+    // on isExtra). Buyer lowered it: scale down proportionally as before,
+    // last WO absorbs rounding.
+    let shares;
+    if (target > bdSum && bdSum > 0) {
+      shares = [
+        ...bd.map((b) => ({ ...b, extraQty: 0 })),
+        { workOrderId: "", woNumber: "", salesOrderNumber: "", salesOrderId: "", qty: target - bdSum, extraQty: target - bdSum },
+      ];
+    } else {
+      let acc = 0;
+      shares = bd.map((b, i) => {
+        const q = i === bd.length - 1
+          ? target - acc
+          : (bdSum > 0 ? Math.round((n(b.qty) * target) / bdSum) : 0);
+        acc += q;
+        return { ...b, qty: q, extraQty: 0 };
+      });
+    }
     for (const b of shares) {
       if (n(b.qty) <= 0) continue;
+      const isExtra = item.isExtra === true || b.extraQty > 0;
       const row = await table.insertRow({
         orgId: String(orgId),
         purchaseRequestId: String(pr.ROWID),
         workOrderId: b.workOrderId ? String(b.workOrderId) : "",
         rmItemId: String(item.rmItemId),
         rmName: item.rmName || "",
-        requiredQty: n(b.qty),
+        requiredQty: isExtra ? 0 : n(b.qty),
         purchaseQty: n(b.qty),
+        isExtra,
         vendorId: String(vendorId),
         vendorName: vendorName || "",
         zohoPoId: "", zohoPoNumber: "", poStatus: "",
@@ -502,9 +531,12 @@ async function raiseItemPO(catalyst, orgId, { vendorId, vendorName, items }, use
       localLines.push({
         ROWID: row.ROWID, rmItemId: String(item.rmItemId), rmName: item.rmName || "",
         purchaseQty: n(b.qty),
+        isExtra,
         // Per-breakdown SO → one PO line per (item, SO) via collapseLines,
         // each carrying its own cf_so_no. In memory only, no DB column.
         soNumber: b.salesOrderNumber || "",
+        // cf_so_no is an SO lookup — needs the Books salesorder_id.
+        soId: b.salesOrderId || "",
       });
     }
   }
@@ -780,21 +812,40 @@ async function refreshPurchaseOrders(catalyst, orgId, { poIds } = {}) {
   const CONCURRENCY = 5;
   const poIdsList = [...byPo.keys()];
   const fetched = new Map();
+  const gone = new Set(); // confirmed 404 — deleted in Books
   for (let i = 0; i < poIdsList.length; i += CONCURRENCY) {
     await Promise.all(poIdsList.slice(i, i + CONCURRENCY).map(async (poId) => {
       try {
         fetched.set(poId, await getPurchaseOrder(catalyst, poId));
       } catch (err) {
-        console.error(`PO ${poId} refresh failed:`, err && err.message);
+        // Only a confirmed 404 means deleted; a blip must not resurrect shortfalls.
+        if (err && err.httpStatus === 404) gone.add(poId);
+        else console.error(`PO ${poId} refresh failed:`, err && err.message);
       }
     }));
   }
 
   const table = catalyst.datastore().table("PurchaseRequestLine");
+  const syncLog = (poLines, action, detail) => logActivity(
+    catalyst, orgId, "PurchaseRequest", poLines[0].purchaseRequestId, action, null,
+    { poNumber: poLines[0].zohoPoNumber, ...detail },
+  );
   let refreshed = 0;
   for (const [poId, poLines] of byPo) {
+    // Books-side delete: lines detach, items return to the shortfall (CR-120).
+    if (gone.has(poId)) {
+      await resetPoLines(catalyst, orgId, poId);
+      await syncLog(poLines, "po.sync.deleted", { lines: poLines.length });
+      continue;
+    }
     const po = fetched.get(poId);
     if (!po) continue;
+    // Books-side void/cancel: same reset as the app-side cancel path.
+    if (String(po.status || "").toLowerCase() === "cancelled") {
+      await resetPoLines(catalyst, orgId, poId);
+      await syncLog(poLines, "po.sync.cancelled", { lines: poLines.length });
+      continue;
+    }
     // A grouped PO line (CR-023) can back several local lines — one per WO that
     // shares the item. Split the PO line's received/billed across them by
     // purchaseQty share so no WO double-counts. One local line → it gets the lot.
@@ -806,9 +857,30 @@ async function refreshPurchaseOrders(catalyst, orgId, { poIds } = {}) {
     }
     for (const [itemId, group] of byItem) {
       const match = (po.line_items || []).filter((li) => String(li.item_id) === itemId);
+      // Line removed in Books: detach just this item's lines.
+      if (!match.length) {
+        await resetPoLines(catalyst, orgId, poId, new Set([itemId]));
+        await syncLog(group, "po.sync.lineRemoved", { rmName: group[0].rmName });
+        continue;
+      }
       const received = match.reduce((s, li) => s + n(li.quantity_received), 0);
       const billed = match.reduce((s, li) => s + n(li.quantity_billed), 0);
-      const totalQty = group.reduce((s, l) => s + n(l.purchaseQty), 0);
+      // Qty edited in Books: write the new total back, scaled by share.
+      const zohoQty = match.reduce((s, li) => s + n(li.quantity), 0);
+      let totalQty = group.reduce((s, l) => s + n(l.purchaseQty), 0);
+      const qtyChanged = zohoQty !== totalQty;
+      if (qtyChanged) {
+        let accQ = 0;
+        for (let i = 0; i < group.length; i++) {
+          const last = i === group.length - 1;
+          const q = last ? zohoQty - accQ
+            : (totalQty > 0 ? Math.round((zohoQty * n(group[i].purchaseQty)) / totalQty) : 0);
+          accQ += q;
+          group[i].purchaseQty = q;
+        }
+        totalQty = zohoQty;
+        await syncLog(group, "po.sync.qtyChanged", { rmName: group[0].rmName, qty: zohoQty });
+      }
       let accR = 0, accB = 0;
       for (let i = 0; i < group.length; i++) {
         const l = group[i];
@@ -816,13 +888,15 @@ async function refreshPurchaseOrders(catalyst, orgId, { poIds } = {}) {
         const r = last ? received - accR : (totalQty > 0 ? Math.round((received * n(l.purchaseQty)) / totalQty) : 0);
         const b = last ? billed - accB : (totalQty > 0 ? Math.round((billed * n(l.purchaseQty)) / totalQty) : 0);
         accR += r; accB += b;
-        await table.updateRow({
+        const update = {
           ROWID: l.ROWID,
           poStatus: String(po.status || ""),
           receivedQty: r,
           billedQty: b,
           lastPoSyncAt: dsDate(Date.now()),
-        });
+        };
+        if (qtyChanged) update.purchaseQty = n(l.purchaseQty);
+        await table.updateRow(update);
         refreshed++;
       }
     }
@@ -843,6 +917,7 @@ function prJson(p, lines) {
       rmName: l.rmName,
       requiredQty: n(l.requiredQty),
       purchaseQty: n(l.purchaseQty),
+      isExtra: l.isExtra === true || l.isExtra === "true", // Catalyst booleans read back as strings
       vendorId: l.vendorId || null,
       vendorName: l.vendorName || null,
       poId: l.zohoPoId ? String(l.zohoPoId) : null,
@@ -1040,6 +1115,17 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(perSo.length, 2, "two SOs → two lines for the same item");
   assert.strictEqual(perSo.find((l) => l.soNumber === "SO-1").purchaseQty, 7, "same-SO lines still merge");
   assert.strictEqual(perSo.find((l) => l.soNumber === "SO-2").purchaseQty, 3);
+
+  // Extra qty keeps its own line: required and isExtra never merge, and the
+  // datastore's string booleans ("false" is truthy!) are normalized first.
+  const withExtra = collapseLines([
+    { rmItemId: "11", purchaseQty: 3, soNumber: "SO-1", isExtra: "false" },
+    { rmItemId: "11", purchaseQty: 2, soNumber: "", isExtra: "true" },
+    { rmItemId: "11", purchaseQty: 1, soNumber: "SO-1", isExtra: false },
+  ]);
+  assert.strictEqual(withExtra.length, 2, "required vs extra stay separate lines");
+  assert.strictEqual(withExtra.find((l) => l.isExtra === true).purchaseQty, 2);
+  assert.strictEqual(withExtra.find((l) => l.isExtra === false).purchaseQty, 4, "\"false\" string merges with false boolean");
 
   // Validation.
   assert.deepStrictEqual(

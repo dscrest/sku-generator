@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
-import MaterialsGrid, { Empty, Banner } from '../components/MaterialsGrid.jsx';
+import MaterialsGrid, { Empty, Banner, ReceiptChip } from '../components/MaterialsGrid.jsx';
 import WoItemsTab from '../components/WoItemsTab.jsx';
 import PurchaseTab from '../components/PurchaseTab.jsx';
 import Modal, { ModalFooter, ModalBtn, CloseX } from '../components/Modal.jsx';
 import { FilterSelect, distinct } from '../components/GridFooter.jsx';
-import { StatusChip, ProcChip, DueDays, AccessNotice, spaced, btn, thStyle, cell } from '../components/woCommon.jsx';
+import { StatusChip, ProcChip, DueDays, AccessNotice, can, spaced, btn, thStyle, cell, WO_PRIORITIES } from '../components/woCommon.jsx';
 import { fmtMoney, fmtDate, dueDays } from '../format.js';
+import DateInput from '../components/DateInput.jsx';
 
 /**
  * One work order, Zoho Books style (CR-018): compact list of work orders on
@@ -16,7 +17,7 @@ import { fmtMoney, fmtDate, dueDays } from '../format.js';
  * ⋯) and per-order sub-tabs. BOM and Purchase live on their own sidebar
  * pages now — this page is the order itself.
  */
-const TABS = ['Details', 'Items', 'Purchase', 'Approvals', 'History'];
+const TABS = ['Details', 'Item List', 'Purchase', 'Approvals', 'History'];
 
 export default function WorkOrderPage({ user }) {
   const { id } = useParams();
@@ -29,6 +30,17 @@ export default function WorkOrderPage({ user }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [printBom, setPrintBom] = useState(null);
   const [printTxn, setPrintTxn] = useState(null); // material txn → issue slip print
+  // Company block + warehouse names for printed documents (CR-122).
+  const [printCfg, setPrintCfg] = useState(null);
+  useEffect(() => {
+    axios.get('/api/wo/settings').then(({ data }) => {
+      const v = data.values || {};
+      setPrintCfg({
+        company: { name: v.companyName, address: v.companyAddress, gstin: v.companyGstin, logoUrl: v.companyLogoUrl },
+        whNames: Object.fromEntries((data.warehouses || []).map(w => [String(w.id), w.name])),
+      });
+    }).catch(() => {});
+  }, []);
   const [busy, setBusy] = useState(false);
   const [qcPrompt, setQcPrompt] = useState(null); // pending status awaiting QC answer
   const [closeWarn, setCloseWarn] = useState(null); // 409 "unissued" payload from a Close attempt
@@ -152,7 +164,7 @@ export default function WorkOrderPage({ user }) {
             style={{ padding: '5px 8px', fontSize: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)' }}
           />
           <div style={{ display: 'flex', gap: 6 }}>
-            <FilterSelect label="Statuses" value={railStatus} onChange={setRailStatus} options={distinct(list || [], 'status')} style={{ flex: 1, minWidth: 0 }} />
+            <FilterSelect label="SO Statuses" value={railStatus} onChange={setRailStatus} options={distinct(list || [], 'status')} style={{ flex: 1, minWidth: 0 }} />
             <FilterSelect label="Priorities" value={railPri} onChange={setRailPri} options={distinct(list || [], 'priority')} style={{ flex: 1, minWidth: 0 }} />
           </div>
         </div>
@@ -177,6 +189,11 @@ export default function WorkOrderPage({ user }) {
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {fmtDate(w.woDate)}
+              {w.dueDate && (
+                <span style={{ color: dueDays(w.dueDate) !== null && dueDays(w.dueDate) < 4 ? '#dc2626' : undefined }}>
+                  {' · Due '}{fmtDate(w.dueDate)}
+                </span>
+              )}
             </div>
           </div>
         ))}
@@ -193,19 +210,23 @@ export default function WorkOrderPage({ user }) {
                   {/* Status chips are display-only — status moves live in the ⋯ menu. */}
                   <StatusChip status={wo.status} />
                   <ProcChip status={wo.procStatus} />
+                  {/* WO-level material receipt vs on-order qty (CR-120). */}
+                  <ReceiptChip r={(wo.purchaseRequests || []).flatMap(pr => pr.lines || [])
+                    .filter(l => l.poNumber)
+                    .reduce((a, l) => ({ po: a.po + (Number(l.purchaseQty) || 0), received: a.received + (Number(l.receivedQty) || 0) }), { po: 0, received: 0 })} />
                 </div>
                 <div style={{ flex: 1 }} />
                 <CloseX onClick={() => navigate('/wo')} title="Back to the list" />
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
                 <div style={{ flex: 1 }} />
-                {wo.status === 'Completed' && (
+                {wo.status === 'Completed' && can(user, 'wo.action.close') && (
                   <button onClick={() => changeStatus('Closed')} disabled={busy} style={btn}>Close WO</button>
                 )}
                 {wo.status === 'Closed' && user?.isAdmin && (
                   <button onClick={() => setReopening(true)} disabled={busy} style={btn}>Reopen WO</button>
                 )}
-                {levels > 0 && (allApproved ? (
+                {levels > 0 && can(user, 'wo.action.approve') && (allApproved ? (
                   <button onClick={() => setTab('Approvals')} style={btn}>
                     Approved
                   </button>
@@ -223,7 +244,9 @@ export default function WorkOrderPage({ user }) {
                     ...forward.map(s => ({ label: `→ ${spaced(s)}`, onClick: () => changeStatus(s) })),
                     ...(levels > 0 && !allApproved ? [{ label: `✕ Reject — Level ${nextLevel}`, tone: '#b91c1c', onClick: () => approve('Rejected') }] : []),
                     ...(wo.nextStatuses?.includes('Cancelled') ? [{ label: 'Cancel Work Order', tone: '#b91c1c', onClick: () => changeStatus('Cancelled') }] : []),
+                    { label: '✎ Edit Work Order', onClick: () => setEditing(true) },
                     { label: '🖨 Print / PDF', onClick: printPdf },
+                    { label: '📦 Print Packing List', onClick: () => window.open(`/server/skuapi/packing?woId=${id}`, '_blank') },
                     {
                       label: 'Delete Work Order', tone: '#b91c1c',
                       disabled: !canDelete,
@@ -242,8 +265,6 @@ export default function WorkOrderPage({ user }) {
                   ['SO Date', fmtDate(wo.soDate)],
                   ['Customer', wo.customerName],
                   ...(wo.projectName ? [['Project', wo.projectName]] : []),
-                  ['Row Type', wo.rowType || '—'],
-                  ['Panel Type', wo.panelType || '—'],
                   ['Expected Shipment', fmtDate(wo.shipmentDate)],
                   ['Buyer Order No', wo.buyerOrderNo || '—'],
                   ['Buyer Order Date', fmtDate(wo.buyerOrderDate)],
@@ -274,9 +295,9 @@ export default function WorkOrderPage({ user }) {
             </div>
 
             <div style={{ flex: 1, minHeight: 0 }}>
-              {tab === 'Details' && <MaterialsGrid workOrderId={id} fgs={wo.fgs} onChanged={load} />}
-              {tab === 'Items' && <WoItemsTab workOrderId={id} fgs={wo.fgs} status={wo.status} onChanged={load} />}
-              {tab === 'Purchase' && <PurchaseTab workOrderId={id} wo={wo} onChanged={load} />}
+              {tab === 'Details' && <MaterialsGrid workOrderId={id} fgs={wo.fgs} onChanged={load} user={user} />}
+              {tab === 'Item List' && <WoItemsTab workOrderId={id} fgs={wo.fgs} status={wo.status} onChanged={load} user={user} />}
+              {tab === 'Purchase' && <PurchaseTab workOrderId={id} wo={wo} onChanged={load} user={user} />}
               {tab === 'Approvals' && <ApprovalsTab workOrderId={id} wo={wo} onChanged={load} />}
               {tab === 'History' && <HistoryTab workOrderId={id} wo={wo} onPrintTxn={printTxnSlip} />}
             </div>
@@ -346,7 +367,9 @@ export default function WorkOrderPage({ user }) {
               </Modal>
             )}
 
-            {printTxn ? <IssueSlip wo={wo} txn={printTxn} /> : <WoPrintSheet wo={wo} lines={printBom} />}
+            {printTxn
+              ? <IssueSlip wo={wo} txn={printTxn} company={printCfg?.company} whNames={printCfg?.whNames} />
+              : <WoPrintSheet wo={wo} lines={printBom} company={printCfg?.company} />}
           </>
         )}
       </div>
@@ -425,6 +448,8 @@ function EditModal({ wo, onClose, onSaved }) {
   const [f, setF] = useState({
     projectName: wo.projectName || '', woDate: wo.woDate || '', notes: wo.notes || '',
     estimatedCost: wo.estimatedCost, actualCost: wo.actualCost,
+    dueDate: wo.dueDate || '', priority: wo.priority || '',
+    machiningDoneDate: wo.machiningDoneDate || '', fittingDoneDate: wo.fittingDoneDate || '',
   });
   const [busy, setBusy] = useState(false);
   const set = k => e => setF(v => ({ ...v, [k]: e.target.value }));
@@ -448,7 +473,30 @@ function EditModal({ wo, onClose, onSaved }) {
       <label style={{ ...label, marginTop: 0 }}>Project name</label>
       <input value={f.projectName} onChange={set('projectName')} style={field} />
       <label style={label}>Date</label>
-      <input type="date" value={f.woDate} onChange={set('woDate')} style={field} />
+      <DateInput value={f.woDate} onChange={set('woDate')} style={field} />
+      <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <label style={label}>WO Due Date</label>
+          <DateInput value={f.dueDate} onChange={set('dueDate')} style={field} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={label}>Priority</label>
+          <select value={f.priority} onChange={set('priority')} style={field}>
+            <option value=""></option>
+            {WO_PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <label style={label}>Machining Completion</label>
+          <DateInput value={f.machiningDoneDate} onChange={set('machiningDoneDate')} style={field} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={label}>Fitting Completion</label>
+          <DateInput value={f.fittingDoneDate} onChange={set('fittingDoneDate')} style={field} />
+        </div>
+      </div>
       <div style={{ display: 'flex', gap: 10 }}>
         <div style={{ flex: 1 }}>
           <label style={label}>Estimated cost</label>
@@ -471,11 +519,27 @@ function EditModal({ wo, onClose, onSaved }) {
 
 // ---- print sheet (hidden on screen, the only thing visible in print) -------
 
-function WoPrintSheet({ wo, lines }) {
+// Company block from org settings (CR-122) — shared by every printed document.
+function PrintHeader({ company }) {
+  if (!company || (!company.name && !company.logoUrl)) return null;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, borderBottom: '2px solid #000', paddingBottom: 8, marginBottom: 14 }}>
+      {company.logoUrl && <img src={company.logoUrl} alt="" style={{ height: 44 }} />}
+      <div>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>{company.name}</div>
+        {company.address && <div style={{ fontSize: 11, whiteSpace: 'pre-wrap' }}>{company.address}</div>}
+        {company.gstin && <div style={{ fontSize: 11 }}>GSTIN: {company.gstin}</div>}
+      </div>
+    </div>
+  );
+}
+
+function WoPrintSheet({ wo, lines, company }) {
   const th = { textAlign: 'left', borderBottom: '1px solid #000', padding: '4px 8px', fontSize: 11 };
   const td = { borderBottom: '1px solid #ccc', padding: '4px 8px', fontSize: 12 };
   return (
     <div className="wo-print-sheet">
+      <PrintHeader company={company} />
       <h1 style={{ fontSize: 20, margin: '0 0 2px' }}>Work Order {wo.woNumber}</h1>
       <div style={{ fontSize: 12, marginBottom: 14 }}>
         {wo.woDate} · Status: {spaced(wo.status)} · SO {wo.salesOrderNumber} · {wo.customerName}
@@ -515,16 +579,26 @@ function WoPrintSheet({ wo, lines }) {
 // Printable slip for one material movement (Haresh item 18) — same hidden
 // wo-print-sheet mechanics as WoPrintSheet, plain black-on-white like the
 // estimate prints. Batch numbers ride in txn.notes.
-function IssueSlip({ wo, txn }) {
+function IssueSlip({ wo, txn, company, whNames }) {
   const th = { textAlign: 'left', borderBottom: '1px solid #000', padding: '4px 8px', fontSize: 11 };
   const td = { borderBottom: '1px solid #ccc', padding: '4px 8px', fontSize: 12 };
   const title = { issue: 'Material Issue Slip', return: 'Material Return Slip', reserve: 'Material Reservation Slip', dereserve: 'Material De-reservation Slip' }[txn.type] || 'Material Movement Slip';
+  const whName = id => (id && (whNames?.[String(id)] || id)) || null;
+  // Per-line explicit picks (CR-121); old txns fall back to the notes blob below.
+  const trackingText = t => (t
+    ? (t.serials?.length ? t.serials.join(', ')
+      : (t.batches || []).map(b => `${b.batch_number} × ${b.qty}`).join(', '))
+    : '');
+  const hasTracking = (txn.lines || []).some(l => trackingText(l.tracking));
   return (
     <div className="wo-print-sheet">
+      <PrintHeader company={company} />
       <h1 style={{ fontSize: 20, margin: '0 0 2px' }}>{title}</h1>
       <div style={{ fontSize: 12, marginBottom: 14 }}>
         {txn.txnNumber} · {fmtDate(txn.confirmedAt || txn.createdAt)}
         {txn.transferOrderNumber ? ` · Transfer Order ${txn.transferOrderNumber}` : ''}
+        {whName(txn.fromWarehouseId) && whName(txn.toWarehouseId)
+          ? ` · ${whName(txn.fromWarehouseId)} → ${whName(txn.toWarehouseId)}` : ''}
       </div>
       <div style={{ fontSize: 12, marginBottom: 14 }}>
         Work Order {wo.woNumber} · SO {wo.salesOrderNumber} · {wo.customerName}
@@ -533,7 +607,11 @@ function IssueSlip({ wo, txn }) {
 
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
-          <tr><th style={th}>Material</th><th style={th}>SKU</th><th style={th}>UoM</th><th style={{ ...th, textAlign: 'right' }}>Qty</th></tr>
+          <tr>
+            <th style={th}>Material</th><th style={th}>SKU</th><th style={th}>UoM</th>
+            {hasTracking && <th style={th}>Batch / Serial</th>}
+            <th style={{ ...th, textAlign: 'right' }}>Qty</th>
+          </tr>
         </thead>
         <tbody>
           {(txn.lines || []).map((l, i) => (
@@ -541,6 +619,7 @@ function IssueSlip({ wo, txn }) {
               <td style={td}>{l.name || l.rmItemId}</td>
               <td style={td}>{l.sku || '—'}</td>
               <td style={td}>{l.uom || '—'}</td>
+              {hasTracking && <td style={{ ...td, fontSize: 11 }}>{trackingText(l.tracking) || '—'}</td>}
               <td style={{ ...td, textAlign: 'right' }}>{l.qty}</td>
             </tr>
           ))}
@@ -646,6 +725,11 @@ const ACTION_LABELS = {
   'pr.raise.fail': 'Purchase order raise failed',
   'po.delete': 'Purchase order deleted',
   'po.edit': 'Purchase order edited',
+  'po.sync.deleted': 'Purchase order deleted in Books',
+  'po.sync.cancelled': 'Purchase order voided in Books',
+  'po.sync.lineRemoved': 'Purchase order line removed in Books',
+  'po.sync.qtyChanged': 'Purchase order quantity changed in Books',
+  'fg.assemble': 'Assembly created',
 };
 function friendlyAction(action = '') {
   if (ACTION_LABELS[action]) return ACTION_LABELS[action];

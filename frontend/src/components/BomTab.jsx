@@ -2,8 +2,14 @@ import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 // Loaded on demand — only someone who actually uploads a spreadsheet pays for
-// the parser (~180 kB), and the CSV/paste paths never touch it.
-const readXlsxFile = (file) => import('read-excel-file/browser').then(m => m.default(file));
+// the parser, and the CSV/paste paths never touch it. SheetJS (not
+// read-excel-file): Zoho Books exports use streamed zip entries and .xls the
+// old parser choked on. First sheet only — Books exports carry a second
+// dropdown-metadata sheet.
+const readXlsxFile = (file) => import('xlsx').then(async (XLSX) => {
+  const wb = XLSX.read(await file.arrayBuffer());
+  return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '' });
+});
 import { Empty, Banner } from './MaterialsGrid.jsx';
 
 /**

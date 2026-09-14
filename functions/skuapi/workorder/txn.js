@@ -41,6 +41,28 @@ function friendlyTransferError(err) {
   return e;
 }
 
+// Pure: an explicit serial/batch pick must cover the line qty exactly.
+// No tracking at all is fine — the TO layer FIFO auto-picks (CR-121).
+function trackingProblem(tracking, qty, label) {
+  if (!tracking) return null;
+  if (Array.isArray(tracking.serials) && tracking.serials.length) {
+    if (tracking.serials.length !== qty) return `${label}: ${tracking.serials.length} serial(s) picked for a quantity of ${qty}`;
+    return null;
+  }
+  if (Array.isArray(tracking.batches) && tracking.batches.length) {
+    const sum = tracking.batches.reduce((s, b) => s + n(b.qty), 0);
+    if (sum !== qty) return `${label}: batch quantities add to ${sum}, expected ${qty}`;
+    return null;
+  }
+  return null; // empty tracking object — treat as no pick
+}
+
+// trackingJson column → the picks object, defensively.
+function parseTracking(json) {
+  if (!json) return null;
+  try { return JSON.parse(json); } catch { return null; }
+}
+
 /**
  * Pure: match the requested quantities to the grid rows and check every cap.
  * Returns the lines to write plus every problem found — all of them, so the
@@ -63,7 +85,9 @@ function planLines(type, gridRows, requested) {
     if (!row) { errors.push(`Item ${itemId} is not on this work order's BOM`); continue; }
     const problem = validateLine(type, row, qty);
     if (problem) { errors.push(problem); continue; }
-    lines.push({ rmItemId: itemId, workOrderLineId: row.workOrderLineId, qty, name: row.name });
+    const tErr = trackingProblem(req.tracking, qty, row.name || itemId);
+    if (tErr) { errors.push(tErr); continue; }
+    lines.push({ rmItemId: itemId, workOrderLineId: row.workOrderLineId, qty, name: row.name, tracking: req.tracking || null });
   }
   if (!lines.length && !errors.length) errors.push("Enter a quantity on at least one line");
   return { lines, errors };
@@ -120,12 +144,19 @@ async function createDraft(catalyst, orgId, { workOrderId, workOrderFgId, type, 
 
   const lineTable = catalyst.datastore().table("MaterialTxnLine");
   for (const l of lines) {
+    const trackingJson = l.tracking ? JSON.stringify(l.tracking) : "";
+    if (trackingJson.length > 10000) {
+      // Catalyst text cap — ~400 serials per line. Split the movement instead.
+      const e = new Error(`Too many serial/batch picks on "${l.name || l.rmItemId}" — split this into smaller movements`);
+      e.status = 400; throw e;
+    }
     await lineTable.insertRow({
       orgId: String(orgId),
       txnId: String(txn.ROWID),
       workOrderLineId: String(l.workOrderLineId || ""),
       rmItemId: String(l.rmItemId),
       qty: l.qty,
+      trackingJson,
     });
   }
 
@@ -157,7 +188,8 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
 
   const grid = await buildGrid(catalyst, orgId, wo, fg);
   const { lines, errors } = planLines(
-    txn.type, grid.rows, txnLines.map((l) => ({ itemId: l.rmItemId, qty: l.qty })),
+    txn.type, grid.rows,
+    txnLines.map((l) => ({ itemId: l.rmItemId, qty: l.qty, tracking: parseTracking(l.trackingJson) })),
   );
   if (errors.length) { const e = new Error(errors.join("\n")); e.status = 409; e.details = errors; throw e; }
 
@@ -460,11 +492,14 @@ async function listTxns(catalyst, orgId, workOrderId) {
       type: t.type,
       status: t.status,
       transferOrderNumber: t.zohoTransferOrderNumber || null,
+      fromWarehouseId: t.fromWarehouseId || null,
+      toWarehouseId: t.toWarehouseId || null,
       confirmedAt: t.confirmedAt || null,
       createdAt: t.CREATEDTIME,
       notes: t.notes || null,
       lines: lines.map((l) => ({
         rmItemId: String(l.rmItemId), qty: n(l.qty),
+        tracking: parseTracking(l.trackingJson),
         ...(items.get(String(l.rmItemId)) || { name: null, sku: null, uom: null }),
       })),
     });

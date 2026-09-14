@@ -7,7 +7,7 @@ export const STATUS_TONE = {
   ReadyForProduction: '#0d9488', InProgress: '#2563eb', QualityCheck: '#7c3aed',
   Completed: '#15803d', Closed: '#334155', Cancelled: '#b91c1c',
 };
-// Display renames that the camelCase split can't produce (CR: MaterialAllocationPending → "Pending Allocation").
+// Display renames the camelCase split can't produce (CR-114: MaterialAllocationPending → "Pending Allocation").
 const LABEL_OVERRIDE = { MaterialAllocationPending: 'Pending Allocation' };
 export const spaced = s => LABEL_OVERRIDE[s] || String(s || '').replace(/([a-z])([A-Z])/g, '$1 $2');
 
@@ -22,9 +22,23 @@ export const PROC_LABEL = {
   PartiallyReceived: 'Partially received', Fulfilled: 'Received',
 };
 
-function Chip({ tone, label }) {
+// Chips render a short code to keep grid columns narrow; full label on hover.
+const STATUS_ABBREV = {
+  Draft: 'DRF', PendingApproval: 'PAP', Approved: 'APR', MaterialAllocationPending: 'MAP',
+  ReadyForProduction: 'RFP', InProgress: 'IP', QualityCheck: 'QC',
+  Completed: 'CMP', Closed: 'CLS', Cancelled: 'CXL',
+};
+const PROC_ABBREV = { Requested: 'REQ', PORaised: 'PO', PartiallyReceived: 'PRC', Fulfilled: 'RCV' };
+// Fallback for statuses not in a map: initials of words, or first 3 letters.
+export const abbr = (label) => {
+  const words = String(label || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return '';
+  return (words.length > 1 ? words.map(w => w[0]).join('') : words[0].slice(0, 3)).toUpperCase();
+};
+
+function Chip({ tone, label, full }) {
   return (
-    <span style={{
+    <span title={full} style={{
       fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 99,
       color: tone, background: `${tone}18`, whiteSpace: 'nowrap',
     }}>
@@ -34,14 +48,39 @@ function Chip({ tone, label }) {
 }
 
 export function StatusChip({ status }) {
-  return <Chip tone={STATUS_TONE[status] || '#64748b'} label={spaced(status)} />;
+  const full = spaced(status);
+  return <Chip tone={STATUS_TONE[status] || '#64748b'} label={STATUS_ABBREV[status] || abbr(full)} full={full} />;
 }
 
 // Nothing requested yet → no chip (keeps the WO list quiet until a PR exists).
 export function ProcChip({ status }) {
   if (!status) return null;
-  return <Chip tone={PROC_TONE[status] || '#64748b'} label={PROC_LABEL[status] || spaced(status)} />;
+  const full = PROC_LABEL[status] || spaced(status);
+  return <Chip tone={PROC_TONE[status] || '#64748b'} label={PROC_ABBREV[status] || abbr(full)} full={full} />;
 }
+
+// Zoho lowercase/underscore statuses (PO received/billed etc.).
+const Z_TONE = {
+  pending: '#b45309', partially_received: '#b45309', received: '#15803d',
+  billed: '#15803d', partially_billed: '#b45309', closed: '#334155',
+  cancelled: '#b91c1c', draft: '#64748b',
+};
+const Z_ABBREV = {
+  pending: 'PND', partially_received: 'PRC', received: 'RCV', billed: 'BLD',
+  partially_billed: 'PBL', closed: 'CLS', cancelled: 'CXL', draft: 'DRF',
+};
+export function ZStatusChip({ status }) {
+  if (!status) return '—';
+  const full = String(status).replace(/_/g, ' ');
+  return <Chip tone={Z_TONE[status] || '#64748b'} label={Z_ABBREV[status] || abbr(full)} full={full} />;
+}
+
+// Action-level permission check (CR-125): user.perms comes from /auth/me —
+// ['*'] = super-admin or an org with no roles configured (full access).
+export const can = (user, key) => {
+  const p = user?.perms ?? ['*'];
+  return p.includes('*') || p.includes(key);
+};
 
 // WO priority options (CR-113) — shared by the Create and Edit modals.
 export const WO_PRIORITIES = ['Low', 'Medium', 'High', 'Urgent'];
@@ -82,28 +121,6 @@ export function AccessNotice({ kind }) {
         )}
       </div>
     </div>
-  );
-}
-
-// House report/list grid: header row + clickable body rows, numeric columns
-// right-aligned and mono from index `rightFrom`. Shared by the Reports,
-// Purchase and BOM pages (CR-019, moved from WorkOrderReportsPage).
-export function Table({ head, rows, rightFrom }) {
-  return (
-    <table className="grid-table" style={{ width: '100%', marginTop: 12 }}>
-      <thead>
-        <tr>{head.map((h, i) => <th key={h} style={{ ...thStyle, textAlign: i >= rightFrom ? 'right' : 'left' }}>{h}</th>)}</tr>
-      </thead>
-      <tbody>
-        {rows.map(r => (
-          <tr key={r.key} onClick={r.onClick} className="list-row" style={{ borderBottom: '1px solid var(--border)', cursor: r.onClick ? 'pointer' : 'default' }}>
-            {r.cells.map((c, i) => (
-              <td key={i} style={{ padding: '8px 12px', fontSize: 13, textAlign: i >= rightFrom ? 'right' : 'left', fontFamily: i >= rightFrom ? 'var(--font-mono)' : 'inherit' }}>{c}</td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
   );
 }
 

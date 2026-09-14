@@ -103,9 +103,22 @@ export default function SKUGeneratorPage() {
   // Edit mode (CR-030): ?item=<id> reopens the generator on an existing SKU.
   const [editItem, setEditItem] = useState(null);
   const editSelsRef = useRef(null); // stored selections, consumed by loadProperties
+  // Org-wide series settings (CR-136) gate the series chip; GET resolves the
+  // legacy per-industry fallback server-side.
+  const [seriesSettings, setSeriesSettings] = useState({ seriesMode: 'off', seriesPad: 4 });
 
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    axios.get('/api/sku-items/settings')
+      .then((r) => {
+        setSeriesSettings(r.data);
+        // Org default type — but never clobber an item being edited (?item=).
+        if (r.data.defaultItemType && !searchParams.get('item')) setItemType(r.data.defaultItemType);
+      })
+      .catch(() => {}); // chip just stays hidden
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -410,8 +423,8 @@ export default function SKUGeneratorPage() {
                   })}
                   {/* Numerical series chip (CR-089): server-issued, shown once
                       the preview computes it. */}
-                  {!loadingProps && activeProps.length > 0 && Number(selectedIndustry.seriesStart) > 0 && (() => {
-                    const pad = Number(selectedIndustry.seriesPad) || 4;
+                  {!loadingProps && activeProps.length > 0 && (seriesSettings.seriesMode === 'continuous' || seriesSettings.seriesMode === 'params') && (() => {
+                    const pad = Number(seriesSettings.seriesPad) || 4;
                     const suffix = preview?.sku?.match(new RegExp(`\\d{${pad}}$`))?.[0];
                     return (
                       <span

@@ -6,13 +6,19 @@ import Toolbar from '../components/Toolbar.jsx';
 import Modal, { ModalFooter, ModalBtn } from '../components/Modal.jsx';
 import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
 import { StatusPill } from './recipeShared.jsx';
+import DataTable, { useGridColumns, ColumnChooser } from '../components/DataTable.jsx';
 
-const thStyle = {
-  padding: '10px 16px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
-  textAlign: 'left', userSelect: 'none', whiteSpace: 'nowrap',
-  background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)',
-};
-const tdStyle = { padding: '10px 16px' };
+const COLUMNS = [
+  { key: 'code', label: 'Code', lock: true, render: r => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{r.code}</span> },
+  { key: 'name', label: 'Recipe', render: r => <span style={{ fontWeight: 600 }}>{r.name}</span> },
+  { key: 'productCode', label: 'Product', render: r => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{r.productCode || '—'}</span> },
+  { key: 'version', label: 'Ver', render: r => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>v{r.version}</span> },
+  { key: 'status', label: 'Status', render: r => <StatusPill status={r.status} /> },
+  { key: 'effectiveFrom', label: 'Effective', render: r => <span style={{ color: 'var(--text-muted)' }}>{r.effectiveFrom || '—'}</span> },
+  { key: 'updated', label: 'Updated', render: r => <span style={{ color: 'var(--text-muted)' }}>{(r.updatedAt || r.createdAt || '').slice(0, 10)}</span> },
+  { key: 'open', label: 'Open', lock: true, align: 'right', width: 70, render: () => <span style={{ color: 'var(--blue)', fontWeight: 500, fontSize: 12.5, whiteSpace: 'nowrap' }}>Open →</span> },
+];
+
 const inputStyle = {
   height: 36, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
   padding: '0 10px', fontSize: 13, fontFamily: 'var(--font)', width: '100%',
@@ -27,6 +33,7 @@ export default function RecipeListPage() {
   const [fStatus, setFStatus] = useState('');
   const [creating, setCreating] = useState(null); // {code,name,productItemId}
   const navigate = useNavigate();
+  const { cols, chooser } = useGridColumns('recipe.list', COLUMNS);
 
   const load = useCallback(async () => {
     try {
@@ -97,6 +104,7 @@ export default function RecipeListPage() {
             onRefresh={load}
             right={
               <div style={{ display: 'flex', gap: 8 }}>
+                <ColumnChooser chooser={chooser} />
                 <input placeholder="Search recipes…" value={search} onChange={e => setSearch(e.target.value)}
                   style={{ height: 30, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: '0 10px', fontSize: 12.5, width: 200 }} />
                 <FilterSelect label="products" value={fProduct} onChange={setFProduct} options={distinct(rows, 'productCode')} />
@@ -104,42 +112,15 @@ export default function RecipeListPage() {
               </div>
             }
           />
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr>
-                <th style={thStyle}>Code</th>
-                <th style={thStyle}>Recipe</th>
-                <th style={thStyle}>Product</th>
-                <th style={thStyle}>Ver</th>
-                <th style={thStyle}>Status</th>
-                <th style={thStyle}>Effective</th>
-                <th style={thStyle}>Updated</th>
-                <th style={{ ...thStyle, width: 70 }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.length === 0 && (
-                <tr><td colSpan={8} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No recipes yet — create one or seed the demo.</td></tr>
-              )}
-              {pageRows.map(r => (
-                <tr key={r.id}
-                  onClick={() => navigate(`/recipe/recipes/${r.id}`)}
-                  style={{ borderTop: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <td style={{ ...tdStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{r.code}</td>
-                  <td style={{ ...tdStyle, fontWeight: 600 }}>{r.name}</td>
-                  <td style={{ ...tdStyle, fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{r.productCode || '—'}</td>
-                  <td style={{ ...tdStyle, fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>v{r.version}</td>
-                  <td style={tdStyle}><StatusPill status={r.status} /></td>
-                  <td style={{ ...tdStyle, color: 'var(--text-muted)' }}>{r.effectiveFrom || '—'}</td>
-                  <td style={{ ...tdStyle, color: 'var(--text-muted)' }}>{(r.updatedAt || r.createdAt || '').slice(0, 10)}</td>
-                  <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--blue)', fontWeight: 500, fontSize: 12.5, whiteSpace: 'nowrap' }}>Open →</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          {pageRows.length === 0 ? (
+            <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+              No recipes yet — create one or seed the demo.
+            </div>
+          ) : (
+            <DataTable cols={cols} rows={pageRows} onRowClick={r => navigate(`/recipe/recipes/${r.id}`)} />
+          )}
         </div>
       </div>
 

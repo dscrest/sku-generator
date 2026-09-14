@@ -5,7 +5,8 @@ import Modal, { ModalFooter, ModalBtn } from './Modal.jsx';
 import RowMenu from './RowMenu.jsx';
 import GridFooter, { usePager } from './GridFooter.jsx';
 import { Empty, Banner } from './MaterialsGrid.jsx';
-import { select, thStyle, cell, btn } from './woCommon.jsx';
+import { select, btn, can, StatusChip } from './woCommon.jsx';
+import DataTable, { useGridColumns, ColumnChooser } from './DataTable.jsx';
 
 /**
  * Items tab (CR-031): edit the work order's frozen item lines while production
@@ -18,11 +19,40 @@ import { select, thStyle, cell, btn } from './woCommon.jsx';
 
 const LOCKED = ['Completed', 'Closed', 'Cancelled'];
 
-export default function WoItemsTab({ workOrderId, fgs, status, onChanged }) {
+// Columns need the locked flag and the modal opener, so a builder, not a const.
+const buildColumns = (locked, setModal) => [
+  {
+    key: 'rmName', label: 'Raw Material', lock: true, render: l => (
+      <>
+        {l.rmName}
+        {l.requiredQty === 0 && (
+          <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: '#b91c1c', background: '#b91c1c18', padding: '1px 7px', borderRadius: 99 }}>
+            removed — stock returns on completion
+          </span>
+        )}
+      </>
+    ),
+  },
+  { key: 'rmSku', label: 'SKU', render: l => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{l.rmSku || '—'}</span> },
+  { key: 'uom', label: 'UoM', render: l => l.uom || '—' },
+  { key: 'source', label: 'Source', render: l => <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{l.source}</span> },
+  { key: 'requiredQty', label: 'Required', align: 'right', render: l => <span style={{ fontFamily: 'var(--font-mono)' }}>{l.requiredQty}</span> },
+  {
+    key: 'actions', label: '', lock: true, align: 'right', width: 110, render: l => (
+      !locked && l.requiredQty > 0 && (
+        <RowMenu editLabel="Edit / replace" onEdit={() => setModal({ mode: 'replace', line: l })} deleteLabel="Remove" onDelete={() => setModal({ mode: 'remove', line: l })} />
+      )
+    ),
+  },
+];
+
+export default function WoItemsTab({ workOrderId, fgs, status, onChanged, user }) {
   const [fgId, setFgId] = useState(fgs[0]?.id || null);
   const [data, setData] = useState(null);
   const [modal, setModal] = useState(null); // { mode: 'add' | 'replace' | 'remove', line? }
+  const [assembling, setAssembling] = useState(null); // fg awaiting a quantity (CR-126)
   const locked = LOCKED.includes(status);
+  const fg = fgs.find(f => String(f.id) === String(fgId)) || fgs[0];
 
   function load(id = fgId) {
     if (!id) return;
@@ -34,6 +64,7 @@ export default function WoItemsTab({ workOrderId, fgs, status, onChanged }) {
 
   const lines = data?.lines || [];
   const { pageRows, pager } = usePager(lines);
+  const { cols, chooser } = useGridColumns('wo.items', buildColumns(locked, setModal));
   // Substitution notes: every revision that changed something, newest first.
   const changes = (data?.revisions || []).filter(r =>
     r.summary?.note || r.summary?.added?.length || r.summary?.removed?.length || r.summary?.changed?.length);
@@ -53,50 +84,28 @@ export default function WoItemsTab({ workOrderId, fgs, status, onChanged }) {
         <Banner tone="info">Items are locked once the work order is completed — leftover material was returned to the Main warehouse.</Banner>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', flexWrap: 'wrap' }}>
-        {fgs.length > 1 && (
-          <select value={fgId || ''} onChange={e => setFgId(e.target.value)} style={select}>
-            {fgs.map(f => <option key={f.id} value={f.id}>{f.name} × {f.qty}</option>)}
-          </select>
-        )}
+        <select value={fgId || ''} onChange={e => setFgId(e.target.value)} style={select}>
+          {fgs.map(f => <option key={f.id} value={f.id}>{f.name} × {f.qty}</option>)}
+        </select>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>BOM revision {data?.revision ?? '…'}</span>
+        {/* Assembly progress (CR-126) */}
+        {fg && (
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            · Assembled {fg.assembledQty || 0}/{fg.qty}
+            {fg.status === 'Closed' && <StatusChip status="Closed" />}
+          </span>
+        )}
         <div style={{ flex: 1 }} />
+        {fg && fg.status !== 'Closed' && status !== 'Cancelled' && can(user, 'wo.action.assemble') && (
+          <button onClick={() => setAssembling(fg)} style={btn}>⚙ Assemble</button>
+        )}
+        <ColumnChooser chooser={chooser} />
         {!locked && <button onClick={() => setModal({ mode: 'add' })} style={btn}>＋ Add item</button>}
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', padding: '0 20px 16px' }}>
         {!data ? <Empty>Loading…</Empty> : !lines.length ? <Empty>No items on this finished good yet.</Empty> : (
-          <table className="grid-table" style={{ width: '100%' }}>
-            <thead>
-              <tr>
-                {['Raw Material', 'SKU', 'UoM', 'Source'].map(h => <th key={h} style={thStyle}>{h}</th>)}
-                <th style={{ ...thStyle, textAlign: 'right' }}>Required</th>
-                <th style={{ ...thStyle, width: 110 }} />
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.map(l => (
-                <tr key={l.id} style={{ borderBottom: '1px solid var(--border)', opacity: l.requiredQty === 0 ? 0.55 : 1 }}>
-                  <td style={cell}>
-                    {l.rmName}
-                    {l.requiredQty === 0 && (
-                      <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: '#b91c1c', background: '#b91c1c18', padding: '1px 7px', borderRadius: 99 }}>
-                        removed — stock returns on completion
-                      </span>
-                    )}
-                  </td>
-                  <td style={{ ...cell, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{l.rmSku || '—'}</td>
-                  <td style={cell}>{l.uom || '—'}</td>
-                  <td style={{ ...cell, fontSize: 12, color: 'var(--text-muted)' }}>{l.source}</td>
-                  <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{l.requiredQty}</td>
-                  <td style={{ ...cell, textAlign: 'right' }}>
-                    {!locked && l.requiredQty > 0 && (
-                      <RowMenu editLabel="Edit / replace" onEdit={() => setModal({ mode: 'replace', line: l })} deleteLabel="Remove" onDelete={() => setModal({ mode: 'remove', line: l })} />
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <DataTable cols={cols} rows={pageRows} rowStyle={l => ({ opacity: l.requiredQty === 0 ? 0.55 : 1 })} />
         )}
 
         {changes.length > 0 && (
@@ -126,7 +135,83 @@ export default function WoItemsTab({ workOrderId, fgs, status, onChanged }) {
           onDone={done}
         />
       )}
+      {assembling && (
+        <AssembleModal
+          workOrderId={workOrderId}
+          fg={assembling}
+          onClose={() => setAssembling(null)}
+          onDone={msg => { setAssembling(null); toast.success(msg, { duration: 7000 }); onChanged?.(); }}
+        />
+      )}
     </div>
+  );
+}
+
+// ---- assembly (CR-126) ------------------------------------------------------
+// One Zoho bundle per confirm: raw materials leave the Issue warehouse, the
+// finished good's stock lands in Main. Fully assembled FG → Closed; all FGs
+// assembled → the WO moves to QualityCheck for the manual QC + Close.
+function AssembleModal({ workOrderId, fg, onClose, onDone }) {
+  const remaining = (fg.qty || 0) - (fg.assembledQty || 0);
+  const [qty, setQty] = useState(String(remaining));
+  const [busy, setBusy] = useState(false);
+  const ok = Number(qty) > 0 && Number(qty) <= remaining;
+
+  async function submit() {
+    if (!ok || busy) return;
+    setBusy(true);
+    try {
+      const { data } = await axios.post(`/api/wo/${workOrderId}/fg/${fg.id}/assemble`, { qty: Number(qty) });
+      onDone(
+        `Assembly ${data.bundleNumber} created — ${data.assembledQty}/${fg.qty} assembled`
+        + (data.woStatus === 'QualityCheck' ? ' · work order moved to Quality Check' : ''),
+      );
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not create the assembly', { duration: 8000 });
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <Modal title={`Assemble ${fg.name}`} onClose={onClose} onSubmit={submit} width={460}>
+      <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+        Raw materials are consumed from the <b>Issue warehouse</b> and {fg.name} stock is created in the
+        <b> Main warehouse</b> via a Zoho Inventory assembly. {fg.assembledQty || 0} of {fg.qty} already assembled.
+      </div>
+      <div>
+        <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 4, display: 'block' }}>
+          Quantity to assemble (up to {remaining})
+        </label>
+        <input
+          type="number" min="1" max={remaining} step="1" autoFocus
+          value={qty} onChange={e => setQty(e.target.value)}
+          style={{
+            width: 120, padding: '7px 10px', fontSize: 14, textAlign: 'right', fontFamily: 'var(--font-mono)',
+            border: `1px solid ${ok || qty === '' ? 'var(--border)' : '#dc2626'}`, borderRadius: 'var(--radius-md)',
+            background: 'var(--bg-card)',
+          }}
+        />
+      </div>
+      {(fg.assemblies || []).length > 0 && (
+        <div style={{ fontSize: 12 }}>
+          <b style={{ color: 'var(--text-secondary)' }}>Previous assemblies</b>
+          <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {fg.assemblies.map(a => (
+              <div key={a.id} style={{ display: 'flex', gap: 10, color: 'var(--text-muted)' }}>
+                <span style={{ fontFamily: 'var(--font-mono)' }}>{a.bundleNumber || '—'}</span>
+                <span>× {a.qty}</span>
+                <span>{a.createdAt}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <ModalFooter>
+        <ModalBtn onClick={onClose}>Cancel</ModalBtn>
+        <ModalBtn variant="primary" disabled={!ok || busy} onClick={submit}>
+          {busy ? 'Assembling…' : 'Create assembly'}
+        </ModalBtn>
+      </ModalFooter>
+    </Modal>
   );
 }
 

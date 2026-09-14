@@ -7,19 +7,15 @@ import ZohoConnectPage from './pages/ZohoConnectPage.jsx';
 import OrgSelectPage from './pages/OrgSelectPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 // Everything behind the shell is code-split per route.
-const IndustriesPage = lazy(() => import('./pages/IndustriesPage.jsx'));
-const PropertyManagerPage = lazy(() => import('./pages/PropertyManagerPage.jsx'));
-const PropertiesPage = lazy(() => import('./pages/PropertiesPage.jsx'));
 const BooksLinkedValuesPage = lazy(() => import('./pages/BooksLinkedValuesPage.jsx'));
 const SKUGeneratorPage = lazy(() => import('./pages/SKUGeneratorPage.jsx'));
 const SKUItemsPage = lazy(() => import('./pages/SKUItemsPage.jsx'));
 const ImportItemsPage = lazy(() => import('./pages/ImportItemsPage.jsx'));
-const AddonAdminPage = lazy(() => import('./pages/AddonAdminPage.jsx'));
 const ReservePage = lazy(() => import('./pages/ReservePage.jsx'));
 const EstimatePage = lazy(() => import('./pages/EstimatePage.jsx'));
 const WorkOrderListPage = lazy(() => import('./pages/WorkOrderListPage.jsx'));
+const WorkOrderNewPage = lazy(() => import('./pages/WorkOrderNewPage.jsx'));
 const WorkOrderPage = lazy(() => import('./pages/WorkOrderPage.jsx'));
-const WorkOrderSettingsPage = lazy(() => import('./pages/WorkOrderSettingsPage.jsx'));
 const WorkOrderReportsPage = lazy(() => import('./pages/WorkOrderReportsPage.jsx'));
 const CompositeBomPage = lazy(() => import('./pages/CompositeBomPage.jsx'));
 const WorkOrderPurchasePage = lazy(() => import('./pages/WorkOrderPurchasePage.jsx'));
@@ -31,6 +27,25 @@ const RecipeListPage = lazy(() => import('./pages/RecipeListPage.jsx'));
 const RecipeBuilderPage = lazy(() => import('./pages/RecipeBuilderPage.jsx'));
 const RecipeMaterialsPage = lazy(() => import('./pages/RecipeMaterialsPage.jsx'));
 const RecipeCostMasterPage = lazy(() => import('./pages/RecipeCostMasterPage.jsx'));
+// Settings hub: one chunk holding all settings pages (see SettingsLayout.jsx).
+const SettingsLayout = lazy(() => import('./pages/SettingsLayout.jsx'));
+
+// ---- per-user module permissions (Users & Roles) ----
+// perms comes from /auth/me: ["*"] = super-admin or org with no roles yet.
+const makeHasPerm = (perms) => (p) => perms.includes('*') || perms.includes(p);
+
+export function NoAccess() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', padding: 40 }}>
+      <div style={{ textAlign: 'center', maxWidth: 380 }}>
+        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>No access to this module</div>
+        <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+          Your roles don't include this module. Ask your administrator to grant it under Users &amp; Roles.
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const PageLoading = () => (
   <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
@@ -88,7 +103,7 @@ function navItemStyle({ isActive }, collapsed) {
 
 // Account menu (top-right): org avatar + name + chevron → dropdown with org
 // details, switch-org and logout.
-function HeaderBar({ zoho, addons, onLogout, onSwitchOrg }) {
+function HeaderBar({ zoho, onLogout, onSwitchOrg }) {
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const navigate = useNavigate();
@@ -110,6 +125,22 @@ function HeaderBar({ zoho, addons, onLogout, onSwitchOrg }) {
 
   return (
     <header style={S.header}>
+      <button
+        onClick={() => navigate('/settings')}
+        title="Settings"
+        style={{
+          width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'transparent', border: 'none', borderRadius: 'var(--radius-md)',
+          cursor: 'pointer', color: 'var(--text-secondary)', transition: 'background 0.12s',
+        }}
+        onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+        </svg>
+      </button>
       <div style={{ position: 'relative' }}>
         <button
           onClick={() => setOpen(o => !o)}
@@ -156,34 +187,6 @@ function HeaderBar({ zoho, addons, onLogout, onSwitchOrg }) {
                 </div>
               </div>
               <div style={{ height: 1, background: 'var(--border)', margin: '2px 6px 6px' }} />
-              {addons?.includes('sku-generator') && (
-                <button
-                  style={menuItem}
-                  onClick={() => { setOpen(false); navigate('/sku/industries'); }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/>
-                    <path d="M9 9v.01M9 12v.01M9 15v.01M9 18v.01"/>
-                  </svg>
-                  Industries
-                </button>
-              )}
-              {addons?.includes('work-order') && (
-                <button
-                  style={menuItem}
-                  onClick={() => { setOpen(false); navigate('/wo/settings'); }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="12" cy="12" r="3"/>
-                    <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/>
-                  </svg>
-                  Settings
-                </button>
-              )}
               <button
                 style={menuItem}
                 onClick={() => { setOpen(false); window.location.href = 'mailto:dhiraj.s@octfis.com?subject=SKU%20Generator%20support'; }}
@@ -231,37 +234,35 @@ function HeaderBar({ zoho, addons, onLogout, onSwitchOrg }) {
 // enabled addons from /auth/me.
 const NAV_LINKS = [
   { section: 'Add-ons' },
-  { to: '/sku/items', match: '/sku', addon: 'sku-generator', label: 'SKU Generator', icon:<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17h7M17 14v7"/></> },
+  { to: '/sku/items', match: '/sku', addon: 'sku-generator', perm: 'sku', label: 'SKU Generator', icon:<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17h7M17 14v7"/></> },
   { to: '/wo', match: '/wo', addon: 'work-order', label: 'Order Management', icon: <><path d="M20 7h-3V4a1 1 0 00-1-1H8a1 1 0 00-1 1v3H4a1 1 0 00-1 1v11a1 1 0 001 1h16a1 1 0 001-1V8a1 1 0 00-1-1z"/><path d="M9 7V5h6v2"/><path d="M8 13h8M8 17h5"/></>,
     children: [
-      { to: '/wo', label: 'Work Orders' },
-      { to: '/wo/bom', label: 'BOM' },
-      { to: '/wo/purchase', label: 'Purchase Request' },
-      { to: '/wo/reports', label: 'Reports' },
+      { to: '/wo', label: 'Work Orders', perm: 'wo.orders' },
+      { to: '/wo/purchase', label: 'Purchase Request', perm: 'wo.purchase' },
+      { to: '/wo/reports', label: 'Reports', perm: 'wo.reports' },
     ] },
-  { to: '/reserve', addon: 'reserve', label: 'Reserve / De-reserve', icon: <><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></> },
+  { to: '/reserve', addon: 'reserve', perm: 'reserve', label: 'Reserve / De-reserve', icon: <><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></> },
   // Product-first order: build the recipe, then configure & quote it.
   { to: '/recipe/recipes', match: '/recipe', addon: 'recipe-engine', label: 'Recipe Engine', icon: <><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></>,
     children: [
-      { to: '/recipe/recipes', label: 'Recipes' },
-      { to: '/recipe/materials', label: 'Materials' },
-      { to: '/recipe/costs', label: 'Cost Master' },
-      { to: '/recipe/configure', label: 'Configure & Quote' },
-      { to: '/recipe/quotations', label: 'Quotations' },
+      { to: '/recipe/recipes', label: 'Recipes', perm: 'recipe.recipes' },
+      { to: '/recipe/materials', label: 'Materials', perm: 'recipe.materials' },
+      { to: '/recipe/costs', label: 'Cost Master', perm: 'recipe.costs' },
+      { to: '/recipe/configure', label: 'Configure & Quote', perm: 'recipe.configure' },
+      { to: '/recipe/quotations', label: 'Quotations', perm: 'recipe.quotations' },
     ] },
-  // OCTFIS super-admin only (user.isAdmin)
-  { section: 'Admin', adminOnly: true },
-  { to: '/admin/addons', adminOnly: true, label: 'Customer Add-ons', icon: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></> },
+  // Users & Roles, org settings and add-on admin live in the Settings hub
+  // (header gear → /settings).
 ];
 
-// Tab order follows the setup flow: Properties → generate SKUs. Industries
-// (rarely touched once set up) moved to the account/Settings menu; its routes
-// stay for permalinks. "SKU Generator" is the combined items-list + generator
-// page (/sku/generator is its "New" sub-page, kept as a route for permalinks).
+// Industries, Properties and SKU Settings live in the Settings hub
+// (/settings/sku/*); old /sku/* paths redirect there. "SKU Generator" is the
+// combined items-list + generator page (/sku/generator is its "New" sub-page,
+// kept as a route for permalinks).
 const SKU_TABS = [
-  { to: '/sku/properties', label: 'Properties' },
   { to: '/sku/books-items', label: 'Books Items' },
   { to: '/sku/items', label: 'SKU Generator' },
+  { to: '/sku/bom', label: 'BOM' }, // moved from the Order Management submenu (CR-127 follow-up)
   { to: '/sku/import', label: 'Import' },
 ];
 
@@ -287,18 +288,19 @@ function TabBar({ tabs }) {
 }
 
 // The Order Management module: second-level nav lives in the sidebar submenu
-// (Work Orders / Reports); Settings is reached from the account menu.
-function WorkOrderLayout({ user }) {
+// (Work Orders / Reports); Settings live in the hub (/settings/wo).
+function WorkOrderLayout({ user, hasPerm }) {
+  const g = (perm, el) => (hasPerm(perm) ? el : <NoAccess />);
   return (
     <>
       <div style={{ flex: 1, minHeight: 0 }}>
         <Routes>
-          <Route index element={<WorkOrderListPage />} />
-          <Route path="bom" element={<CompositeBomPage />} />
-          <Route path="purchase" element={<WorkOrderPurchasePage />} />
-          <Route path="reports" element={<WorkOrderReportsPage />} />
-          <Route path="settings" element={<WorkOrderSettingsPage />} />
-          <Route path=":id" element={<WorkOrderPage user={user} />} />
+          <Route index element={g('wo.orders', <WorkOrderListPage />)} />
+          <Route path="new" element={g('wo.orders', <WorkOrderNewPage />)} />
+          <Route path="bom" element={<Navigate to="/sku/bom" replace />} />
+          <Route path="purchase" element={g('wo.purchase', <WorkOrderPurchasePage />)} />
+          <Route path="reports" element={g('wo.reports', <WorkOrderReportsPage />)} />
+          <Route path=":id" element={g('wo.orders', <WorkOrderPage user={user} />)} />
           <Route path="*" element={<Navigate to="/wo" replace />} />
         </Routes>
       </div>
@@ -307,18 +309,19 @@ function WorkOrderLayout({ user }) {
 }
 
 // Recipe Engine (CR-104): sales wizard + quotations + admin recipes/materials.
-function RecipeLayout() {
+function RecipeLayout({ hasPerm }) {
+  const g = (perm, el) => (hasPerm(perm) ? el : <NoAccess />);
   return (
     <div style={{ flex: 1, minHeight: 0 }}>
       <Routes>
-        <Route path="configure" element={<RecipeWizardPage />} />
-        <Route path="quotations" element={<RecipeQuotationsPage />} />
-        <Route path="quotations/:id" element={<RecipeSnapshotPage />} />
-        <Route path="quotations/:id/mfg" element={<RecipeMfgPage />} />
-        <Route path="recipes" element={<RecipeListPage />} />
-        <Route path="recipes/:id" element={<RecipeBuilderPage />} />
-        <Route path="materials" element={<RecipeMaterialsPage />} />
-        <Route path="costs" element={<RecipeCostMasterPage />} />
+        <Route path="configure" element={g('recipe.configure', <RecipeWizardPage />)} />
+        <Route path="quotations" element={g('recipe.quotations', <RecipeQuotationsPage />)} />
+        <Route path="quotations/:id" element={g('recipe.quotations', <RecipeSnapshotPage />)} />
+        <Route path="quotations/:id/mfg" element={g('recipe.quotations', <RecipeMfgPage />)} />
+        <Route path="recipes" element={g('recipe.recipes', <RecipeListPage />)} />
+        <Route path="recipes/:id" element={g('recipe.recipes', <RecipeBuilderPage />)} />
+        <Route path="materials" element={g('recipe.materials', <RecipeMaterialsPage />)} />
+        <Route path="costs" element={g('recipe.costs', <RecipeCostMasterPage />)} />
         <Route path="*" element={<Navigate to="recipes" replace />} />
       </Routes>
     </div>
@@ -334,10 +337,8 @@ function SkuLayout() {
           <Route path="generator" element={<SKUGeneratorPage />} />
           <Route path="items" element={<SKUItemsPage />} />
           <Route path="import" element={<ImportItemsPage />} />
-          <Route path="industries" element={<IndustriesPage />} />
-          <Route path="industries/:id/properties" element={<PropertyManagerPage />} />
-          <Route path="properties" element={<PropertiesPage />} />
           <Route path="books-items" element={<BooksLinkedValuesPage />} />
+          <Route path="bom" element={<CompositeBomPage />} />
           <Route path="*" element={<Navigate to="items" replace />} />
         </Routes>
       </div>
@@ -345,7 +346,7 @@ function SkuLayout() {
   );
 }
 
-function Sidebar({ addons, isAdmin }) {
+function Sidebar({ addons, isAdmin, hasPerm }) {
   const { pathname } = useLocation();
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === '1');
   // Logo file is dropped by the user at frontend/public/octfis-logo.png; until
@@ -395,25 +396,34 @@ function Sidebar({ addons, isAdmin }) {
       </div>
       <nav style={S.nav}>
         {NAV_LINKS
-          .filter(l => (!l.adminOnly || isAdmin) && (l.section || !l.addon || addons.includes(l.addon)))
+          .filter(l => (!l.adminOnly || isAdmin)
+            && (l.section || !l.addon || addons.includes(l.addon))
+            // Per-user grants: a parent shows if any child passes; leaf entries
+            // need their own perm (entries without one are always visible).
+            && (l.section || (l.children
+              ? l.children.some(c => !c.perm || hasPerm(c.perm))
+              : !l.perm || hasPerm(l.perm))))
           .map((l, i) => {
             if (l.section) {
               return !collapsed && <div key={i} style={{ ...S.navLabel, marginTop: i ? 8 : 0 }}>{l.section}</div>;
             }
+            const visibleChildren = l.children?.filter(c => !c.perm || hasPerm(c.perm));
             // Longest matching child wins the highlight (so /wo/reports lights
             // Reports, not Work Orders); collapsed sidebar shows the parent only.
-            const activeChild = !collapsed && l.children
-              ? l.children.filter(c => pathname.startsWith(c.to)).sort((a, b) => b.to.length - a.to.length)[0]
+            const activeChild = !collapsed && visibleChildren
+              ? visibleChildren.filter(c => pathname.startsWith(c.to)).sort((a, b) => b.to.length - a.to.length)[0]
               : null;
             return (
               <div key={l.to}>
-                {/* Active on the whole add-on's path prefix (submenu/pages live below it) */}
-                <NavLink to={l.to} title={l.label}
+                {/* Active on the whole add-on's path prefix (submenu/pages live below it).
+                    Parent lands on its first visible child so a partial grant
+                    (e.g. Purchase only) never opens a denied page. */}
+                <NavLink to={visibleChildren?.length ? visibleChildren[0].to : l.to} title={l.label}
                   style={() => navItemStyle({ isActive: pathname.startsWith(l.match || l.to) }, collapsed)}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>{l.icon}</svg>
                   {!collapsed && l.label}
                 </NavLink>
-                {!collapsed && l.children?.map(c => (
+                {!collapsed && visibleChildren?.map(c => (
                   <NavLink key={c.to} to={c.to}
                     style={() => ({ ...navItemStyle({ isActive: c === activeChild }, false), padding: '6px 10px 6px 36px', fontSize: 12.5 })}>
                     {c.label}
@@ -462,32 +472,42 @@ function AppShell({ user, refreshUser, onLogout }) {
 
   const zoho = { connected: true, orgId: user.orgId, orgName: user.orgName };
   const addons = user.addons ?? ['sku-generator']; // until /auth/me sends addons
+  const hasPerm = makeHasPerm(user.perms ?? ['*']); // until /auth/me sends perms
   return (
     <>
-      <Sidebar addons={addons} isAdmin={user.isAdmin} />
+      <Sidebar addons={addons} isAdmin={user.isAdmin} hasPerm={hasPerm} />
       {/* key on orgId: switching org remounts the pages so they refetch the new
           org's catalog instead of showing the previous org's data. */}
       <div style={S.main} key={user.orgId}>
-        <HeaderBar zoho={zoho} addons={addons} onLogout={onLogout} onSwitchOrg={() => setSwitchOrg(true)} />
+        <HeaderBar zoho={zoho} onLogout={onLogout} onSwitchOrg={() => setSwitchOrg(true)} />
         <Suspense fallback={<PageLoading />}>
         <Routes>
-          <Route path="/" element={<Navigate to="/sku/industries" replace />} />
-          <Route path="/sku/*" element={<SkuLayout />} />
+          <Route path="/" element={<Navigate to="/sku/items" replace />} />
+          <Route path="/sku/*" element={hasPerm('sku') ? <SkuLayout /> : <NoAccess />} />
           {/* Deep link from Zoho Books custom button: /app/#/reserve?soId=… ;
               backend 403s if the addon is off — the page shows a clear notice. */}
-          <Route path="/wo/*" element={<WorkOrderLayout user={user} />} />
-          <Route path="/recipe/*" element={<RecipeLayout />} />
-          <Route path="/reserve" element={<ReservePage />} />
+          <Route path="/wo/*" element={<WorkOrderLayout user={user} hasPerm={hasPerm} />} />
+          <Route path="/recipe/*" element={<RecipeLayout hasPerm={hasPerm} />} />
+          <Route path="/reserve" element={hasPerm('reserve') ? <ReservePage /> : <NoAccess />} />
           {/* Deep link from a CRM deal: /#/estimate?dealId=… — no sidebar entry */}
-          <Route path="/estimate" element={<EstimatePage />} />
-          {user.isAdmin && <Route path="/admin/addons" element={<AddonAdminPage />} />}
+          <Route path="/estimate" element={hasPerm('estimate') ? <EstimatePage /> : <NoAccess />} />
+          {/* Settings hub (header gear): org, users & roles, SKU, work order. */}
+          <Route path="/settings/*" element={<SettingsLayout user={user} addons={addons} hasPerm={hasPerm} onSwitchOrg={() => setSwitchOrg(true)} />} />
+          {/* moved into the settings hub — static segments outrank /sku/* */}
+          <Route path="/sku/industries" element={<Navigate to="/settings/sku/industries" replace />} />
+          <Route path="/sku/industries/:id/properties" element={<MovedPropertiesRedirect />} />
+          <Route path="/sku/properties" element={<Navigate to="/settings/sku/properties" replace />} />
+          <Route path="/sku/settings" element={<Navigate to="/settings/sku/series" replace />} />
+          <Route path="/wo/settings" element={<Navigate to="/settings/wo" replace />} />
+          <Route path="/access/users" element={<Navigate to="/settings/users" replace />} />
+          <Route path="/admin/addons" element={<Navigate to="/settings/org" replace />} />
           {/* legacy paths (old bookmarks, OAuth redirects) */}
           <Route path="/sku-generator" element={<LegacyGeneratorRedirect />} />
           <Route path="/sku-items" element={<Navigate to="/sku/items" replace />} />
-          <Route path="/admin/industries" element={<Navigate to="/sku/industries" replace />} />
-          <Route path="/admin/properties" element={<Navigate to="/sku/properties" replace />} />
-          <Route path="/admin/industries/:id/properties" element={<LegacyPropertiesRedirect />} />
-          <Route path="*" element={<Navigate to="/sku/industries" replace />} />
+          <Route path="/admin/industries" element={<Navigate to="/settings/sku/industries" replace />} />
+          <Route path="/admin/properties" element={<Navigate to="/settings/sku/properties" replace />} />
+          <Route path="/admin/industries/:id/properties" element={<MovedPropertiesRedirect />} />
+          <Route path="*" element={<Navigate to="/sku/items" replace />} />
         </Routes>
         </Suspense>
       </div>
@@ -495,9 +515,9 @@ function AppShell({ user, refreshUser, onLogout }) {
   );
 }
 
-function LegacyPropertiesRedirect() {
+function MovedPropertiesRedirect() {
   const { id } = useParams();
-  return <Navigate to={`/sku/industries/${id}/properties`} replace />;
+  return <Navigate to={`/settings/sku/industries/${id}/properties`} replace />;
 }
 
 // Keeps ?industry=…&p<id>=… from old copied permalinks

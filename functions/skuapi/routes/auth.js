@@ -14,6 +14,7 @@ const {
 } = require("../session");
 const { loadToken } = require("../zoho/auth");
 const { enabledAddons } = require("../addons");
+const { userPerms } = require("../perms");
 
 const router = express.Router();
 const shape = (u) => ({ id: String(u.ROWID), email: u.email, name: u.name || null });
@@ -70,6 +71,8 @@ router.get("/me", requireAuth, async (req, res) => {
       orgName: (token && token.orgName) || null,
       isAdmin: isAdmin(user.email),
       addons: orgId ? await enabledAddons(req.catalyst, orgId) : [],
+      // ["*"] = super-admin or org with no roles configured (full access).
+      perms: orgId ? await userPerms(req.catalyst, orgId, req.userId) : [],
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

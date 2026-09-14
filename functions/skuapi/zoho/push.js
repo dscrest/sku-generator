@@ -1,6 +1,7 @@
 "use strict";
 const { isConfigured, dsDate } = require("./auth");
-const { createItem, updateItem, findItemByName, getItem, deleteItem } = require("./booksApi");
+const { createItem, updateItem, findItemByName, getItem, deleteItem, getGstTaxId } = require("./booksApi");
+const { pushableBooksFields } = require("../booksImport");
 const { createCompositeItem, updateCompositeItemFields, getCompositeItem, updateCompositeItem } = require("./inventoryApi");
 const { rowList, out, orgClause, zStr, isActive, idOk } = require("../store");
 
@@ -169,15 +170,28 @@ async function pushToZoho(catalyst, item, description, opts = {}) {
   if (item.type === "Manufacturing") {
     result = await pushManufacturing(catalyst, item, description, opts, customFields);
   } else {
+    // Imported Books-sheet fields (CR: books import) ride along on the push.
+    // "_" reference keys stay local; a stored GST rate resolves to a tax_id.
+    let stored = {};
+    try { stored = item.booksData ? JSON.parse(item.booksData) : {}; } catch { stored = {}; }
+    let extraCreate, extraUpdate;
+    if (Object.keys(stored).length) {
+      extraCreate = pushableBooksFields(stored);
+      extraUpdate = pushableBooksFields(stored, { update: true });
+      if (stored._gstRate) {
+        const taxId = await getGstTaxId(catalyst, stored._gstRate, { interState: true });
+        if (taxId) extraCreate.tax_id = extraUpdate.tax_id = taxId;
+      }
+    }
     if (item.zohoItemId) {
       try {
-        result = await updateItem(catalyst, item.zohoItemId, item.name, item.sku, description, customFields);
+        result = await updateItem(catalyst, item.zohoItemId, item.name, item.sku, description, customFields, extraUpdate);
       } catch (e) {
         if (!isGone(e)) throw e; // stale link: item was deleted in Books → re-create below
       }
     }
     if (result === undefined) {
-      result = await createItem(catalyst, item.name, item.sku, description, opts, customFields);
+      result = await createItem(catalyst, item.name, item.sku, description, opts, customFields, extraCreate);
       if (result && result.item_id) {
         await catalyst.datastore().table("SKUItem").updateRow({ ROWID: item.id, zohoItemId: String(result.item_id) });
       }

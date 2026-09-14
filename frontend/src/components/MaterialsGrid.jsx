@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
+import Modal, { ModalFooter, ModalBtn } from './Modal.jsx';
+import { can } from './woCommon.jsx';
 
 /**
  * The Materials grid — one screen, four actions.
@@ -68,12 +70,19 @@ const th = {
   textTransform: 'uppercase', letterSpacing: '0.03em',
 };
 
-export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
+// Action tab → permission key (CR-125). No user prop = full access (other mounts).
+const ACTION_PERM = {
+  reserve: 'wo.action.reserve', dereserve: 'wo.action.dereserve',
+  issue: 'wo.action.issue', return: 'wo.action.return', purchase: 'wo.action.po.create',
+};
+
+export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
   const [action, setAction] = useState('reserve');
   const [grids, setGrids] = useState(null);    // one grid per FG (Haresh item 1)
   const [qty, setQty] = useState({});          // rowKey (fgId|itemId) -> typed quantity
   const [sel, setSel] = useState(() => new Set());   // rowKeys ticked for bulk fill
   const [filter, setFilter] = useState('all');       // all | short | covered | left
+  const [fgSel, setFgSel] = useState('all');         // 'all' | workOrderFgId
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -83,9 +92,18 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
   const [dragKey, setDragKey] = useState(null);
   // Warehouse selection (Haresh item 3): only active when the org setting is on.
   const [whCfg, setWhCfg] = useState(null);           // { allow, options, roles }
+  const [picker, setPicker] = useState(null);         // CR-121: [{entry, pool}] awaiting serial/batch picks
   const [fromWh, setFromWh] = useState('');
   const [toWh, setToWh] = useState('');
   const act = ACTIONS.find(a => a.key === action);
+  // Only the actions this user may perform (CR-125); land on the first allowed.
+  const allowedActions = ACTIONS.filter(a => can(user, ACTION_PERM[a.key]));
+  useEffect(() => {
+    if (!allowedActions.some(a => a.key === action) && allowedActions.length) {
+      setAction(allowedActions[0].key);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   useEffect(() => {
     axios.get('/api/wo/settings')
@@ -180,13 +198,14 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter(r => {
+      if (fgSel !== 'all' && String(r.fgId) !== fgSel) return false;
       if (filter === 'short' && !r.short) return false;
       if (filter === 'covered' && r.needed !== 0) return false;
       if (filter === 'left' && !hasHeadroom(r)) return false;
       if (q && !(r.name || '').toLowerCase().includes(q) && !(r.sku || '').toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [rows, filter, search, action]);
+  }, [rows, fgSel, filter, search, action]);
 
   const rowByKey = useMemo(() => new Map(rows.map(r => [r.key, r])), [rows]);
   const entered = useMemo(
@@ -257,42 +276,70 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
         onChanged?.();
         return;
       }
-      // Stock moves are per-FG server-side: one txn per FG, sequentially (the
-      // Catalyst dev tier throttles concurrent calls). A failed FG keeps its
-      // typed quantities so the user can fix and retry just that part.
-      const byFg = new Map();
+      // CR-121: serial/batch-tracked lines get the picker before anything moves.
+      // Sequential lookups — the Catalyst dev tier throttles concurrent calls.
+      const tracked = [];
       for (const e of entered) {
-        if (!byFg.has(e.row.fgId)) byFg.set(e.row.fgId, []);
-        byFg.get(e.row.fgId).push(e);
-      }
-      const failedKeys = new Set();
-      for (const [fgId, fgEntries] of byFg) {
         try {
-          const { data } = await axios.post(`/api/wo/${workOrderId}/txn`, {
-            fgId, type: action,
-            requested: fgEntries.map(e => ({ itemId: e.row.itemId, qty: e.qty })),
-            confirm: true,
-            ...(whCfg?.allow && fromWh && toWh ? { fromWarehouseId: fromWh, toWarehouseId: toWh } : {}),
+          const { data } = await axios.get('/api/wo/tracking-options', {
+            params: {
+              itemId: e.row.itemId, type: action, qty: e.qty,
+              ...(whCfg?.allow && fromWh && toWh ? { fromWarehouseId: fromWh } : {}),
+            },
           });
-          toast.success(
-            data.transferOrderNumber
-              ? `${act.verb}d — Transfer Order ${data.transferOrderNumber} created`
-              : `${act.verb}d — ${data.txnNumber}`,
-          );
-        } catch (err) {
-          const d = err.response?.data;
-          // Every problem at once, so the whole form is fixed in one pass.
-          (d?.details || [d?.error || 'Could not complete the action']).forEach(m => toast.error(m, { duration: 6000 }));
-          fgEntries.forEach(e => failedKeys.add(e.key));
-        }
+          if (data.tracking) tracked.push({ entry: e, pool: data });
+        } catch { /* pool lookup failed — the server auto-picks FIFO on confirm */ }
       }
-      const keep = {};
-      for (const e of entered) if (failedKeys.has(e.key)) keep[e.key] = String(e.qty);
-      load(failedKeys.size ? keep : null);
-      onChanged?.();
+      if (tracked.length) { setPicker(tracked); return; }
+      await submitMoves(null);
     } finally {
       setBusy(false);
     }
+  }
+
+  // Stock moves are per-FG server-side: one txn per FG, sequentially (the
+  // Catalyst dev tier throttles concurrent calls). A failed FG keeps its
+  // typed quantities so the user can fix and retry just that part.
+  async function submitMoves(trackingByKey) {
+    const byFg = new Map();
+    for (const e of entered) {
+      if (!byFg.has(e.row.fgId)) byFg.set(e.row.fgId, []);
+      byFg.get(e.row.fgId).push(e);
+    }
+    const failedKeys = new Set();
+    for (const [fgId, fgEntries] of byFg) {
+      try {
+        const { data } = await axios.post(`/api/wo/${workOrderId}/txn`, {
+          fgId, type: action,
+          requested: fgEntries.map(e => ({
+            itemId: e.row.itemId, qty: e.qty,
+            ...(trackingByKey?.[e.key] ? { tracking: trackingByKey[e.key] } : {}),
+          })),
+          confirm: true,
+          ...(whCfg?.allow && fromWh && toWh ? { fromWarehouseId: fromWh, toWarehouseId: toWh } : {}),
+        });
+        toast.success(
+          data.transferOrderNumber
+            ? `${act.verb}d — Transfer Order ${data.transferOrderNumber} created`
+            : `${act.verb}d — ${data.txnNumber}`,
+        );
+      } catch (err) {
+        const d = err.response?.data;
+        // Every problem at once, so the whole form is fixed in one pass.
+        (d?.details || [d?.error || 'Could not complete the action']).forEach(m => toast.error(m, { duration: 6000 }));
+        fgEntries.forEach(e => failedKeys.add(e.key));
+      }
+    }
+    const keep = {};
+    for (const e of entered) if (failedKeys.has(e.key)) keep[e.key] = String(e.qty);
+    load(failedKeys.size ? keep : null);
+    onChanged?.();
+  }
+
+  async function confirmPicks(trackingByKey) {
+    setPicker(null);
+    setBusy(true);
+    try { await submitMoves(trackingByKey); } finally { setBusy(false); }
   }
 
   if (!fgs.length) return <Empty>Add a finished good to this work order first.</Empty>;
@@ -310,7 +357,7 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
       {/* action selector — the only thing that changes between the four jobs */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' }}>
         <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-          {ACTIONS.map(a => (
+          {allowedActions.map(a => (
             <button
               key={a.key}
               onClick={() => {
@@ -332,6 +379,10 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
           ))}
         </div>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{act.move}</span>
+        <select value={fgSel} onChange={e => setFgSel(e.target.value)} style={{ ...select, maxWidth: 260 }}>
+          <option value="all">All finished goods</option>
+          {fgs.map(f => <option key={f.id} value={f.id}>{f.name} × {f.qty}</option>)}
+        </select>
         <div style={{ flex: 1 }} />
         <button
           onClick={requestPurchase}
@@ -530,7 +581,152 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged }) {
           {busy ? 'Working…' : `Proceed ${act.label}`}
         </button>
       </div>
+      {picker && (
+        <TrackingPicker
+          items={picker}
+          verb={act.verb}
+          onCancel={() => setPicker(null)}
+          onConfirm={confirmPicks}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * Serial/batch picker (CR-121): mandatory for tracked items before a stock
+ * move. Prefilled with the same FIFO picks the silent auto-pick would make;
+ * the user adjusts and must cover each line's quantity exactly.
+ */
+function TrackingPicker({ items, verb, onCancel, onConfirm }) {
+  // key -> Set(serials) for serial lines; key -> {batch_id: qtyString} for batch lines.
+  const [picks, setPicks] = useState(() => {
+    const init = {};
+    for (const { entry, pool } of items) {
+      if (pool.tracking === 'serial') {
+        init[entry.key] = new Set(pool.prefill?.serials || []);
+      } else {
+        const m = {};
+        for (const b of pool.prefill?.batches || []) m[b.batch_id] = String(b.qty);
+        init[entry.key] = m;
+      }
+    }
+    return init;
+  });
+
+  const lineStatus = ({ entry, pool }) => {
+    if (pool.tracking === 'serial') {
+      const count = picks[entry.key]?.size || 0;
+      return { count, ok: count === entry.qty };
+    }
+    const count = Object.values(picks[entry.key] || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+    return { count, ok: count === entry.qty };
+  };
+  const allOk = items.every(it => lineStatus(it).ok);
+
+  const toggleSerial = (key, s) => setPicks(p => {
+    const next = new Set(p[key]);
+    next.has(s) ? next.delete(s) : next.add(s);
+    return { ...p, [key]: next };
+  });
+  const setBatchQty = (key, batchId, v) => setPicks(p => ({ ...p, [key]: { ...p[key], [batchId]: v } }));
+
+  function submit() {
+    const out = {};
+    for (const { entry, pool } of items) {
+      out[entry.key] = pool.tracking === 'serial'
+        ? { serials: [...picks[entry.key]] }
+        : {
+          batches: pool.batches
+            .map(b => ({ batch_id: b.batch_id, batch_number: b.batch_number, qty: Number(picks[entry.key]?.[b.batch_id]) || 0 }))
+            .filter(b => b.qty > 0),
+        };
+    }
+    onConfirm(out);
+  }
+
+  return (
+    <Modal title="Select batch / serial numbers" onClose={onCancel} width={640}>
+      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+        These items are batch/serial tracked in Zoho — the numbers below sit in the source warehouse for this movement.
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxHeight: '55vh', overflowY: 'auto' }}>
+        {items.map(it => {
+          const { entry, pool } = it;
+          const { count, ok } = lineStatus(it);
+          return (
+            <div key={entry.key} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+                <b style={{ fontSize: 13 }}>{entry.row.name || entry.row.itemId}</b>
+                <span style={{ fontSize: 12, color: ok ? '#15803d' : '#b91c1c', fontWeight: 600 }}>
+                  {count}/{entry.qty} selected
+                </span>
+              </div>
+              {pool.tracking === 'serial' ? (
+                !pool.serials.length ? (
+                  <div style={{ fontSize: 12, color: '#b91c1c' }}>No serial numbers in stock at the source warehouse.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {pool.serials.map(s => {
+                      const on = picks[entry.key]?.has(s);
+                      return (
+                        <button key={s} onClick={() => toggleSerial(entry.key, s)} style={{
+                          padding: '3px 9px', fontSize: 12, fontFamily: 'var(--font-mono)', cursor: 'pointer',
+                          borderRadius: 999, border: `1px solid ${on ? 'var(--blue)' : 'var(--border)'}`,
+                          background: on ? 'var(--blue-light)' : 'var(--bg-card)', color: on ? 'var(--blue)' : 'inherit',
+                        }}>
+                          {s}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )
+              ) : (
+                !pool.batches.length ? (
+                  <div style={{ fontSize: 12, color: '#b91c1c' }}>
+                    This item is batch-tracked in Zoho Books, but the stock at the source warehouse has no
+                    batch numbers. Receive or adjust the stock with batch numbers in Books, then press ⟳ Refresh here.
+                  </div>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr>
+                        {['Batch', 'Available', 'Take'].map((h, i) => (
+                          <th key={h} style={{ padding: '4px 8px', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', textAlign: i ? 'right' : 'left', borderBottom: '1px solid var(--border)' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pool.batches.map(b => (
+                        <tr key={b.batch_id}>
+                          <td style={{ padding: '4px 8px', fontSize: 12, fontFamily: 'var(--font-mono)' }}>{b.batch_number}</td>
+                          <td style={{ padding: '4px 8px', fontSize: 12, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{b.available}</td>
+                          <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                            <input
+                              type="number" min="0" max={b.available} step="any"
+                              value={picks[entry.key]?.[b.batch_id] ?? ''}
+                              onChange={e => setBatchQty(entry.key, b.batch_id, e.target.value)}
+                              style={{
+                                width: 72, padding: '4px 8px', fontSize: 12, textAlign: 'right', fontFamily: 'var(--font-mono)',
+                                border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-card)',
+                              }}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <ModalFooter>
+        <ModalBtn onClick={onCancel}>Cancel</ModalBtn>
+        <ModalBtn variant="primary" onClick={submit} disabled={!allOk}>{`Proceed ${verb}`}</ModalBtn>
+      </ModalFooter>
+    </Modal>
   );
 }
 
@@ -551,7 +747,7 @@ const GridRow = memo(function GridRow({ r, act, visibleCols, qtyVal, ticked, onT
         <input type="checkbox" checked={ticked} onChange={() => onToggle(r.key)} aria-label={`Select ${r.name || r.itemId}`} />
       </td>
       <td style={{ ...num, textAlign: 'left', fontFamily: 'var(--font)' }}>
-        <div style={{ fontWeight: 500 }}>{r.name || r.itemId}</div>
+        <div style={{ fontWeight: 500 }}>{r.name || r.itemId}<ReceiptChip r={r} /></div>
         {r.sku && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{r.sku}{r.uom ? ` · ${r.uom}` : ''}</div>}
       </td>
       <td style={{ ...num, fontWeight: r.needed > 0 ? 700 : 400, color: r.short ? '#b91c1c' : undefined }}>{r.bom.toLocaleString()}</td>
@@ -595,6 +791,27 @@ const GridRow = memo(function GridRow({ r, act, visibleCols, qtyVal, ticked, onT
     </tr>
   );
 });
+
+// Material-receipt status against the line's on-order quantity (CR-120):
+// nothing until a PO exists; then Not received / Partial x/y / Received.
+export function ReceiptChip({ r }) {
+  const po = Number(r.po) || 0;
+  const rec = Number(r.received) || 0;
+  if (po <= 0) return null;
+  const [label, color, bg] = rec <= 0
+    ? ['Not received', '#92400e', '#fef3c7']
+    : rec < po
+      ? [`Partial ${rec.toLocaleString()}/${po.toLocaleString()}`, '#92400e', '#fef3c7']
+      : ['Received', '#15803d', '#dcfce7'];
+  return (
+    <span style={{
+      marginLeft: 6, padding: '1px 7px', borderRadius: 9, fontSize: 10.5, fontWeight: 600,
+      color, background: bg, verticalAlign: 'middle', whiteSpace: 'nowrap',
+    }}>
+      {label}
+    </span>
+  );
+}
 
 function CoverageBar({ r }) {
   const basis = r.bom > 0 ? r.bom : (r.reserved + r.issued + r.needed);

@@ -10,8 +10,11 @@
 const express = require("express");
 const { rowList, out, idOk, zStr, orgClause, ownsRow } = require("../store");
 const { nextNumber, byOrgAll } = require("../workorder/store");
-const { optionCost, computeQuote } = require("../recipe/calc");
+const { optionCost, computeQuote, bomLines } = require("../recipe/calc");
 const { MATERIALS, DEMO_RECIPE, DEFAULT_COST_ELEMENTS } = require("../recipe/seedData");
+const { searchItems } = require("../zoho/booksApi");
+const { listCompositeItems, createCompositeItem, updateCompositeItem } = require("../zoho/inventoryApi");
+const bom = require("../workorder/bom");
 
 const router = express.Router();
 
@@ -61,16 +64,18 @@ async function recipeById(req, id) {
   return rows.length ? out(rows[0]) : null;
 }
 
-// Whole recipe in flat org-scoped queries (options carry recipeId for this).
+// Whole recipe in flat org-scoped queries (options/attrs carry recipeId for this).
 async function loadBundle(req, recipe) {
-  const [components, options, materials, els] = [
+  const [components, options, attrs, materials, els] = [
     (await byOrgAll(req.catalyst, req.orgId, "RecipeComponent", `recipeId = ${zStr(recipe.id)}`))
       .map(out).sort((a, b) => (a.sequence || 0) - (b.sequence || 0)),
     (await byOrgAll(req.catalyst, req.orgId, "RecipeComponentOption", `recipeId = ${zStr(recipe.id)}`)).map(out).map(parseFixed),
+    (await byOrgAll(req.catalyst, req.orgId, "RecipeComponentAttr", `recipeId = ${zStr(recipe.id)}`))
+      .map(out).sort((a, b) => (a.sequence || 0) - (b.sequence || 0)),
     (await byOrgAll(req.catalyst, req.orgId, "MaterialType")).map(out),
     await recipeCostElements(req, recipe),
   ];
-  return { recipe, components, options, materials, costElements: els };
+  return { recipe, components, options, attrs, materials, costElements: els };
 }
 
 // Immutability guard: only Draft recipes accept writes.
@@ -89,7 +94,12 @@ async function draftRecipeOf(req, res, recipeId) {
   return assertDraft(res, recipe) ? recipe : null;
 }
 
-const wrap = (fn) => (req, res) => fn(req, res).catch((err) => bad(res, err.status || 500, err.message));
+// Zoho auth expiry surfaces the same way as in workorder.js: 409 reauth_required.
+const isReauth = (err) => err.zohoCode === 57 || err.httpStatus === 401 || /INVALID_OAUTH|not authorized/i.test(err.message || "");
+const wrap = (fn) => (req, res) => fn(req, res).catch((err) => {
+  if (isReauth(err)) return res.status(409).json({ error: "reauth_required", message: "Reconnect Zoho to grant Books access" });
+  bad(res, err.status || 500, err.message);
+});
 
 // ---------- materials master ----------
 
@@ -99,10 +109,10 @@ router.get("/materials", wrap(async (req, res) => {
 }));
 
 router.post("/materials", wrap(async (req, res) => {
-  const { code, name, rate, uom = "KG", effectiveFrom = "", status = "Active" } = req.body || {};
+  const { code, name, rate, uom = "KG", effectiveFrom = "", status = "Active", zohoItemId = "", zohoItemName = "" } = req.body || {};
   if (!code) return bad(res, 400, "code is required");
   const row = await req.catalyst.datastore().table("MaterialType").insertRow({
-    code, name: name || code, rate: Number(rate) || 0, uom, effectiveFrom, status, orgId: req.orgId,
+    code, name: name || code, rate: Number(rate) || 0, uom, effectiveFrom, status, zohoItemId, zohoItemName, orgId: req.orgId,
   });
   res.status(201).json(out(row));
 }));
@@ -110,7 +120,7 @@ router.post("/materials", wrap(async (req, res) => {
 router.put("/materials/:id", wrap(async (req, res) => {
   const id = req.params.id;
   if (!idOk(id) || !(await ownsRow(req.catalyst, "MaterialType", id))) return bad(res, 404, "Not found");
-  const { code, name, rate, uom, effectiveFrom, status } = req.body || {};
+  const { code, name, rate, uom, effectiveFrom, status, zohoItemId, zohoItemName } = req.body || {};
   const data = { ROWID: id };
   if (code !== undefined) data.code = code;
   if (name !== undefined) data.name = name;
@@ -118,6 +128,8 @@ router.put("/materials/:id", wrap(async (req, res) => {
   if (uom !== undefined) data.uom = uom;
   if (effectiveFrom !== undefined) data.effectiveFrom = effectiveFrom;
   if (status !== undefined) data.status = status;
+  if (zohoItemId !== undefined) data.zohoItemId = zohoItemId;
+  if (zohoItemName !== undefined) data.zohoItemName = zohoItemName;
   res.json(out(await req.catalyst.datastore().table("MaterialType").updateRow(data)));
 }));
 
@@ -227,6 +239,37 @@ router.get("/products", wrap(async (req, res) => {
   res.json(rows.map((r) => ({ id: r.id, sku: r.sku, name: r.name })).sort((a, b) => String(a.sku).localeCompare(String(b.sku))));
 }));
 
+// Thin property list for the attribute picker (independent of the
+// sku-generator addon gate on /api/properties, like /products above).
+// Range properties are excluded — attributes pick from PropertyValue rows.
+router.get("/properties", wrap(async (req, res) => {
+  const rows = (await byOrgAll(req.catalyst, req.orgId, "Property")).map(out)
+    .filter((p) => p.valueType !== "Range");
+  res.json(rows
+    .map((p) => ({ id: p.id, name: p.name, caption: p.caption, unit: p.unit || "" }))
+    .sort((a, b) => String(a.caption || a.name).localeCompare(String(b.caption || b.name))));
+}));
+
+// Batched values for the given property ids: { propertyId: [{id, displayValue, isDefault}] }.
+// One request regardless of property count (function-concurrency 429 protection).
+router.get("/property-values", wrap(async (req, res) => {
+  const ids = String(req.query.ids || "").split(",").map((s) => s.trim()).filter(idOk);
+  const byProp = {};
+  if (ids.length) {
+    const zcql = req.catalyst.zcql();
+    for (let offset = 0; ; offset += 300) { // ZCQL pages at 300 rows
+      const page = rowList(await zcql.executeZCQLQuery(
+        `SELECT * FROM PropertyValue WHERE propertyId IN (${ids.join(",")}) AND ${orgClause(req.catalyst)} ORDER BY displayValue LIMIT 300 OFFSET ${offset}`,
+      )).map(out);
+      for (const v of page) {
+        (byProp[v.propertyId] ||= []).push({ id: v.id, displayValue: v.displayValue, isDefault: v.isDefault === true });
+      }
+      if (page.length < 300) break;
+    }
+  }
+  res.json(byProp);
+}));
+
 // ---------- recipe templates ----------
 
 router.get("/recipes", wrap(async (req, res) => {
@@ -248,8 +291,52 @@ router.get("/recipes/:id", wrap(async (req, res) => {
   res.json(bundle);
 }));
 
+// Bulk upsert shared by single-form create and the builder's Save. Rows keep
+// table order (sequence = index + 1). Never deletes components — options/attrs
+// hang off componentId; deletion stays the explicit DELETE /components/:id.
+async function upsertComponents(req, recipe, rows) {
+  const ds = req.catalyst.datastore();
+  const propById = new Map((await byOrgAll(req.catalyst, req.orgId, "Property")).map(out).map((p) => [String(p.id), p]));
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || {};
+    if (!r.name) continue;
+    let compId = idOk(r.id) && (await ownsRow(req.catalyst, "RecipeComponent", r.id)) ? String(r.id) : null;
+    const fields = {
+      name: r.name, question: r.question || "", sequence: i + 1,
+      qty: Number(r.qty) || 1, uom: r.uom || "Nos", required: r.required !== false,
+      allowMaterial: r.allowMaterial !== false, allowQtyOverride: r.allowQtyOverride === true,
+      allowComponentOverride: r.allowComponentOverride === true,
+    };
+    if (compId) {
+      await ds.table("RecipeComponent").updateRow({ ROWID: compId, ...fields });
+    } else {
+      const row = await ds.table("RecipeComponent").insertRow({
+        recipeId: recipe.id, code: r.code || r.name.toUpperCase().replace(/[^A-Z0-9]+/g, "_"),
+        ...fields, parentComponentId: "", orgId: req.orgId,
+      });
+      compId = String(out(row).id);
+    }
+    if (r.attrs === undefined) continue;
+    // Attrs are full-replace per component — nothing references an attr row.
+    for (const a of await byOrgAll(req.catalyst, req.orgId, "RecipeComponentAttr", `componentId = ${zStr(compId)}`)) {
+      await ds.table("RecipeComponentAttr").deleteRow(a.ROWID);
+    }
+    const attrs = Array.isArray(r.attrs) ? r.attrs : [];
+    for (let j = 0; j < attrs.length; j++) {
+      const prop = propById.get(String(attrs[j].propertyId));
+      if (!prop) continue; // unknown / cross-org propertyId
+      await ds.table("RecipeComponentAttr").insertRow({
+        recipeId: recipe.id, componentId: compId, propertyId: String(prop.id),
+        propertyName: prop.caption || prop.name, unit: prop.unit || "",
+        required: attrs[j].required !== false, defaultValueId: String(attrs[j].defaultValueId || ""),
+        sequence: j + 1, orgId: req.orgId,
+      });
+    }
+  }
+}
+
 router.post("/recipes", wrap(async (req, res) => {
-  const { code, name, productItemId = "", productCode = "", productName = "", effectiveFrom = "" } = req.body || {};
+  const { code, name, productItemId = "", productCode = "", productName = "", effectiveFrom = "", components } = req.body || {};
   if (!code || !name) return bad(res, 400, "code and name are required");
   const dupe = rowList(
     await req.catalyst.zcql().executeZCQLQuery(
@@ -261,7 +348,18 @@ router.post("/recipes", wrap(async (req, res) => {
     code, name, productItemId, productCode, productName, version: 1, status: "Draft",
     effectiveFrom, changeReason: "Initial version", updatedBy: String(req.userId || ""), orgId: req.orgId,
   });
-  res.status(201).json(out(row));
+  const recipe = out(row);
+  // Single-form create: recipe + all components (+ attrs) in one request.
+  if (Array.isArray(components) && components.length) await upsertComponents(req, recipe, components);
+  res.status(201).json(recipe);
+}));
+
+// Builder save: the whole component table in one request (429-safe).
+router.put("/recipes/:id/components-bulk", wrap(async (req, res) => {
+  const recipe = await draftRecipeOf(req, res, req.params.id);
+  if (!recipe) return;
+  await upsertComponents(req, recipe, (req.body && req.body.components) || []);
+  res.json({ ok: true });
 }));
 
 router.put("/recipes/:id", wrap(async (req, res) => {
@@ -279,9 +377,12 @@ router.delete("/recipes/:id", wrap(async (req, res) => {
   const recipe = await recipeById(req, req.params.id);
   if (!assertDraft(res, recipe)) return;
   const ds = req.catalyst.datastore();
-  // No DB cascade: remove options + components by hand.
+  // No DB cascade: remove options + attrs + components by hand.
   for (const o of await byOrgAll(req.catalyst, req.orgId, "RecipeComponentOption", `recipeId = ${zStr(recipe.id)}`)) {
     await ds.table("RecipeComponentOption").deleteRow(o.ROWID);
+  }
+  for (const a of await byOrgAll(req.catalyst, req.orgId, "RecipeComponentAttr", `recipeId = ${zStr(recipe.id)}`)) {
+    await ds.table("RecipeComponentAttr").deleteRow(a.ROWID);
   }
   for (const c of await byOrgAll(req.catalyst, req.orgId, "RecipeComponent", `recipeId = ${zStr(recipe.id)}`)) {
     await ds.table("RecipeComponent").deleteRow(c.ROWID);
@@ -359,6 +460,9 @@ router.delete("/components/:id", wrap(async (req, res) => {
   const ds = req.catalyst.datastore();
   for (const o of await byOrgAll(req.catalyst, req.orgId, "RecipeComponentOption", `componentId = ${zStr(comp.id)}`)) {
     await ds.table("RecipeComponentOption").deleteRow(o.ROWID);
+  }
+  for (const a of await byOrgAll(req.catalyst, req.orgId, "RecipeComponentAttr", `componentId = ${zStr(comp.id)}`)) {
+    await ds.table("RecipeComponentAttr").deleteRow(a.ROWID);
   }
   await ds.table("RecipeComponent").deleteRow(comp.id);
   res.status(204).end();
@@ -450,6 +554,7 @@ router.post("/recipes/:id/new-version", wrap(async (req, res) => {
     code: recipe.code, name: recipe.name, productItemId: recipe.productItemId || "",
     productCode: recipe.productCode || "", productName: recipe.productName || "",
     version: maxV + 1, status: "Draft", effectiveFrom: recipe.effectiveFrom || "",
+    booksCompositeItemId: recipe.booksCompositeItemId || "",
     changeReason: String((req.body && req.body.changeReason) || ""), updatedBy: String(req.userId || ""), orgId: req.orgId,
   }));
   // Raw rows, not recipeCostElements(): that helper merges the live master
@@ -464,6 +569,7 @@ router.post("/recipes/:id/new-version", wrap(async (req, res) => {
   }
   const comps = (await byOrgAll(req.catalyst, req.orgId, "RecipeComponent", `recipeId = ${zStr(recipe.id)}`)).map(out);
   const opts = (await byOrgAll(req.catalyst, req.orgId, "RecipeComponentOption", `recipeId = ${zStr(recipe.id)}`)).map(out);
+  const attrs = (await byOrgAll(req.catalyst, req.orgId, "RecipeComponentAttr", `recipeId = ${zStr(recipe.id)}`)).map(out);
   for (const c of comps) {
     const nc = out(await ds.table("RecipeComponent").insertRow({
       recipeId: copy.id, code: c.code || "", name: c.name || "", question: c.question || "",
@@ -477,8 +583,80 @@ router.post("/recipes/:id/new-version", wrap(async (req, res) => {
         castWeight: o.castWeight || 0, fixedCostsJson: o.fixedCostsJson || "{}", enabled: o.enabled !== false, orgId: req.orgId,
       });
     }
+    for (const a of attrs.filter((a) => String(a.componentId) === String(c.id))) {
+      await ds.table("RecipeComponentAttr").insertRow({
+        componentId: nc.id, recipeId: copy.id, propertyId: a.propertyId || "", propertyName: a.propertyName || "",
+        unit: a.unit || "", required: a.required === true, defaultValueId: a.defaultValueId || "",
+        sequence: a.sequence || 0, orgId: req.orgId,
+      });
+    }
   }
   res.status(201).json(copy);
+}));
+
+// ---------- Books push (CR-143) ----------
+
+// Books says the composite no longer exists: GET → 1002/404, PUT → 2006/400.
+const isGone = (e) => e.zohoCode === 1002 || e.zohoCode === 2006 || e.httpStatus === 404;
+
+// Materials-page typeahead for linking a material to a Books raw-material item.
+router.get("/books-items", wrap(async (req, res) => {
+  const q = String(req.query.q || "").trim();
+  if (q.length < 2) return res.json([]);
+  res.json((await searchItems(req.catalyst, q)).map((i) => ({
+    id: String(i.item_id), name: i.name, sku: i.sku || null, unit: i.unit || "",
+  })));
+}));
+
+// Push-dialog picker: every composite item in the Books org.
+router.get("/books-composites", wrap(async (req, res) => {
+  res.json((await listCompositeItems(req.catalyst)).map((c) => ({
+    id: String(c.composite_item_id), name: c.name, sku: c.sku || null, status: c.status || "",
+  })));
+}));
+
+// Create/overwrite the linked Books composite from the recipe's default BOM
+// (first enabled option per component). Recipe is source of truth: push fully
+// replaces mapped_items; Books name/sku stay user-owned on update. Works on
+// Published recipes — the only recipe write is the stored link, so no
+// assertDraft here.
+router.post("/recipes/:id/push-books", wrap(async (req, res) => {
+  const recipe = await recipeById(req, req.params.id);
+  if (!recipe) return bad(res, 404, "Not found");
+  if (recipe.status === "Superseded" || recipe.status === "Archived") {
+    return bad(res, 409, "This version is superseded — push from the current version");
+  }
+  const { components, options, materials } = await loadBundle(req, recipe);
+  const { lines, unlinked, skipped } = bomLines({ components, options, materials });
+  if (unlinked.length) {
+    return res.status(400).json({
+      error: `Link these materials to a Books item first: ${unlinked.map((u) => u.code).join(", ")}`,
+      unlinked,
+    });
+  }
+  if (!lines.length) return bad(res, 400, "Recipe produces an empty BOM");
+  const table = req.catalyst.datastore().table("RecipeTemplate");
+  const linkId = recipe.booksCompositeItemId || String((req.body && req.body.compositeItemId) || "");
+  let comp;
+  if (linkId) {
+    try {
+      comp = await updateCompositeItem(req.catalyst, linkId, lines);
+    } catch (e) {
+      if (!isGone(e)) throw e;
+      if (recipe.booksCompositeItemId) await table.updateRow({ ROWID: recipe.id, booksCompositeItemId: "" });
+      return bad(res, 409, "The linked composite no longer exists in Books — push again to re-link or create a new one");
+    }
+  } else {
+    comp = await createCompositeItem(req.catalyst, {
+      name: recipe.name, sku: recipe.productCode || recipe.code, mappedItems: lines,
+    });
+  }
+  const id = String((comp && comp.composite_item_id) || linkId);
+  if (id !== String(recipe.booksCompositeItemId || "")) {
+    await table.updateRow({ ROWID: recipe.id, booksCompositeItemId: id });
+  }
+  await bom.refreshComposite(req.catalyst, req.orgId, id).catch((e) => console.error("composite cache refresh failed", e.message));
+  res.json({ compositeItemId: id, name: (comp && comp.name) || recipe.name, created: !linkId, lines, skipped });
 }));
 
 // ---------- calculation + quotations ----------

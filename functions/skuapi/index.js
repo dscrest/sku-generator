@@ -85,15 +85,20 @@ app.get("/cors-debug", (_req, res) => res.json(seenOrigins)); // ponytail: temp,
 // X-Frame-Options: DENY on static hosting with no way to change it; a
 // frame-ancestors CSP set here overrides XFO in modern browsers, letting only
 // Zoho CRM iframe it.
-app.get("/widget", (_req, res) => {
-  res.set(
-    "Content-Security-Policy",
-    "frame-ancestors 'self' https://*.zoho.com https://*.zoho.in https://*.zoho.eu " +
-      "https://*.zoho.com.au https://*.zoho.jp https://*.zoho.sa https://*.zoho.com.cn"
-  );
-  res.set("Cache-Control", "no-cache"); // widget updates land on next reload after deploy
-  res.sendFile(require("path").join(__dirname, "widget.html"));
-});
+function serveWidget(file) {
+  return (_req, res) => {
+    res.set(
+      "Content-Security-Policy",
+      "frame-ancestors 'self' https://*.zoho.com https://*.zoho.in https://*.zoho.eu " +
+        "https://*.zoho.com.au https://*.zoho.jp https://*.zoho.sa https://*.zoho.com.cn"
+    );
+    res.set("Cache-Control", "no-cache"); // widget updates land on next reload after deploy
+    res.sendFile(require("path").join(__dirname, file));
+  };
+}
+app.get("/widget", serveWidget("widget.html"));
+// Books packing-list widget (Invoice + Sales Order detail pages).
+app.get("/packing", serveWidget("packing.html"));
 
 // Auth: custom email/password login + Zoho OAuth (both set the session cookie).
 app.use("/auth", require("./routes/auth"));
@@ -105,6 +110,7 @@ app.use("/auth/zoho", require("./routes/zohoAuth"));
 // req.catalyst.__orgId scope every data query to that tenant.
 const { requireAuth, requireAdmin } = require("./session");
 const { requireAddon } = require("./addons");
+const { requirePerm, prefixPerm, WO_MAP, RECIPE_MAP } = require("./perms");
 const { loadToken, cachedOrgId, rememberOrgId } = require("./zoho/auth");
 async function requireOrg(req, res, next) {
   try {
@@ -130,6 +136,19 @@ app.use("/api", requireAuth, requireOrg);
 // scope, otherwise the route returns 409 reauth_required.
 app.use("/api/crm", require("./routes/crm"));
 
+// Shared grid column layouts (column chooser). Org-wide, any authed user; no
+// addon gate — grids in every module read these. Must mount before the bare
+// "/api" sku mounts below (their requireAddon would swallow it).
+app.use("/api/grid-prefs", require("./routes/gridPrefs"));
+
+// Packing list (Books widget on Invoice/SO pages). Any Books-connected org; no
+// addon gate — must also mount before the bare "/api" sku mounts.
+app.use("/api/packing", require("./routes/packing"));
+
+// Users & Roles (per-org): role CRUD + user-role assignment. Managed by anyone
+// holding users.manage; super-admins always pass (perms.js "*" bypass).
+app.use("/api/access", requirePerm("users.manage"), require("./routes/access"));
+
 // Super-admin (OCTFIS staff): entitlement management. Spans orgs, so it sits
 // outside the /api requireOrg chain.
 app.use("/admin", requireAuth, requireAdmin, require("./routes/admin"));
@@ -137,20 +156,21 @@ app.use("/admin", requireAuth, requireAdmin, require("./routes/admin"));
 // Work-order + reserve add-ons. Mounted BEFORE the bare "/api" mounts below:
 // their requireAddon("sku-generator") middleware runs on any /api path that
 // reaches it, so these must claim their requests first.
-app.use("/api/wo", requireAddon("work-order"), require("./routes/workorder"));
+app.use("/api/wo", requireAddon("work-order"), prefixPerm(WO_MAP, ["wo.orders"]), require("./routes/workorder"));
 // Superseded by /api/wo — kept one release so the Books custom button and any
 // saved /#/reserve?soId= deep links keep working.
-app.use("/api/reserve", requireAddon("reserve"), require("./routes/reserve"));
+app.use("/api/reserve", requireAddon("reserve"), requirePerm("reserve"), require("./routes/reserve"));
 // Recipe Engine add-on (CR-104): recipe templates, materials master, quotations.
-app.use("/api/recipe", requireAddon("recipe-engine"), require("./routes/recipe"));
+app.use("/api/recipe", requireAddon("recipe-engine"), prefixPerm(RECIPE_MAP, ["recipe.recipes"]), require("./routes/recipe"));
 
 // SKU generator add-on — everything below is gated per-org.
 const skuGen = requireAddon("sku-generator");
-app.use("/api/industries", skuGen, require("./routes/industries"));
-app.use("/api", skuGen, require("./routes/properties"));
-app.use("/api", skuGen, require("./routes/propertyValues"));
-app.use("/api/sku", skuGen, require("./routes/sku"));
-app.use("/api/sku-items", skuGen, require("./routes/skuItems"));
+const skuPerm = requirePerm("sku");
+app.use("/api/industries", skuGen, skuPerm, require("./routes/industries"));
+app.use("/api", skuGen, skuPerm, require("./routes/properties"));
+app.use("/api", skuGen, skuPerm, require("./routes/propertyValues"));
+app.use("/api/sku", skuGen, skuPerm, require("./routes/sku"));
+app.use("/api/sku-items", skuGen, skuPerm, require("./routes/skuItems"));
 
 // ---- internal endpoints: no user session, shared-secret guarded ----
 function internalAuth(req, res) {

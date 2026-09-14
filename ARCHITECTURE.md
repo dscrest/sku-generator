@@ -59,6 +59,31 @@ routes through the generator engine
 so property values persist and the item lands in Books; the CRM Product is
 created at push-to-quote time via the JS SDK.
 
+### Books packing-list widget (CR-131)
+
+Same serving pattern (shared `serveWidget()` in index.js):
+`functions/skuapi/packing.html` at `GET /packing`. Books has **no
+External-hosting option** and a loader stub does not work (Books modal
+widgets stay dark until the zip-hosted page itself completes
+`ZFAPPS.extension.init()`), so `books-widget/dist/packinglist.zip` ships a
+**self-contained copy** of packing.html as `app/widget.html` with
+`plugin-manifest.json` (`service: FINANCE`, locations `invoice.details.button`
++ `salesorder.details.button`, `widget_type: modal`). packing.html is
+origin-independent (absolute `CATALYST` URLs, text/plain bodies) so the same
+file runs from `/packing` or from Zoho's widget hosting — after editing it,
+re-copy + re-zip + re-upload (recipe in TASKS.md CR-131). Uses the Books
+ZFAPPS SDK only for record context (invoice → salesorder fallback), resize and
+close; data + persistence go through skuapi (`/api/packing`, no addon gate)
+with the same `?t=` token dance. Plans persist in `PackingList`/`PackingBox`;
+print is an A4 sheet in an iframe srcdoc, Export/Domestic variants.
+
+Standalone mode (CR-134): `?woId=`/`?soId=`/`?invoiceId=` query params skip
+ZFAPPS entirely — the Work Order page's "Print Packing List" ⋯ action opens
+`/packing?woId=<id>` in a new tab (same-origin cookie auth, silentAuth
+fallback). A WO with a linked SO shares the `so:<id>` plan with the Books
+widget; without one the plan is keyed `wo:<ROWID>` with lines from the WO's
+finished goods and invoice no/date typed manually.
+
 ---
 
 ## Database
@@ -93,11 +118,32 @@ Base path in production: `/server/skuapi`. All JSON. CORS is permissive (`*`).
 | POST | `/auth/register` | Create an AppUser (email + password, scrypt-hashed) |
 | POST | `/auth/login` | Verify password → signed session cookie (`sku_session`, 30d) |
 | POST | `/auth/logout` | Clear the session cookie |
-| GET | `/auth/me` | Current user + selected org + `addons` (enabled keys) + `isAdmin` |
+| GET | `/auth/me` | Current user + selected org + `addons` (enabled keys) + `perms` (granted permission keys, `["*"]` = unrestricted) + `isAdmin` |
 
 Sessions are stateless: `base64url({uid,iat}).HMAC-SHA256` — no session table.
 `requireAuth` gates everything under `/api` and `/admin`; `requireOrg` then
 pins `req.orgId` from the user's ZohoToken.
+
+**Per-user permissions (CR-120, `perms.js`):** after `requireAddon` (org
+bought the module), `requirePerm(key)` / `prefixPerm(map)` check the user's
+grants — union of their `Role.perms` via `UserRole`, sub-page keys
+(`PERM_KEYS`), 60s cache. `ADMIN_EMAILS` super-admins and orgs with zero
+roles resolve to `["*"]` (lockout backstops). Managed at `/api/access`
+(role CRUD + assignment, behind the `users.manage` key), UI at `/settings/users` (CR-137).
+
+### Users & Roles — `routes/access.js` (mounted `/api/access`, gated by `requirePerm("users.manage")`)
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET/POST | `/api/access/roles` | List / create org roles (`perms` ⊆ `PERM_KEYS`) |
+| PUT/DELETE | `/api/access/roles/:id` | Update / delete (hand-cascades UserRole rows) |
+| GET | `/api/access/users` | Org users (ZohoToken ∪ UserRole union) with `roleIds` |
+| PUT | `/api/access/users/:userId/roles` | Full-replace the user's role assignments |
+
+### Grid prefs — `routes/gridPrefs.js` (mounted `/api/grid-prefs`, any authed org user, no addon/perm gate)
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/grid-prefs/:gridKey` | Org-wide column layout `{order, hidden}` for one grid |
+| PUT | `/api/grid-prefs/:gridKey` | Save layout (column chooser Apply) — shared by all org users |
 
 ### Industries — `routes/industries.js` (mounted `/api/industries`)
 | Method | Path | Purpose |
@@ -153,6 +199,8 @@ ROWID (List props) or a raw number string (Range props).
 | POST | `/api/sku-items/:id/push-zoho` | Manual (re)push a single item to Zoho Books |
 | POST | `/api/sku-items/backfill-values` | One-shot, idempotent backfill of SKUItemValue for legacy items by reverse-matching SKU tokens |
 | POST | `/api/sku-items/import-zoho` | Import new items from Zoho Books into an industry. Body `{ industryId }`. Create-only — items already linked (by `zohoItemId`, then `sku`) are skipped. Reverse-maps Books custom fields → SKUItemValue via `zohoCfApiName`. Returns `{ total, imported, skipped, valuesMapped, errors }` |
+| POST | `/api/sku-items/import` | Bulk sheet import (CR-092/127). Body `{ industryId, rows, format? }` — rows parsed client-side. Default format = app template (property captions, `importItems.js`); `format: "books"` = Zoho Books item sheet (`booksImport.js`: fixed columns → `SKUItem.booksData` JSON, `"<caption> (Custom Field)"` → properties; provided SKU kept, blank SKU generated via assemble+series). When the org's `skuAutoPushImport` setting is on, each created row is pushed sequentially; results carry `pushed`/`pushError` |
+| GET/PUT | `/api/sku-items/settings` | SKU-module org settings (`OrgSetting` via the generic workorder/store helpers). Keys: `skuAutoPushImport` → `{ autoPushImport }` (CR-127); `skuSeriesMode` (`off`/`continuous`/`params`) + `skuSeriesPad` → `{ seriesMode, seriesPad }` (CR-136 — org-wide numerical series; GET resolves the legacy per-industry `seriesStart` fallback when mode unset). UI: SkuSettingsPage (Settings hub → SKU Settings → SKU Series, CR-137) |
 
 ### CRM — `routes/crm.js` (mounted `/api/crm`, not add-on gated)
 | Method | Path | Purpose |
@@ -239,6 +287,8 @@ Costing math lives in `recipe/calc.js` (pure, `--selftest`); demo data in
 | POST | `/api/recipe/recipes/:id/calculate` | Cost/price for a selection (wizard review + builder Test tab; nothing saved) |
 | GET/POST | `/api/recipe/quotations(/:id)` · POST `/:id/convert` | Create = recompute + freeze snapshot + `QTN-` number; convert → `Order` |
 | POST | `/api/recipe/seed-demo` | Idempotent RAVS150 demo (12 materials + published recipe) |
+| GET | `/api/recipe/books-items?q=` \| `/books-composites` | Books lookups (CR-143): material-link typeahead; composite picker for first push |
+| POST | `/api/recipe/recipes/:id/push-books` | Create/overwrite the linked Books composite's `mapped_items` from the recipe's default BOM (`bomLines` in `recipe/calc.js`); link stored on `RecipeTemplate.booksCompositeItemId`, works on Published recipes (no `assertDraft`) |
 
 Frontend: `/recipe/*` (`RecipeLayout` in `App.jsx`) — `configure` (5-step sales
 wizard), `quotations` (+ `/:id` snapshot, `/:id/mfg` manufacturing requirement),
@@ -307,27 +357,34 @@ wizard), `quotations` (+ `/:id` snapshot, `/:id/mfg` manufacturing requirement),
 
 HashRouter (`/app/#/…`) — Catalyst web hosting has no SPA fallback.
 Left nav renders one entry per **enabled add-on**; SKU Generator is one entry
-with a tab bar (`SkuLayout` in `App.jsx`). Tabs follow the setup order:
-Industries → Properties → SKU Generator (`/sku/items`, the combined
-list+generator page — CR-014); default landing is `/sku/industries`.
+with a tab bar (`SkuLayout` in `App.jsx`). Default landing is `/sku/items`.
+All settings live in the **Settings hub** (CR-137): header gear → `/settings/*`
+(`SettingsLayout.jsx`, own left sidebar + search; sections filtered by the same
+addon/perm rules as the main nav). Old paths (`/sku/industries*`,
+`/sku/properties`, `/sku/settings`, `/wo/settings`, `/access/users`,
+`/admin/addons`) redirect into the hub.
 
 | Route | Page | Purpose |
 |-------|------|---------|
 | `/sku/items` | `SKUItemsPage` | The "SKU Generator" tab: browse/search items (free-text + SKU/Type/Industry/property filters, paginated grid), **+ New** → `/sku/generator`, Zoho push/import. Row click → Zoho-Books master–detail (narrow left list + right edit panel) |
 | `/sku/generator` | `SKUGeneratorPage` | The "+ New" sub-page (kept as a route for permalinks): opens on the first industry; vertical list of all its properties → live SKU + name + description preview → create item, then back to the list |
-| `/sku/industries` | `IndustriesPage` | Manage industries |
-| `/sku/industries/:id/properties` | `PropertyManagerPage` | Manage one industry's properties + values (incl. Books custom-field mapping) |
-| `/sku/properties` | `PropertiesPage` | All org properties in one grid, filterable by industry/type/required |
+| `/settings/org` | `OrgSettingsPage` | Settings hub: org profile + Switch Org, Books connection/Reconnect, admin-only add-on matrix (embeds `AddonAdminPage`) |
+| `/settings/users` | `UsersRolesPage` | Settings hub: roles + user↔role assignment (`users.manage`) |
+| `/settings/sku` | `SkuSettingsHub` | Settings hub: card landing → SKU Series / Industries / Properties |
+| `/settings/sku/series` | `SkuSettingsPage` | Numerical series mode + format, auto-push import |
+| `/settings/sku/industries` | `IndustriesPage` | Manage industries |
+| `/settings/sku/industries/:id/properties` | `PropertyManagerPage` | Manage one industry's properties + values (incl. Books custom-field mapping) |
+| `/settings/sku/properties` | `PropertiesPage` | All org properties in one grid, filterable by industry/type/required |
 | `/sku/books-items` | `BooksLinkedValuesPage` | The "Books items" tab: read-only grid of property values also created as standalone Zoho Books items (CR-026), filterable by industry |
 | `/wo` | `WorkOrderListPage` | Work order grid + "new from sales order" flow (tick the FG lines, BOMs seed from Zoho) |
 | `/wo/:id` | `WorkOrderPage` | Zoho-Books-style split view (CR-018): left rail of all work orders, right detail with toolbar (Edit modal · Approve ▾ two-level dropdown · status actions · ⋯ Print PDF / Delete) and sub-tabs **Details** (the A–I Materials grid), Approvals, History |
 | `/wo/bom` | `CompositeBomPage` | Global BOM page (CR-028): grid of Books composite items (no work orders) → row drills into upload/paste + coloured diff, apply straight to Books (optionally creating missing component items); "New composite item" builds one in Books from a sheet |
-| `/wo/purchase` | `WorkOrderPurchasePage` | Global Purchase page: Requests/Orders grids (Orders = all Books POs via `/api/wo/purchase-orders`, 🔒 when received/billed) → row drills into `PurchaseTab` (per WO) or `PoSplit` (per PO) |
+| `/wo/purchase` | `WorkOrderPurchasePage` | Global Purchase page ("Purchasing"): By Item (per-RM shortfall raise; PR-number links + "Associated WO ▾" breakdown toggle per row, CR-144) + Requests/Orders grids (Orders = all Books POs via `/api/wo/purchase-orders`, 🔒 when received/billed) → row drills into `PurchaseTab` (per WO), `PrCard` editor (per PR, incl. consolidated cross-WO ones) or `PoSplit` (per PO) |
 | `/wo/reports` | `WorkOrderReportsPage` | SO–BOM status + shortfall/pending + item pipeline (WO/vendor filters), CSV export |
-| `/wo/settings` | `WorkOrderSettingsPage` | Warehouse map, alert recipients, thresholds, number prefixes |
+| `/settings/wo` | `WorkOrderSettingsPage` | Warehouse map, alert recipients, thresholds, number prefixes (`wo.settings`) |
 | `/reserve` | `ReservePage` | Superseded by `/wo` — kept one release for the Books custom button |
 | `/estimate` | `EstimatePage` | Print estimates from CRM Quotes (CR-032, no sidebar entry). Deal button (`?dealId=`) → checkbox list of the deal's quotes → one sheet per ticked quote (page-break between); Quote button (`?quoteId=`) → that sheet directly. Sheet ported from `estimate-prototype/` (specs/design/size rows parsed from line descriptions via `estimateParser.js`, flat fallback), A–F priced / A–D technical toggle, native print. Editable "General Terms & Conditions" last page (`estimateTerms.js` + `EstimateTerms.jsx`, per-browser localStorage). Logged-out deep links auto-login via Zoho OAuth (sessionStorage returnTo) |
-| `/admin/addons` | `AddonAdminPage` | Super-admin: per-org add-on entitlements + org delete |
+| (in `/settings/org`) | `AddonAdminPage` | Super-admin: per-org add-on entitlements + org delete (embedded card, no own route) |
 | (login) | `LoginPage` | Email+password or Zoho login |
 | `/connect` | `ZohoConnectPage` | Shown until Zoho is connected (app gate) |
 | (org select) | `OrgSelectPage` | Shown when connected but no org chosen |

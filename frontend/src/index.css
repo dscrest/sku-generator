@@ -108,6 +108,10 @@ body {
 }
 .close-x:hover { font-weight: 700; }
 
+/* Settings hub landing cards (CR-137). */
+.settings-card { transition: box-shadow 0.12s, border-color 0.12s; }
+.settings-card:hover { box-shadow: var(--shadow-sm); border-color: var(--blue) !important; }
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }

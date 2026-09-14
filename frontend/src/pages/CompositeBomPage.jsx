@@ -4,10 +4,17 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import GridFooter, { usePager } from '../components/GridFooter.jsx';
 import { Empty, Banner } from '../components/MaterialsGrid.jsx';
-import { AccessNotice, Table, btn } from '../components/woCommon.jsx';
+import { AccessNotice, btn } from '../components/woCommon.jsx';
+import DataTable, { useGridColumns, ColumnChooser } from '../components/DataTable.jsx';
 import {
   rowsFromMatrix, matrixFromText, parseBooksComposites, readXlsxFile, downloadBooksSample, DIFF, Legend, PasteBox,
 } from '../components/BomTab.jsx';
+
+const COLUMNS = [
+  { key: 'name', label: 'Name', lock: true, render: c => <b style={{ color: 'var(--blue)' }}>{c.name}</b> },
+  { key: 'sku', label: 'SKU', render: c => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{c.sku || '—'}</span> },
+  { key: 'status', label: 'Status', render: c => c.status },
+];
 
 /**
  * Global BOM page (CR-028): a grid of Zoho Books composite items — no
@@ -83,8 +90,9 @@ export default function CompositeBomPage() {
   const filtered = (Array.isArray(rows) ? rows : []).filter(r =>
     !q || [r.name, r.sku].some(v => String(v || '').toLowerCase().includes(q.toLowerCase())),
   );
-  // Hooks must run on every render — keep usePager above the early returns.
+  // Hooks must run on every render — keep usePager/useGridColumns above the early returns.
   const { pageRows, pager } = usePager(filtered);
+  const { cols, chooser } = useGridColumns('wo.bom', COLUMNS);
 
   if (blocked) return <AccessNotice kind={blocked} />;
   if (selected === 'new') {
@@ -101,6 +109,7 @@ export default function CompositeBomPage() {
           style={{ width: 260, padding: '7px 11px', fontSize: 13, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)' }}
         />
         <div style={{ flex: 1 }} />
+        <ColumnChooser chooser={chooser} />
         <button onClick={() => sheet.fileRef.current?.click()} disabled={busy} style={btn}>⬆ Import Books export</button>
         <input ref={sheet.fileRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" onChange={sheet.onFile} style={{ display: 'none' }} />
         <button onClick={() => setSelected('new')} style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
@@ -143,17 +152,9 @@ export default function CompositeBomPage() {
 
       <div style={{ flex: 1, overflow: 'auto', padding: '0 20px' }}>
         {!rows ? <Empty>Loading…</Empty> : !filtered.length ? <Empty>No composite items in this Books org.</Empty> : (
-          <Table
-            head={['Name', 'SKU', 'Status']}
-            rows={pageRows.map(c => ({
-              key: c.id, onClick: () => setSelected(c),
-              cells: [
-                <b style={{ color: 'var(--blue)' }}>{c.name}</b>,
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{c.sku || '—'}</span>,
-                c.status,
-              ],
-            }))}
-          />
+          <div style={{ marginTop: 12 }}>
+            <DataTable cols={cols} rows={pageRows} onRowClick={c => setSelected(c)} />
+          </div>
         )}
       </div>
       <GridFooter pager={pager} />

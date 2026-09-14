@@ -2,7 +2,7 @@
 const express = require("express");
 const { rowList, out, idOk, orgClause, findSkuRowId, isActive } = require("../store");
 const { saveItemValues, deleteItemValues, missingRequired } = require("../itemValues");
-const { nextSeriesSku, stripSuffix, escRe } = require("../skuSeries");
+const { applySeries, stripSuffix, seriesConfig } = require("../skuSeries");
 const { assemble } = require("../skuBuild");
 const { pushToZoho } = require("../zoho/push");
 
@@ -46,24 +46,10 @@ router.post("/generate", async (req, res) => {
       return res.status(400).json({ error: e.message });
     }
     const { name: asmName, description: asmDescription, missingRequired } = asm;
-    let sku = asm.sku;
-    if (sku && Number(industry.seriesStart) > 0) {
-      // Numerical series (CR-089). Preview computes but never consumes a
-      // number. Editing keeps the item's existing suffix while its property
-      // combination is unchanged; a changed combination gets a fresh number.
-      const pad = Number(industry.seriesPad) || 4;
-      let kept = null;
-      if (idOk(excludeItemId)) {
-        const cur = rowList(
-          await zcql.executeZCQLQuery(
-            `SELECT sku FROM SKUItem WHERE ROWID = ${excludeItemId} AND ${orgClause(req.catalyst)}`,
-          ),
-        )[0];
-        const m = cur && new RegExp(`^${escRe(sku + sep)}(\\d{${pad}})$`, "i").exec(cur.sku);
-        if (m) kept = m[1];
-      }
-      sku = kept ? sku + sep + kept : await nextSeriesSku(req.catalyst, industryId, sku, sep, pad);
-    }
+    // Numerical series (CR-089/CR-094). Preview computes but never consumes a
+    // number. Editing keeps the item's existing suffix while its property
+    // combination (continuous) or key combination (params) is unchanged.
+    const sku = await applySeries(req.catalyst, industry, asm.sku, selectedValues, { excludeItemId });
     res.json({
       sku,
       name: asmName,
@@ -104,10 +90,11 @@ router.post("/create-item", async (req, res) => {
     // on the same combination converge on fresh numbers (the client sends the
     // preview's sku, which may be stale by now).
     let finalSku = sku;
-    if (Number(industry.seriesStart) > 0) {
-      const sep = industry.skuSeparator || "";
-      const pad = Number(industry.seriesPad) || 4;
-      finalSku = await nextSeriesSku(req.catalyst, industryId, stripSuffix(sku, sep, pad), sep, pad);
+    const cfg = await seriesConfig(req.catalyst, industry);
+    if (cfg.mode === "continuous" || cfg.mode === "params") {
+      finalSku = await applySeries(
+        req.catalyst, industry, stripSuffix(sku, cfg.sep, cfg.pad), selectedValues,
+      );
     }
     if (await findSkuRowId(req.catalyst, finalSku)) {
       return res.status(409).json({ error: "SKU already exists" });

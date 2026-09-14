@@ -4,16 +4,11 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
 import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
+import DataTable, { useGridColumns, ColumnChooser } from '../components/DataTable.jsx';
 
 // Read-only tracking grid for property values that were also created as standalone
 // Zoho Books items (CR-026). Managed on the property manager; this is just the
 // "where are they" view.
-const thStyle = {
-  padding: '10px 16px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
-  textAlign: 'left', cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap',
-  background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)',
-};
-const tdStyle = { padding: '10px 16px' };
 
 export default function BooksLinkedValuesPage() {
   const [rows, setRows] = useState([]);
@@ -45,11 +40,23 @@ export default function BooksLinkedValuesPage() {
     else { setSortCol(col); setSortDir('asc'); }
   }
 
-  const SortArrow = ({ col }) => (
-    <span style={{ marginLeft: 4, opacity: 0.5, fontSize: 10 }}>
-      {sortCol === col ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
-    </span>
-  );
+  // Columns need navigate for the property link, so they're built in-render.
+  const COLUMNS = [
+    { key: 'industryName', label: 'Industry', lock: true, sortKey: 'industryName', render: r => r.industryName || '—' },
+    {
+      key: 'propertyCaption', label: 'Property', sortKey: 'propertyCaption', render: r => (
+        <a
+          onClick={() => r.propertyId && navigate(`/sku/industries/${r.industryId || ''}/properties`)}
+          style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'none' }}
+          title="Open in property manager"
+        >{r.propertyCaption || '—'} ›</a>
+      ),
+    },
+    { key: 'displayValue', label: 'Value', sortKey: 'displayValue', render: r => <span style={{ fontWeight: 500 }}>{r.displayValue}</span> },
+    { key: 'sku', label: 'Code', sortKey: 'sku', render: r => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{r.sku}</span> },
+    { key: 'zohoItemId', label: 'Books item id', sortKey: 'zohoItemId', render: r => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{r.zohoItemId}</span> },
+  ];
+  const { cols, chooser } = useGridColumns('sku.books', COLUMNS);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -64,44 +71,20 @@ export default function BooksLinkedValuesPage() {
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
           <Toolbar
             onRefresh={load}
-            right={<FilterSelect label="industries" value={fIndustry} onChange={setFIndustry} options={distinct(rows, 'industryName')} />}
+            right={
+              <div style={{ display: 'flex', gap: 8 }}>
+                <ColumnChooser chooser={chooser} />
+                <FilterSelect label="industries" value={fIndustry} onChange={setFIndustry} options={distinct(rows, 'industryName')} />
+              </div>
+            }
           />
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr>
-                <th style={thStyle} onClick={() => toggleSort('industryName')}>Industry <SortArrow col="industryName" /></th>
-                <th style={thStyle} onClick={() => toggleSort('propertyCaption')}>Property <SortArrow col="propertyCaption" /></th>
-                <th style={thStyle} onClick={() => toggleSort('displayValue')}>Value <SortArrow col="displayValue" /></th>
-                <th style={thStyle} onClick={() => toggleSort('sku')}>Code <SortArrow col="sku" /></th>
-                <th style={thStyle} onClick={() => toggleSort('zohoItemId')}>Books item id <SortArrow col="zohoItemId" /></th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.length === 0 && (
-                <tr><td colSpan={5} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No values are linked to Books items yet.</td></tr>
-              )}
-              {pageRows.map(r => (
-                <tr
-                  key={r.id}
-                  style={{ borderTop: '1px solid var(--border)', transition: 'background 0.1s' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <td style={tdStyle}>{r.industryName || '—'}</td>
-                  <td style={tdStyle}>
-                    <a
-                      onClick={() => r.propertyId && navigate(`/sku/industries/${r.industryId || ''}/properties`)}
-                      style={{ color: 'var(--blue)', cursor: 'pointer', textDecoration: 'none' }}
-                      title="Open in property manager"
-                    >{r.propertyCaption || '—'} ›</a>
-                  </td>
-                  <td style={{ ...tdStyle, fontWeight: 500 }}>{r.displayValue}</td>
-                  <td style={{ ...tdStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{r.sku}</td>
-                  <td style={{ ...tdStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{r.zohoItemId}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <DataTable
+            cols={cols} rows={pageRows}
+            sort={{ key: sortCol, dir: sortDir }} onSort={toggleSort}
+          />
+          {pageRows.length === 0 && (
+            <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No values are linked to Books items yet.</div>
+          )}
         </div>
       </div>
 

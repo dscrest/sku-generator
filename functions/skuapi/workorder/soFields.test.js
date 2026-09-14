@@ -1,7 +1,7 @@
 "use strict";
 // Run: node functions/skuapi/workorder/soFields.test.js
 const assert = require("assert");
-const { soFields } = require("./soFields");
+const { soFields, woHeaderFields, USER_OWNED } = require("./soFields");
 
 const BLANK_CFS = {
   buyerOrderNo: "", buyerOrderDate: "", woPriority: "",
@@ -51,6 +51,42 @@ assert.deepStrictEqual(
 assert.deepStrictEqual(
   soFields({ custom_fields: [{ label: "Priority", value: null }] }),
   { soDate: "", shipmentDate: "", ...BLANK_CFS },
+);
+
+// ---- woHeaderFields (CR-113): user-entered create-form values win ----------
+
+const SO = {
+  date: "2026-09-01",
+  custom_fields: [
+    { label: "Priority", value: "High" },
+    { label: "WO Due Date", value: "2026-09-30" },
+    { label: "Machining Completion Date", value: "2026-09-20" },
+  ],
+};
+
+// User value beats the SO custom field; body `priority` lands in `woPriority`.
+assert.deepStrictEqual(
+  woHeaderFields(SO, { priority: "Urgent", dueDate: "2026-10-05", fittingDoneDate: "2026-10-01" }),
+  {
+    soDate: "2026-09-01", shipmentDate: "", buyerOrderNo: "", buyerOrderDate: "",
+    woPriority: "Urgent", dueDate: "2026-10-05",
+    machiningDoneDate: "2026-09-20", fittingDoneDate: "2026-10-01",
+  },
+);
+
+// Empty/absent/whitespace user values fall back to the SO custom fields.
+assert.deepStrictEqual(
+  woHeaderFields(SO, { priority: "", dueDate: "  ", machiningDoneDate: null }),
+  soFields(SO),
+);
+
+// No body at all behaves like plain soFields.
+assert.deepStrictEqual(woHeaderFields(SO), soFields(SO));
+
+// The user-owned column set is exactly the 4 create-form fields.
+assert.deepStrictEqual(
+  [...USER_OWNED].sort(),
+  ["dueDate", "fittingDoneDate", "machiningDoneDate", "woPriority"],
 );
 
 console.log("soFields.test.js: all assertions passed");

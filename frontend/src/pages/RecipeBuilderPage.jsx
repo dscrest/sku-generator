@@ -4,6 +4,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import Modal, { ModalFooter, ModalBtn, ConfirmModal } from '../components/Modal.jsx';
 import { StatusPill, inr } from './recipeShared.jsx';
+import DateInput from '../components/DateInput.jsx';
 
 const card = { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' };
 const inputStyle = {
@@ -46,6 +47,7 @@ export default function RecipeBuilderPage() {
   const [addingEl, setAddingEl] = useState(null); // {label, calcType, rate?, code?}
   const [confirmDelEl, setConfirmDelEl] = useState(null);
   const [masterEls, setMasterEls] = useState([]); // cost master, for the add-element picker
+  const [pushing, setPushing] = useState(false); // Push-to-Books dialog (CR-143)
 
   const load = useCallback(async () => {
     try {
@@ -208,6 +210,7 @@ export default function RecipeBuilderPage() {
           <StatusPill status={recipe.status} />
         </div>
         <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          {components.length > 0 && <button style={btn} onClick={() => setPushing(true)}>Push to Books</button>}
           <button style={btn} onClick={() => setTab('test')}>Test recipe</button>
           {!isDraft && <button style={btnPrimary} onClick={() => setNewVersion({ changeReason: '' })}>Edit recipe</button>}
           {isDraft && <button style={btnPrimary} onClick={publish}>Publish v{recipe.version}</button>}
@@ -247,7 +250,7 @@ export default function RecipeBuilderPage() {
                 <div><label style={labelStyle}>Version</label>
                   <input style={{ ...inputStyle, background: 'var(--bg-secondary)', color: 'var(--text-muted)' }} disabled value={`v${recipe.version}`} /></div>
                 <div><label style={labelStyle}>Effective from</label>
-                  <input style={inputStyle} type="date" disabled={!isDraft} value={meta.effectiveFrom} onChange={e => setMeta(v => ({ ...v, effectiveFrom: e.target.value }))} /></div>
+                  <DateInput style={inputStyle} disabled={!isDraft} value={meta.effectiveFrom} onChange={e => setMeta(v => ({ ...v, effectiveFrom: e.target.value }))} /></div>
                 {isDraft && <button style={{ ...btnPrimary, height: 34 }} onClick={saveMeta}>Save</button>}
               </div>
 
@@ -504,7 +507,110 @@ export default function RecipeBuilderPage() {
           Its column disappears from the material grid. Values already entered under it are ignored.
         </ConfirmModal>
       )}
+
+      {pushing && <PushBooksDialog bundle={bundle} onClose={() => setPushing(false)} onDone={() => { setPushing(false); load(); }} />}
     </div>
+  );
+}
+
+// Push-to-Books dialog (CR-143): preview the default BOM (first enabled
+// material per component), link to an existing Books composite on first push
+// (or create new), then POST push-books — which fully replaces mapped_items.
+function PushBooksDialog({ bundle, onClose, onDone }) {
+  const { recipe, components, options, materials } = bundle;
+  const [composites, setComposites] = useState(null); // null = loading
+  const [target, setTarget] = useState(''); // '' = create new
+  const [busy, setBusy] = useState(false);
+  const [errUnlinked, setErrUnlinked] = useState(null);
+
+  const linked = !!recipe.booksCompositeItemId;
+  useEffect(() => {
+    if (linked) return;
+    axios.get('/api/recipe/books-composites').then(r => setComposites(r.data)).catch(() => setComposites([]));
+  }, [linked]);
+
+  // Mirror of server-side bomLines: preview only, the server recomputes.
+  const matById = new Map(materials.map(m => [String(m.id), m]));
+  const preview = [...components].sort((a, b) => (a.sequence || 0) - (b.sequence || 0)).map(c => {
+    const opt = options.find(o => String(o.componentId) === String(c.id) && o.enabled !== false) || null;
+    const castWeight = opt ? Number(opt.castWeight) || 0 : 0;
+    const qty = Math.round((Number(c.qty) || 1) * castWeight * 100) / 100;
+    const material = opt ? matById.get(String(opt.materialId)) : null;
+    return { comp: c, material, castWeight, qty, skipped: !opt || qty <= 0 };
+  });
+  const unlinkedMats = [...new Map(preview.filter(p => !p.skipped && (!p.material || !p.material.zohoItemId))
+    .map(p => [String(p.material?.id || p.comp.id), p.material || { code: '?' }])).values()];
+  const pushable = preview.some(p => !p.skipped) && unlinkedMats.length === 0;
+
+  async function push() {
+    setBusy(true); setErrUnlinked(null);
+    try {
+      const { data } = await axios.post(`/api/recipe/recipes/${recipe.id}/push-books`, target ? { compositeItemId: target } : {});
+      toast.success(`Pushed to Books composite "${data.name}"${data.created ? ' (created)' : ''}`);
+      onDone();
+    } catch (e) {
+      const d = e.response?.data;
+      if (d?.error === 'reauth_required') toast.error('Reconnect Zoho from Settings to push');
+      else if (d?.unlinked) setErrUnlinked(d.unlinked);
+      else toast.error(d?.error || 'Push failed');
+      if (e.response?.status === 409 && d?.error !== 'reauth_required') onDone(); // stale link cleared server-side
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <Modal title={`Push "${recipe.name}" to Books`} onClose={onClose} onSubmit={pushable && !busy ? push : undefined} width={560}>
+      <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          <thead><tr>
+            {['Component', 'Material', 'Qty per unit', 'Books item'].map(h => (
+              <th key={h} style={{ ...colHead, padding: '6px 10px', textAlign: 'left' }}>{h}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {preview.map(p => (
+              <tr key={p.comp.id} style={{ borderTop: '1px solid var(--border)', color: p.skipped ? 'var(--text-muted)' : 'inherit' }}>
+                <td style={{ padding: '6px 10px' }}>{p.comp.name}</td>
+                <td style={{ padding: '6px 10px' }}>{p.skipped ? '— skipped (no material / zero qty)' : (p.material?.code || '?')}</td>
+                <td style={{ padding: '6px 10px', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                  {p.skipped ? '—' : `${Number(p.comp.qty) || 1} × ${p.castWeight} = ${p.qty} ${p.material?.uom || ''}`}
+                </td>
+                <td style={{ padding: '6px 10px' }}>
+                  {p.skipped ? '—' : p.material?.zohoItemId
+                    ? <span>{p.material.zohoItemName || p.material.zohoItemId}</span>
+                    : <span style={{ color: 'var(--red, #dc2626)', fontWeight: 500 }}>not linked</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {(unlinkedMats.length > 0 || errUnlinked) && (
+        <div style={{ fontSize: 12.5, color: 'var(--red, #dc2626)' }}>
+          Link these materials to a Books item first:{' '}
+          {(errUnlinked || unlinkedMats).map(m => m.code).join(', ')} — <Link to="/recipe/materials" style={{ color: 'var(--blue)' }}>open Materials</Link>
+        </div>
+      )}
+      {linked ? (
+        <div style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+          Linked to Books composite <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5 }}>{recipe.booksCompositeItemId}</span> — pushing replaces its component lines with the table above.
+        </div>
+      ) : (
+        <div>
+          <label style={labelStyle}>Books composite item</label>
+          <select style={{ ...inputStyle, background: 'var(--bg-card)' }} value={target} onChange={e => setTarget(e.target.value)}>
+            <option value="">— Create new composite item ({recipe.name} / {recipe.productCode || recipe.code}) —</option>
+            {(composites || []).map(c => <option key={c.id} value={c.id}>{c.name}{c.sku ? ` (${c.sku})` : ''}</option>)}
+          </select>
+          <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 4 }}>
+            {composites === null ? 'Loading Books composites…' : 'Picking an existing item overwrites its component lines (dummy lines are replaced). The link is remembered for future pushes.'}
+          </div>
+        </div>
+      )}
+      <ModalFooter>
+        <ModalBtn onClick={onClose}>Cancel</ModalBtn>
+        <ModalBtn variant="primary" disabled={!pushable || busy} onClick={push}>{busy ? 'Pushing…' : 'Proceed Push'}</ModalBtn>
+      </ModalFooter>
+    </Modal>
   );
 }
 

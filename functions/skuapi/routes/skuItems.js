@@ -6,6 +6,9 @@ const { listStockAccounts } = require("../zoho/booksApi");
 const { importFromBooks } = require("../zoho/import");
 const { searchItemIds, deleteItemValues, backfillItemValues } = require("../itemValues");
 const { processImport } = require("../importItems");
+const { processBooksImport } = require("../booksImport");
+// Generic OrgSetting helpers (not work-order-specific despite the home).
+const { settings, setSetting } = require("../workorder/store");
 
 const router = express.Router();
 const TABLE = "SKUItem";
@@ -48,6 +51,62 @@ router.get("/stock-accounts", async (req, res) => {
   }
 });
 
+// SKU module org settings: auto-push imported items to Books + numerical
+// series (CR-136: skuSeriesMode/skuSeriesPad OrgSettings; empty mode =
+// legacy per-industry seriesStart fallback, see skuSeries.js).
+const clampPad = (v) => Math.min(8, Math.max(1, Number(v) || 4));
+const TYPES = ["Trading", "Manufacturing"];
+
+function settingsOut(s) {
+  return {
+    autoPushImport: s.skuAutoPushImport === "true",
+    seriesMode: s.skuSeriesMode || "",
+    seriesPad: clampPad(s.skuSeriesPad),
+    defaultItemType: TYPES.includes(s.skuDefaultItemType) ? s.skuDefaultItemType : "Trading",
+  };
+}
+
+router.get("/settings", async (req, res) => {
+  try {
+    const s = await settings(req.catalyst, req.orgId);
+    const o = settingsOut(s);
+    if (!s.skuSeriesMode) {
+      // Legacy orgs configured the series per-industry (CR-089) — surface the
+      // effective state so the settings UI preselects it; first save persists
+      // it org-wide and the fallback stops mattering.
+      const ind = rowList(
+        await req.catalyst.zcql().executeZCQLQuery(
+          `SELECT seriesStart, seriesPad FROM Industry WHERE ${orgClause(req.catalyst)} LIMIT 1`,
+        ),
+      )[0];
+      if (ind && Number(ind.seriesStart) > 0) {
+        o.seriesMode = "continuous";
+        o.seriesPad = clampPad(ind.seriesPad);
+      } else {
+        o.seriesMode = "off";
+      }
+    }
+    res.json(o);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put("/settings", async (req, res) => {
+  try {
+    const b = req.body || {};
+    const mode = ["off", "continuous", "params"].includes(b.seriesMode) ? b.seriesMode : "";
+    await setSetting(req.catalyst, req.orgId, "skuAutoPushImport", b.autoPushImport ? "true" : "");
+    await setSetting(req.catalyst, req.orgId, "skuSeriesMode", mode);
+    await setSetting(req.catalyst, req.orgId, "skuSeriesPad", String(clampPad(b.seriesPad)));
+    await setSetting(req.catalyst, req.orgId, "skuDefaultItemType",
+      TYPES.includes(b.defaultItemType) ? b.defaultItemType : "");
+    res.json(settingsOut(await settings(req.catalyst, req.orgId)));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // One-shot backfill of structured values for pre-existing items. Idempotent.
 router.post("/backfill-values", async (req, res) => {
   try {
@@ -74,13 +133,39 @@ router.post("/import-zoho", async (req, res) => {
 // "Item Type": "Trading"|"Manufacturing" }] (the sheet is parsed to objects in the
 // browser). Runs each row through the same engine as the manual generator (assemble
 // → series → dup check → saveItemValues). Per-row results; one bad row never aborts
-// the batch. Books push stays manual — user clicks "Push all unsynced" afterwards.
+// the batch. format: "books" switches to the Zoho Books item-sheet columns
+// (booksImport.js). Push to Books stays manual unless the org's
+// skuAutoPushImport setting is on — then each created row is pushed here.
 router.post("/import", async (req, res) => {
-  const { industryId, rows } = req.body || {};
+  const { industryId, rows, format } = req.body || {};
   if (!idOk(industryId)) return res.status(400).json({ error: "Invalid industryId" });
   if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: "rows required" });
   try {
-    res.json(await processImport(req.catalyst, industryId, rows));
+    const result = format === "books"
+      ? await processBooksImport(req.catalyst, industryId, rows)
+      : await processImport(req.catalyst, industryId, rows);
+    const s = await settings(req.catalyst, req.orgId);
+    if (s.skuAutoPushImport === "true") {
+      // Sequential on purpose: Dev FUNCTIONS caps out around 10 concurrent.
+      // ponytail: auto-push of very large batches can hit the function timeout —
+      // keep such batches ≤ ~100 rows; upgrade path is a Catalyst Job.
+      for (const r of result.results) {
+        if (r.status !== "success") continue;
+        try {
+          const found = rowList(
+            await req.catalyst.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE ROWID = ${r.itemId} AND ${orgClause(req.catalyst)}`),
+          );
+          if (!found.length) continue;
+          const item = out(found[0]);
+          await pushToZoho(req.catalyst, item, item.description);
+          r.pushed = true;
+        } catch (e) {
+          r.pushed = false;
+          r.pushError = e.message;
+        }
+      }
+    }
+    res.json(result);
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
@@ -93,7 +178,6 @@ router.post("/import", async (req, res) => {
 // NB: ZCQL's LIKE wildcard is * (case-insensitive), not SQL's %.
 // ponytail: LIKE '*q*' is a table scan and pulls one 300-row ZCQL page; fine for
 // the internal app. Swap the q path to Catalyst Search (app.search()) for CRM/scale.
-const TYPES = ["Trading", "Manufacturing"];
 router.post("/search", async (req, res) => {
   const { industryId, filters, q, sku, type, withValues } = req.body || {};
   if (industryId && !idOk(industryId)) return res.status(400).json({ error: "Invalid industryId" });

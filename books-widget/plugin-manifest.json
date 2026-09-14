@@ -1,0 +1,32 @@
+{
+  "locale": [
+    "en"
+  ],
+  "service": "FINANCE",
+  "modules": {
+    "widgets": [
+      {
+        "location": "invoice.details.button",
+        "widget_type": "modal",
+        "name": "Print Packing List",
+        "url": "/app/widget.html"
+      },
+      {
+        "location": "salesorder.details.button",
+        "widget_type": "modal",
+        "name": "Print Packing List",
+        "url": "/app/widget.html"
+      }
+    ]
+  },
+  "whiteListedDomains": [
+    "https://sku-gen-octfis-925638796.development.catalystserverless.com"
+  ],
+  "cspDomains": {
+    "connect-src": [
+      "https://sku-gen-octfis-925638796.development.catalystserverless.com"
+    ]
+  },
+  "config": [],
+  "usedConnections": []
+}
