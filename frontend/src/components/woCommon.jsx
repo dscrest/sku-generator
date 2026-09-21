@@ -2,14 +2,16 @@
 // constants every /wo page uses. Extracted from WorkOrderPage (CR-018).
 import { dueDays } from '../format.js';
 
+// Lifecycle (CR-160): Draft → [PendingApproval →] Approved → ReadyForMachining →
+// MachiningInProgress → ReadyForFitting → FittingInProgress → ReadyForDispatch →
+// Completed → Dispatched → Closed; Hold / Cancelled on the side.
 export const STATUS_TONE = {
-  Draft: '#64748b', PendingApproval: '#b45309', Approved: '#0369a1', MaterialAllocationPending: '#b45309',
-  ReadyForProduction: '#0d9488', InProgress: '#2563eb', QualityCheck: '#7c3aed',
-  Completed: '#15803d', Closed: '#334155', Cancelled: '#b91c1c',
+  Draft: '#64748b', PendingApproval: '#b45309', Approved: '#0369a1', Hold: '#b45309',
+  ReadyForMachining: '#0369a1', MachiningInProgress: '#2563eb', ReadyForFitting: '#0d9488',
+  FittingInProgress: '#2563eb', ReadyForDispatch: '#7c3aed',
+  Completed: '#15803d', Dispatched: '#0f766e', Closed: '#334155', Cancelled: '#b91c1c',
 };
-// Display renames the camelCase split can't produce (CR-114: MaterialAllocationPending → "Pending Allocation").
-const LABEL_OVERRIDE = { MaterialAllocationPending: 'Pending Allocation' };
-export const spaced = s => LABEL_OVERRIDE[s] || String(s || '').replace(/([a-z])([A-Z])/g, '$1 $2');
+export const spaced = s => String(s || '').replace(/([a-z])([A-Z])/g, '$1 $2');
 
 // Procurement status (CR-023) — a dimension separate from the manufacturing
 // status above, derived from a work order's purchase-request lines. Friendly
@@ -24,9 +26,10 @@ export const PROC_LABEL = {
 
 // Chips render a short code to keep grid columns narrow; full label on hover.
 const STATUS_ABBREV = {
-  Draft: 'DRF', PendingApproval: 'PAP', Approved: 'APR', MaterialAllocationPending: 'MAP',
-  ReadyForProduction: 'RFP', InProgress: 'IP', QualityCheck: 'QC',
-  Completed: 'CMP', Closed: 'CLS', Cancelled: 'CXL',
+  Draft: 'DRF', PendingApproval: 'PAP', Approved: 'APR', Hold: 'HLD',
+  ReadyForMachining: 'RFM', MachiningInProgress: 'MIP', ReadyForFitting: 'RFF',
+  FittingInProgress: 'FIP', ReadyForDispatch: 'RFD',
+  Completed: 'CMP', Dispatched: 'DSP', Closed: 'CLS', Cancelled: 'CXL',
 };
 const PROC_ABBREV = { Requested: 'REQ', PORaised: 'PO', PartiallyReceived: 'PRC', Fulfilled: 'RCV' };
 // Fallback for statuses not in a map: initials of words, or first 3 letters.
@@ -36,20 +39,35 @@ export const abbr = (label) => {
   return (words.length > 1 ? words.map(w => w[0]).join('') : words[0].slice(0, 3)).toUpperCase();
 };
 
-function Chip({ tone, label, full }) {
+// `ghost` (CR-173): dashed outline, no fill — a stage that is not yet reached.
+function Chip({ tone, label, full, ghost }) {
   return (
     <span title={full} style={{
       fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 99,
-      color: tone, background: `${tone}18`, whiteSpace: 'nowrap',
+      color: tone, whiteSpace: 'nowrap',
+      ...(ghost ? { border: `1px dashed ${tone}`, opacity: 0.8, padding: '1px 8px' } : { background: `${tone}18` }),
     }}>
       {label}
     </span>
   );
 }
 
-export function StatusChip({ status }) {
+export function StatusChip({ status, ghost }) {
   const full = spaced(status);
-  return <Chip tone={STATUS_TONE[status] || '#64748b'} label={STATUS_ABBREV[status] || abbr(full)} full={full} />;
+  return <Chip tone={STATUS_TONE[status] || '#64748b'} label={ghost ? full : STATUS_ABBREV[status] || abbr(full)} full={full} ghost={ghost} />;
+}
+
+// Current → next stage hint, arrow-connected to the status chip (CR-173).
+// `next` = the first forward move from the API's nextStatuses; nothing on finals.
+export function NextStage({ next }) {
+  if (!next) return null;
+  return (
+    <span title="Next stage" style={{ display: 'inline-flex', alignItems: 'center', marginLeft: -4 }}>
+      <span style={{ width: 14, height: 1, background: 'var(--text-muted)' }} />
+      <span style={{ color: 'var(--text-muted)', fontSize: 10, marginLeft: -3, marginRight: 4 }}>▶</span>
+      <StatusChip status={next} ghost />
+    </span>
+  );
 }
 
 // Nothing requested yet → no chip (keeps the WO list quiet until a PR exists).
@@ -84,6 +102,9 @@ export const can = (user, key) => {
 
 // WO priority options (CR-113) — shared by the Create and Edit modals.
 export const WO_PRIORITIES = ['Low', 'Medium', 'High', 'Urgent'];
+
+// FG option label everywhere: "Name · Size × Qty" (Size from the Books item, CR-159).
+export const fgLabel = f => `${f.name}${f.size ? ` · ${f.size}` : ''} × ${f.qty}`;
 
 // Days until the WO due date (CR-110): red once overdue, — when no due date.
 export function DueDays({ date }) {

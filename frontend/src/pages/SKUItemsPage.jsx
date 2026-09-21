@@ -53,6 +53,12 @@ export default function SKUItemsPage() {
   // inventory account only apply on Books create — a re-push of a linked item
   // takes the update path where they're immutable.
   const [pushCfg, setPushCfg] = useState(null); // { target, tracking, accountId } | null
+  const [pushDefaults, setPushDefaults] = useState(null); // org settings: pushTracking/pushAccountId (CR-166), typeLabels (CR-180)
+  // Org display labels for Trading/Manufacturing (CR-180) — fetched once per visit.
+  useEffect(() => {
+    axios.get('/api/sku-items/settings').then((r) => setPushDefaults(r.data)).catch(() => {});
+  }, []);
+  const typeLabel = (t) => pushDefaults?.typeLabels?.[t] || t;
   const [stockAccounts, setStockAccounts] = useState(null); // null = not loaded yet, [] = fetch failed
 
   // Text filters (free-text + SKU), debounced so we don't fire per keystroke.
@@ -173,13 +179,20 @@ export default function SKUItemsPage() {
     e?.stopPropagation();
     if (pushingId) return;
     if (target === 'ALL' && !items.some(i => !i.zohoItemId)) return toast('Everything is already synced to Books');
-    setPushCfg({ target, tracking: 'serial', accountId: '' });
+    // Dialog opens on the org defaults (SKU Settings → Push defaults, CR-166);
+    // fetched once per page visit, editable per push.
+    let d = pushDefaults;
+    if (!d) {
+      try { d = (await axios.get('/api/sku-items/settings')).data; } catch { d = {}; }
+      setPushDefaults(d);
+    }
+    setPushCfg({ target, tracking: d.pushTracking || 'serial', accountId: d.pushAccountId || '' });
     if (stockAccounts !== null) return;
     try {
       const { data } = await axios.get('/api/sku-items/stock-accounts');
       setStockAccounts(data);
       const fg = data.find(a => /finished goods/i.test(a.name));
-      if (fg) setPushCfg(cfg => (cfg ? { ...cfg, accountId: fg.id } : cfg));
+      if (fg && !d.pushAccountId) setPushCfg(cfg => (cfg ? { ...cfg, accountId: fg.id } : cfg));
     } catch {
       setStockAccounts([]); // dropdown falls back to the Books default
     }
@@ -289,7 +302,7 @@ export default function SKUItemsPage() {
     {
       key: 'type', label: 'Type', sortKey: 'type', render: item => (
         <span style={{ fontSize: 11, fontWeight: 500, padding: '2px 8px', borderRadius: 10, background: item.type === 'Trading' ? '#f0fdf4' : '#faf5ff', color: item.type === 'Trading' ? '#16a34a' : '#7c3aed', border: `1px solid ${item.type === 'Trading' ? '#bbf7d0' : '#e9d5ff'}` }}>
-          {item.type}
+          {typeLabel(item.type)}
         </span>
       ),
     },
@@ -390,8 +403,8 @@ export default function SKUItemsPage() {
         />
         <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={selectStyle}>
           <option value="">All Types</option>
-          <option value="Trading">Trading</option>
-          <option value="Manufacturing">Manufacturing</option>
+          <option value="Trading">{typeLabel('Trading')}</option>
+          <option value="Manufacturing">{typeLabel('Manufacturing')}</option>
         </select>
         <select value={filterIndustry} onChange={e => setFilterIndustry(e.target.value)} style={selectStyle}>
           <option value="">All Industries</option>
@@ -565,10 +578,10 @@ export default function SKUItemsPage() {
                       <select
                         style={{ ...inputStyle, cursor: selectedItem?.zohoItemId ? 'not-allowed' : 'pointer', opacity: selectedItem?.zohoItemId ? 0.6 : 1 }}
                         disabled={Boolean(selectedItem?.zohoItemId)}
-                        title={selectedItem?.zohoItemId ? 'Type is locked after pushing to Zoho Books — Trading and Manufacturing map to different Books item kinds' : undefined}
+                        title={selectedItem?.zohoItemId ? `Type is locked after pushing to Zoho Books — ${typeLabel('Trading')} and ${typeLabel('Manufacturing')} map to different Books item kinds` : undefined}
                         value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}>
-                        <option value="Trading">Trading</option>
-                        <option value="Manufacturing">Manufacturing</option>
+                        <option value="Trading">{typeLabel('Trading')}</option>
+                        <option value="Manufacturing">{typeLabel('Manufacturing')}</option>
                       </select></div>
                     <div><label style={labelStyle}>Industry</label>
                       <div style={{ ...inputStyle, background: 'transparent', border: '1px solid transparent', padding: '9px 0' }}>{selectedItem?.industry?.name || '—'}</div></div>

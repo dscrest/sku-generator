@@ -176,6 +176,8 @@ export function buildEstimate(quote, { merge = true } = {}) {
       // Subject fallback — the Subject is a free-text title, not a quote number.
       offerNo: quote.Quote_No || quote.Quote_Number || "",
       date: ddmmyyyy(quote.Created_Time),
+      // "Offer Prepared By" = the CRM user who created the Quote.
+      preparedBy: quote.Created_By?.name || "",
       discountPct: parseDiscountPct(quote.Select_discount) ?? (Number(quote.Discount) || null),
     },
     items,

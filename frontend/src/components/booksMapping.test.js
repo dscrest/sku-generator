@@ -15,6 +15,10 @@ assert.equal(m['GSM (Custom Field)'], 'CF.GSM');
 // no rename guessing — unmatched stays unmapped
 assert.equal(m['Selling Price'], '');
 
+// Books export's "Category Name" feeds the Category property; exact header wins.
+assert.equal(autoMap(['Category (Custom Field)'], ['Category Name'])['Category (Custom Field)'], 'Category Name');
+assert.equal(autoMap(['Category (Custom Field)'], ['Category Name', 'CF.Category'])['Category (Custom Field)'], 'CF.Category');
+
 const rows = applyMapping(
   [{ 'item name': 'Chair', Sku: 'CH-1', 'Sell Price': '99', 'Extra Col': 'x' }],
   { ...m, 'Selling Price': 'Sell Price' },

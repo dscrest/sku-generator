@@ -139,6 +139,7 @@ A configurable attribute of an industry contributing one segment to the SKU.
 | `clubKey` | string? | **Clubbing (CR-025).** Properties of the same industry sharing a non-empty `clubKey` concatenate their SKU codes with **no** separator into one segment (e.g. Body + Gland). Null = standalone segment. The industry separator still applies between segments; a club renders at its first member's `skuPosition` |
 | `createValuesAsItems` | bool? | **CR-026 gate.** When true, every value of this property is created/synced to Zoho Books as an item (best-effort). Turning it on backfills existing values. Un-flagged properties never create items — replaces the per-value `PropertyValue.createAsItem` toggle |
 | `showInWidget` | bool? | **CR-108.** Property appears as a filter parameter in the CRM quote widget's "Add filter" menu. Null/false = hidden |
+| `sizingRole` | string(20)? | **CR-181.** Product Configurator sizing role: `capacity` (TPH), `density` (kg/ltr), `speed` (RPM), `group` (type answer that filters `SizingModel.groupValue`) are inputs; `series` / `model` are filled by the picked sizing option. Blank = ordinary question. The configurator widget shows the sizing block only when an industry has `model` + `capacity` + `density` roles |
 | `orgId` | string | Tenant key |
 
 ### PropertyValue
@@ -170,7 +171,7 @@ A generated, persisted product.
 | `description` | string? | One `Caption: Value` line per filled property, newline-joined. **Must hold ~900 chars** (24 lines) — widen to `text` if it is a short varchar |
 | `type` | string | `Trading` or `Manufacturing` |
 | `industryId` | string FK | Source industry |
-| `zohoItemId` | string? | Linked Zoho Books `item_id` once pushed |
+| `zohoItemId` | string? | Linked Zoho Books `item_id` once pushed — also set at create time by the Books API import and by the Books-sheet import's `Item ID` column (CR-189) |
 | `lastPushedAt` | datetime? | When the SKU last landed in Books (stamped by `pushToZoho`); compared to `MODIFIEDTIME` for the "Edited · Re-push" stale-sync badge (CR-038) |
 | `booksData` | text? | JSON of Zoho Books item fields captured by the Books-sheet import (rate, hsn_or_sac, unit, product_type, item_type, package_details, …) — merged into the Books push payload; `_`-prefixed keys are reference-only (CR-127) |
 | `orgId` | string | Tenant key |
@@ -244,6 +245,7 @@ become a column. Read via `workorder/settings.js`.
 | `orgId` | string | Tenant key |
 | `settingKey` | string | `mainWarehouseId`, `reserveWarehouseId`, `issueWarehouseId`, `purchaseTeamEmail`, `approverL1Email`, `approverL2Email`, `approvalLevels` (`0`/`1`/`2`; unset = derive from approver emails, CR-082), `shortfallAlertDays`, `costAlertPct`, `woNumberPrefix`, `prNumberPrefix`, `txnNumberPrefix` — the full list is `SETTING_KEYS` in `workorder/store.js` |
 | `settingValue` | string(255) | Always stored as text; callers coerce |
+| `settingText` | text(10000) | Large JSON settings that overflow `settingValue` (CR-192): keys `estimateTpl` (one row per quote T&C template, `{ name, terms[] }`, template id = ROWID — the only key with many rows per org) and `estimateBank` (shared bank/contact table). `settingValue` stays blank on these rows, so `settings()` ignores them |
 
 > Named `settingKey`/`settingValue`, not `key`/`value` — the bare words are
 > reserved in enough SQL dialects to not be worth risking in ZCQL.
@@ -258,21 +260,24 @@ The BRD's BOM header — one per Work Order, linked to a confirmed Sales Order.
 | `woDate` | string | `yyyy-MM-dd` |
 | `salesOrderId` / `salesOrderNumber` | string | Zoho SO link |
 | `customerId` / `customerName` | string | Denormalised from the SO so lists cost no API |
-| `projectName` | string? | BRD's "Project \| SO \| WO" reference |
-| `status` | string | `Draft` → `PendingApproval` (only when 2 approval levels apply — explicit `approvalLevels` setting, or an L2 approver email when unset; 0 levels = no approval needed, CR-082) → `Approved` → `MaterialAllocationPending` → `ReadyForProduction` → `InProgress` → `QualityCheck` → `Completed` → `Closed`; `Cancelled` terminal. Only the approval flow reaches `Approved` (the manual status dropdown cannot). Closing gates on all items issued (warn + force to override); `Closed` → `Completed` only via the admin-only `/reopen` route with a reason (CR-080) |
-| `qcStatus` | string? | `Passed` \| `Rejected` — required before `Completed` |
+| `projectName` | string? | Retired (CR-159): no longer written or shown; column kept |
+| `status` | string | CR-160: `Draft` → `PendingApproval` (only when 2 approval levels apply — explicit `approvalLevels` setting, or an L2 approver email when unset; 0 levels = no approval needed, CR-082) → `Approved` → `ReadyForMachining` → `MachiningInProgress` → `ReadyForFitting` → `FittingInProgress` → `ReadyForDispatch` → `Completed` → `Dispatched` → `Closed`; `Hold` (from any open status, resumes to `heldFrom`) and `Cancelled` (de-reserves) on the side. Only the approval flow reaches `Approved`; Draft → ReadyForMachining directly only when approval levels = 0. Reserve/issue allowed from `ReadyForMachining` to `ReadyForDispatch`; Assemble only at `ReadyForDispatch`; `Completed` needs every FG assembled ≥ 1 + nothing reserved (CR-151); leaving `MachiningInProgress` / `FittingInProgress` needs `machiningDoneDate` / `fittingDoneDate`. Closing gates on all items issued (warn + force to override); `Closed` → `Dispatched` only via the admin-only `/reopen` route with a reason (CR-080). Table lives in `workorder/status.js` |
+| `heldFrom` | string? | Status to resume to while `status = Hold`; cleared on resume (CR-160) |
+| `qcStatus` | string? | `Passed` \| `Rejected` \| `NotApplicable` — required before `Completed`; Rejected records only, status stays (CR-160); NotApplicable completes like Passed (CR-161) |
 | `revision` | number | Current BOM revision, starts 0 |
 | `bomImportedAt` | datetime? | Drives the shortfall alert (BOM import + `shortfallAlertDays`) |
-| `estimatedCost` / `actualCost` | number? | Cost-threshold alert (FR-ADO-006) |
+| `estimatedCost` / `actualCost` | number? | Retired (CR-159): no longer written or shown; columns kept. The cost-threshold alert (FR-ADO-006, `alerts.js`) is a no-op with estimate 0 |
 | `notes` | text? | |
 | `lastViewedAt` | datetime? | When the WO detail was last opened (stamped fire-and-forget by `GET /:id`) — drives the unseen-progress red dot (CR-099); org-wide, not per-user |
 | `soDate` / `shipmentDate` | string? | SO date / expected shipment date, denormalised from the Books SO and re-synced on every detail open (CR-110) |
 | `buyerOrderNo` / `buyerOrderDate` | string? | SO custom fields "Buyer Order No" / "Buyer Order Date", label-matched (CR-110) |
+| `freightCharge` / `delivery` / `booking` / `transporter` | string? | SO custom fields "Freight Charge" / "Delivery" / "Booking" / "Transporter", label-matched, re-synced on every open (CR-161) |
+| `tcRequired` | string? | `Yes` \| `No` \| blank — test certificate required; user-entered at create / Edit (CR-161) |
 | `woPriority` | string? | User-entered at WO create (Low/Medium/High/Urgent; SO custom field "Priority" is prefill only, CR-113) — column named `woPriority` because `priority` is a Catalyst reserved keyword; API serves it as `priority` (CR-110) |
-| `dueDate` | string? | User-entered at WO create (SO custom field "WO Due Date" is prefill only, CR-113); due *days* are computed client-side, never stored (CR-110) |
-| `machiningDoneDate` / `fittingDoneDate` | string? | User-entered at WO create (SO custom fields "Machining Completion Date" / "Fitting Completion Date" are prefill only, CR-113; CR-110) |
+| `dueDate` | string? | = `shipmentDate` — the SO's Expected Shipment (built-in `shipment_date`, or a CF labelled "Expected Shipment (Date)"), re-synced on every open (CR-159); due *days* are computed client-side, never stored (CR-110) |
+| `machiningDoneDate` / `fittingDoneDate` | string? | Machining / Fitting date, asked on → Ready for Machining (fitting optional) and again on → Fitting in Progress if fitting is still blank (CR-160, CR-170); shown on the WO header card |
 
-The 4 user-owned columns above are in `USER_OWNED` (`workorder/soFields.js`): the on-open SO re-sync only backfills them when blank (CR-113); `soDate`/`shipmentDate`/`buyerOrderNo`/`buyerOrderDate` keep re-syncing on every open.
+`woPriority` is the only user-owned column (`USER_OWNED`, `workorder/soFields.js`): the on-open SO re-sync only backfills it when blank (CR-113); every other SO-derived column re-syncs on every open.
 
 ### WorkOrderFG
 One finished good on the work order (an SO line). A WO may carry several.
@@ -282,6 +287,7 @@ One finished good on the work order (an SO line). A WO may carry several.
 | `orgId`, `workOrderId` | string | Keys |
 | `fgItemId` | string | Zoho composite item id |
 | `fgName` / `fgSku` | string | Denormalised |
+| `fgSize` | string? | The Books item's "Size" custom field, label-matched (CR-159). Fetched once at create (`GET /items/:id`); `null` = never fetched (pre-CR-159 rows, backfilled on next WO open), `""` = item has no Size |
 | `fgQty` | number | Quantity to produce — the multiplier for column A |
 | `assembledQty` | number | Units turned into FG stock via Zoho assemblies (CR-126) |
 | `status` | string? | `Closed` once `assembledQty ≥ fgQty`; blank otherwise (CR-126) |
@@ -298,7 +304,7 @@ edit cannot retroactively rewrite a closed work order.
 | `rmName` / `rmSku` / `uom` | string? | Denormalised |
 | `perUnitQty` | number | From `composite_item.mapped_items[].quantity` |
 | `requiredQty` | number | Column **A** = `perUnitQty × fgQty` |
-| `source` | string | `composite` \| `excel` \| `manual` |
+| `source` | string | `composite` \| `excel` \| `manual` \| `self` (non-composite SO item is its own one-line BOM, CR-152) |
 | `diffStatus` | string? | `unchanged` \| `new` \| `qtyChanged` \| `removed` — drives the import diff colours |
 | `prevQty` | number? | Previous `requiredQty` when `diffStatus = qtyChanged` |
 | `revision` | number | Revision this line belongs to |
@@ -395,6 +401,7 @@ assemblies each get a row; `WorkOrderFG.assembledQty` is the running sum.
 | `fgItemId` | string | Zoho composite item id |
 | `qty` | number | Units assembled by this bundle |
 | `zohoBundleId` / `zohoBundleNumber` | string? | The Zoho Inventory bundle |
+| `serialNumbers` | text? | **CR-150.** JSON array of the finished-good serials this bundle produced (`["KGV2026001", …]`, `<ValveTypeCode><YYYY><NNN>`); 10000 chars ⇒ ≤700 units per assembly |
 | `createdBy` | string? | AppUser ROWID |
 
 ### CompositeItemCache
@@ -568,6 +575,22 @@ references an attr row.
 | `defaultValueId` | string(50) | PropertyValue ROWID, optional |
 | `sequence` | int | Display order within the component |
 
+### SizingModel — table id `69851000000275543` (CR-181)
+Product Configurator sizing master: one row per model with its capacity. The
+CRM configurator widget proposes, per series inside the asked group, the
+smallest Active model whose `capacity` covers the duty (`recipe/sizing.js`).
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `orgId` | string(50) | Tenant key |
+| `industryId` | string(50) | Industry ROWID — the product (RAV / DVT / Sift) |
+| `groupValue` | string(50) | Display text of the `group`-role question's value (`Drop through`, `Blow Through`, `Sanitary`, `IC`, `CB`); matched case-insensitively |
+| `series` | string(50) | Sheet column (`Square`, `RAVH-S Square`, `Round`, `Round Old`, `RAVH-S IC`, `RAVS`, `CB`, `RAVB Square`); must equal a value of the `series`-role question |
+| `modelCode` | string(50) | e.g. `RAVH 150`; must equal a value of the `model`-role question (name match — no value id stored) |
+| `capacity` | double(15,4) | ltr/rev |
+| `recipeCode` | string(50) | `RecipeTemplate.code` lineage (survives versions). Stored hook for design-driven BOM/price — not read yet |
+| `status` | string(20) | `Active` \| `Inactive` |
+
 ### RecipeQuotation — table id `69851000000258813`
 Self-contained quotation with the **immutable configuration snapshot**.
 Recipe/rate edits never touch existing rows; the snapshot is recomputed and
@@ -604,18 +627,20 @@ Zoho Books widget (`/server/skuapi/packing`, `routes/packing.js`).
 
 ### PackingBox — table id `69851000000255819`
 
-Row per box/pallet — no plan-size cap from the 10000-char text limit.
-Replaced wholesale on every save; BOX/PALLET numbers derived from `seq` order
-at render (two independent 1..N counters), never stored.
+Row per package — no plan-size cap from the 10000-char text limit.
+Replaced wholesale on every save; package numbers are a single 1..N series
+derived from `seq` order at render (CR-164; was two BOX/PALLET counters),
+never stored. A package holds one or more items.
 
 | Column | Type | Purpose |
 |--------|------|---------|
 | `orgId` | varchar(50), **mandatory** | Tenant key |
 | `listId` | varchar(20), mandatory | PackingList ROWID (string FK, hand-cascaded) |
 | `seq` | int, mandatory | Render order |
-| `kind` | varchar(10) | `box` \| `pallet` |
-| `dims` | varchar(100) | Box size text, printed under the description |
-| `itemsJson` | text | JSON array `[{itemId, name, hsn, size, qty, weightPc, netWeight, grossWeight}]` — widget UI writes one item per box; multi-item boxes already legal here |
+| `kind` | varchar(10) | `wooden` \| `corrugated` \| `pallet` \| `loose` (CR-164); legacy `box` rows read as `wooden` |
+| `dims` | varchar(100) | Box size text `L X B X H` (cm), printed on the sheet's PACKING DETAILS cell and the sticker |
+| `grossWeight` | double(2) | Gross weight of the whole package, kg (CR-164, col 69851000000275516). Rows saved before it carry gross in `itemsJson[0].grossWeight`; read as a fallback |
+| `itemsJson` | text | JSON array `[{itemId, name, hsn, size, qty, weightPc, netWeight}]` — one entry per item in the package (multi-item since CR-164) |
 
 ---
 
@@ -625,6 +650,19 @@ Newest first. One row per applied schema change; link the CR that requested it.
 
 | Date | CR | Change | Applied |
 |------|----|--------|---------|
+| 2026-09-21 | [CR-192](CHANGES.md) | `OrgSetting.settingText` text(10000) — quote T&C templates JSON (keys `estimateTpl` ×N, `estimateBank`) | ✅ live (Dev, via MCP) |
+| 2026-09-18 | [CR-184](CHANGES.md) | No schema change — `OrgSetting` key `cfgNoAutoPush` (`true` = CRM widgets save new items to the SKU master without pushing to Books; blank = push at once) replaces `cfgNoAutoCreate`, which is now ignored | ✅ n/a |
+| 2026-09-17 | [CR-182](CHANGES.md) | No schema change — new `OrgSetting` key `cfgNoAutoCreate` (`true` = the Product Configurator widget does NOT create new items by default; blank = auto-create on) | ✅ n/a |
+| 2026-09-17 | [CR-181](CHANGES.md) | New table `SizingModel` (69851000000275543: `orgId`, `industryId`, `groupValue`, `series`, `modelCode`, `capacity` double 4dp, `recipeCode`, `status`) + `Property.sizingRole` (varchar 20, nullable, 69851000000286486). Both added via Catalyst MCP (Development) | ✅ live (Dev) |
+| 2026-09-16 | [CR-180](CHANGES.md) | No schema change — new `OrgSetting` keys `skuTypeLabelTrading` and `skuTypeLabelManufacturing` (org display label for each stored item type, ≤60 chars; blank = `Direct Purchase` / `In-House Manufacturing`). The label is also the value the CRM quote widget writes to `Products.Item_Source` | n/a |
+| 2026-09-16 | [CR-167](CHANGES.md) | No schema change — `PackingBox.dims` keeps the `"L X W X H"` string; the widget now edits it as three numeric fields. Item weight comes live from Books `package_details`, nothing stored | n/a |
+| 2026-09-16 | [CR-166](CHANGES.md) | No schema change — new `OrgSetting` keys `skuPushTracking` (`none`/`serial`/`batch`, blank = serial) and `skuPushAccountId` (Books stock account id, blank = Finished Goods default) — push-dialog defaults | n/a |
+| 2026-09-16 | [CR-164](CHANGES.md) | `PackingBox.grossWeight` (double, 2 decimals, nullable, 69851000000275516) — per-package gross weight, added via Catalyst MCP. `PackingBox.kind` values become `wooden`/`corrugated`/`pallet`/`loose` (no DDL; varchar(10) fits). New `OrgSetting` key `companyEmail` (generic key/value table) | ✅ live (Dev) |
+| 2026-09-15 | [CR-161](CHANGES.md) | `WorkOrder.freightCharge` (69851000000286353), `delivery` (69851000000276556), `booking` (69851000000277765), `transporter` (69851000000281313), `tcRequired` (69851000000277767) — all varchar 255, nullable. Added via Catalyst MCP. `qcStatus` gains the value `NotApplicable` | ✅ live (Dev) |
+| 2026-09-15 | [CR-160](CHANGES.md) | `WorkOrder.heldFrom` (varchar 50, nullable, 69851000000277763) — status to resume to after Hold. Added via Catalyst MCP. Data remap via ZCQL (Dev): 7 rows `MaterialAllocationPending` → `ReadyForMachining`, 2 rows `InProgress` → `MachiningInProgress`; `machiningDoneDate` / `fittingDoneDate` back in use (written by the status transition) | ✅ live (Dev) |
+| 2026-09-15 | [CR-159](CHANGES.md) | `WorkOrderFG.fgSize` (varchar 100, nullable, 69851000000277727) — the Books item's "Size" CF. Added via Catalyst MCP. `WorkOrder.projectName` / `estimatedCost` / `actualCost` / `machiningDoneDate` / `fittingDoneDate` retired (kept, no longer written); `WorkOrder.dueDate` now mirrors `shipmentDate` | ✅ live (Dev) |
+| 2026-09-14 | [CR-152](CHANGES.md) | No schema change — `WorkOrderLine.source` gains the value `self`; session cookie attributes now `SameSite=None; Secure; Partitioned` | n/a |
+| 2026-09-14 | [CR-150](CHANGES.md) | `WoAssembly.serialNumbers` (text 10000, nullable, 69851000000277358) — finished-good serials per bundle. Added via Catalyst MCP. Also new `OrgSetting` key `serialSeq` (`"YYYY:N"`, the org's year-scoped serial counter; no schema) | ✅ live (Dev) |
 | 2026-09-12 | [CR-145](CHANGES.md) | No schema change — new `OrgSetting` key `skuDefaultItemType` (existing generic key/value table) holds the org's default item type for the SKU create forms (`Trading`/`Manufacturing`; unset = Trading) | n/a |
 | 2026-09-12 | [CR-143](CHANGES.md) | `MaterialType.zohoItemId` (varchar 50, nullable, 69851000000281011) + `MaterialType.zohoItemName` (varchar 255, nullable, 69851000000281012) + `RecipeTemplate.booksCompositeItemId` (varchar 50, nullable, 69851000000276248) — recipe → Books composite push linkage. Added via Catalyst MCP | ✅ live (Dev) |
 | 2026-09-10 | [CR-131](CHANGES.md) | 2 new tables via Catalyst MCP — `PackingList` (69851000000264458: `orgId` v50 mandatory 69851000000267114, `docKey` v80 mandatory 69851000000267116, `variant` v10 69851000000267117, `header` text 69851000000267118), `PackingBox` (69851000000255819: `orgId` v50 mandatory 69851000000269178, `listId` v20 mandatory 69851000000269179, `seq` int mandatory 69851000000269180, `kind` v10 69851000000269181, `dims` v100 69851000000269182, `itemsJson` text 69851000000269183). Packing-list plans for the Books widget. Note: the MCP Create_Column call rejects a `description` field with PATTERN_NOT_MATCHED — omit it | ✅ live (Dev) |

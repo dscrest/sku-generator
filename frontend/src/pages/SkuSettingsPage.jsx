@@ -10,16 +10,23 @@ const MODES = [
   { value: 'params', label: 'Item-wise series', hint: 'Each item counts its own series (CH-RD-001, CH-RD-002; CH-BL-001). Same parameters again get the next number.' },
 ];
 
+// Stored type values never change; each org names them (CR-180). The label is
+// also what the CRM quote widget writes to Products → Item Source.
 const ITEM_TYPES = [
-  { value: 'Trading', label: 'Trading' },
-  { value: 'Manufacturing', label: 'Manufacturing (Finished Goods)' },
+  { value: 'Trading', placeholder: 'Direct Purchase' },
+  { value: 'Manufacturing', placeholder: 'In-House Manufacturing' },
 ];
 
 export default function SkuSettingsPage() {
   const [autoPush, setAutoPush] = useState(false);
+  const [widgetAutoPush, setWidgetAutoPush] = useState(true);
   const [seriesMode, setSeriesMode] = useState('off');
   const [seriesPad, setSeriesPad] = useState(4);
   const [defaultItemType, setDefaultItemType] = useState('Trading');
+  const [typeLabels, setTypeLabels] = useState({});
+  const [pushTracking, setPushTracking] = useState('serial');
+  const [pushAccountId, setPushAccountId] = useState('');
+  const [stockAccounts, setStockAccounts] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -27,18 +34,26 @@ export default function SkuSettingsPage() {
     axios.get('/api/sku-items/settings')
       .then((r) => {
         setAutoPush(!!r.data.autoPushImport);
+        setWidgetAutoPush(r.data.widgetAutoPush !== false);
         setSeriesMode(r.data.seriesMode || 'off');
         setSeriesPad(Number(r.data.seriesPad) || 4);
         setDefaultItemType(r.data.defaultItemType || 'Trading');
+        setTypeLabels(r.data.typeLabels || {});
+        setPushTracking(r.data.pushTracking || 'serial');
+        setPushAccountId(r.data.pushAccountId || '');
         setLoaded(true);
       })
       .catch(() => toast.error('Failed to load settings'));
+    axios.get('/api/sku-items/stock-accounts').then((r) => setStockAccounts(r.data)).catch(() => {});
   }, []);
 
   async function save() {
     setSaving(true);
     try {
-      await axios.put('/api/sku-items/settings', { autoPushImport: autoPush, seriesMode, seriesPad, defaultItemType });
+      await axios.put('/api/sku-items/settings', {
+        autoPushImport: autoPush, seriesMode, seriesPad, defaultItemType, typeLabels, pushTracking, pushAccountId,
+        widgetAutoPush,
+      });
       toast.success('Settings saved');
     } catch (err) {
       toast.error(err.response?.data?.error || 'Save failed');
@@ -109,11 +124,57 @@ export default function SkuSettingsPage() {
                 disabled={!loaded}
                 onChange={() => setDefaultItemType(t.value)}
               />
-              <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-primary)' }}>{t.label}</span>
+              <input
+                style={{
+                  width: 220, height: 32, padding: '0 10px', fontSize: 13,
+                  border: '1px solid var(--border)', borderRadius: 6,
+                  background: 'var(--bg-card)', color: 'var(--text-primary)',
+                }}
+                value={typeLabels[t.value] || ''}
+                placeholder={t.placeholder}
+                maxLength={60}
+                disabled={!loaded}
+                onChange={(e) => setTypeLabels((l) => ({ ...l, [t.value]: e.target.value }))}
+              />
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>({t.value})</span>
             </label>
           ))}
           <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
-            Preselected when creating items in the SKU Generator and the CRM quote widget.
+            The selected type is preselected when creating items in the SKU Generator and the CRM quote widget.
+            The label is shown across the app and written to CRM Products → Item Source by the quote widget, so it should match that picklist.
+          </span>
+        </div>
+        <div style={{ borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>Push to Zoho Books defaults</span>
+          <div style={{ display: 'flex', gap: 16, fontSize: 13.5, color: 'var(--text-primary)' }}>
+            {[['none', 'None'], ['serial', 'Serial Number'], ['batch', 'Batch']].map(([val, lab]) => (
+              <label key={val} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontWeight: 600 }}>
+                <input
+                  type="radio"
+                  name="pushTracking"
+                  checked={pushTracking === val}
+                  disabled={!loaded}
+                  onChange={() => setPushTracking(val)}
+                />
+                {lab}
+              </label>
+            ))}
+          </div>
+          <select
+            style={{
+              height: 32, padding: '0 10px', fontSize: 13, maxWidth: 320, cursor: 'pointer',
+              border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)',
+            }}
+            value={pushAccountId}
+            disabled={!loaded}
+            onChange={(e) => setPushAccountId(e.target.value)}
+          >
+            <option value="">Books default (Finished Goods)</option>
+            {stockAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+          <span style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+            Preselected in the Push to Zoho Books dialog — still changeable on each push.
           </span>
         </div>
         <div style={{ borderTop: '1px solid var(--border)', margin: '16px 0' }} />
@@ -132,6 +193,27 @@ export default function SkuSettingsPage() {
             <span style={{ display: 'block', fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 3 }}>
               When on, each item created by a bulk import is pushed to Books immediately.
               When off, push manually from the SKU Generator page (Push / Push all unsynced).
+            </span>
+          </span>
+        </label>
+        <div style={{ borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={widgetAutoPush}
+            disabled={!loaded}
+            onChange={(e) => setWidgetAutoPush(e.target.checked)}
+            style={{ marginTop: 3 }}
+          />
+          <span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+              CRM widgets: push new items to Zoho Books immediately
+            </span>
+            <span style={{ display: 'block', fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 3 }}>
+              Applies to both CRM widgets (Quote Maker and Product Configurator). A new item is always saved to the SKU
+              master. When on, it is also pushed to Zoho Books the moment it is added to a quote. When off, push it later
+              from the SKU Items page (Push / Push all unsynced). Sales can still switch it per line with the widget&apos;s
+              Push to Books box.
             </span>
           </span>
         </label>

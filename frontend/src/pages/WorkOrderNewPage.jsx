@@ -5,11 +5,10 @@ import toast from 'react-hot-toast';
 import { Empty } from '../components/MaterialsGrid.jsx';
 import { AccessNotice, WO_PRIORITIES, btn } from '../components/woCommon.jsx';
 import { fmtDate, dueDays } from '../format.js';
-import DateInput from '../components/DateInput.jsx';
 
 /** New work order as a full page (CR reference design): Sales order card,
- *  Schedule card (dates + days-from-today counters), Details card
- *  (priority segments + instructions). Attachments deferred — no file backend. */
+ *  Schedule card (due date = the SO's Expected Shipment, read-only, CR-159),
+ *  Details card (priority segments + instructions). Attachments deferred — no file backend. */
 
 const hdrField = { padding: '9px 11px', fontSize: 13, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)', width: '100%', boxSizing: 'border-box' };
 const label = { fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: 4 };
@@ -24,18 +23,21 @@ export default function WorkOrderNewPage() {
   const [so, setSo] = useState(null);
   const [soOpen, setSoOpen] = useState(false);
   const [picked, setPicked] = useState({});
-  // Header fields (CR-113): prefilled from the SO custom fields, user-editable.
-  const [hdr, setHdr] = useState({ dueDate: '', priority: '', machiningDoneDate: '', fittingDoneDate: '' });
+  // Priority (CR-113): prefilled from the SO custom field, user-editable. TC Required (CR-161): user-entered.
+  const [hdr, setHdr] = useState({ priority: '', tcRequired: '' });
   const [notes, setNotes] = useState('');
   const [nextNo, setNextNo] = useState(null);
   const [busy, setBusy] = useState(false);
   const [blocked, setBlocked] = useState(null);
+  // Bumped by ⟳ so an SO just confirmed in Books shows up without retyping.
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     axios.get('/api/wo/next-number').then(({ data }) => setNextNo(data.number)).catch(() => {});
   }, []);
 
   useEffect(() => {
+    setSos(null);
     const t = setTimeout(() => {
       axios.get('/api/wo/sales-orders', { params: q ? { q } : {} })
         .then(({ data }) => setSos(data))
@@ -46,20 +48,19 @@ export default function WorkOrderNewPage() {
         });
     }, 300);
     return () => clearTimeout(t);
-  }, [q]);
+  }, [q, tick]);
 
   function choose(s) {
     setSoOpen(false);
     setQ(s.number);
     setSo(null);
     axios.get(`/api/wo/so/${s.id}`).then(({ data }) => {
+      // CR-149: service lines (labour) are never finished goods — hidden from the pick list.
+      data.lineItems = data.lineItems.filter(l => l.productType !== 'service');
       setSo(data);
       // Default to every line — most sales orders are all finished goods.
       setPicked(Object.fromEntries(data.lineItems.map(l => [l.itemId, l.quantity])));
-      setHdr({
-        dueDate: data.dueDate || '', priority: data.priority || '',
-        machiningDoneDate: data.machiningDoneDate || '', fittingDoneDate: data.fittingDoneDate || '',
-      });
+      setHdr(h => ({ ...h, priority: data.priority || '' }));
     }).catch(err => toast.error(err.response?.data?.error || 'Could not load that sales order'));
   }
 
@@ -81,10 +82,7 @@ export default function WorkOrderNewPage() {
 
   if (blocked) return <AccessNotice kind={blocked} />;
 
-  const days = v => {
-    const d = dueDays(v);
-    return <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>Days: {d ?? '—'}</div>;
-  };
+  const dueDate = so?.dueDate || '';
 
   return (
     <div style={{ height: '100%', overflow: 'auto', background: 'var(--bg-page)' }}>
@@ -106,12 +104,16 @@ export default function WorkOrderNewPage() {
           <div style={{ position: 'relative' }}>
             <label style={label}>
               Select sales order
-              <input
-                value={q} autoFocus placeholder="Search sales orders by number…"
-                onChange={e => { setQ(e.target.value); setSo(null); setSoOpen(true); }}
-                onFocus={() => setSoOpen(true)}
-                style={hdrField}
-              />
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input
+                  value={q} autoFocus placeholder="Search sales orders by number…"
+                  onChange={e => { setQ(e.target.value); setSo(null); setSoOpen(true); }}
+                  onFocus={() => setSoOpen(true)}
+                  style={hdrField}
+                />
+                <button type="button" title="Refresh from Zoho Books" style={{ ...btn, padding: '0 12px', fontSize: 15 }}
+                  onClick={() => { setSo(null); setSoOpen(true); setTick(t => t + 1); }}>⟳</button>
+              </div>
             </label>
             {soOpen && !so && (
               <>
@@ -174,22 +176,14 @@ export default function WorkOrderNewPage() {
         {/* ---- Schedule ---- */}
         <div style={card}>
           <h2 style={cardTitle}>Schedule</h2>
-          <p style={helper}>Days are counted from today and updated as you pick dates.</p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px 14px' }}>
-            {[
-              ['Machining date', 'machiningDoneDate'],
-              ['Fitting date', 'fittingDoneDate'],
-              ['Completion date', 'dueDate'],
-            ].map(([lbl, key]) => (
-              <div key={key}>
-                <label style={label}>
-                  {lbl}
-                  <DateInput value={hdr[key]} onChange={e => setHdr(h => ({ ...h, [key]: e.target.value }))} style={hdrField} />
-                </label>
-                {days(hdr[key])}
-              </div>
-            ))}
+          <p style={helper}>The due date is the sales order's Expected Shipment date; days are counted from today.</p>
+          <div style={label}>
+            Due date
+            <div style={{ ...hdrField, background: 'var(--bg-page)', fontWeight: 500, color: dueDate ? 'inherit' : 'var(--text-muted)' }}>
+              {dueDate ? fmtDate(dueDate) : so ? 'Not set — add an Expected Shipment date on the sales order' : '—'}
+            </div>
           </div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Days: {dueDays(dueDate) ?? '—'}</div>
         </div>
 
         {/* ---- Details ---- */}
@@ -216,7 +210,15 @@ export default function WorkOrderNewPage() {
             </div>
           </div>
           <label style={label}>
-            Instructions
+            TC Required
+            <select value={hdr.tcRequired} onChange={e => setHdr(h => ({ ...h, tcRequired: e.target.value }))} style={{ ...hdrField, width: 140 }}>
+              <option value=""></option>
+              <option value="Yes">Yes</option>
+              <option value="No">No</option>
+            </select>
+          </label>
+          <label style={label}>
+            Special Instruction
             <textarea
               value={notes} onChange={e => setNotes(e.target.value)} rows={5}
               placeholder="Anything the shop floor or fitters need to know"

@@ -21,7 +21,7 @@ const COLUMNS = [
   { key: 'salesOrderNumber', label: 'Sales Order', render: r => r.salesOrderNumber },
   {
     key: 'customerName', label: 'Customer', render: r => (
-      <span style={{ fontWeight: 600 }}>{r.customerName}{r.projectName && <div style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)' }}>{r.projectName}</div>}</span>
+      <span style={{ fontWeight: 600 }}>{r.customerName}</span>
     ),
   },
   { key: 'fgs', label: 'Finished Goods', render: r => r.fgs.map(f => `${f.name} × ${f.qty}`).join(', ') || '—' },
@@ -78,7 +78,7 @@ export default function WorkOrderListPage() {
     (!customer || r.customerName === customer) &&
     (!proc || r.procStatus === proc) &&
     (!priority || r.priority === priority) &&
-    (!q || [r.woNumber, r.salesOrderNumber, r.customerName, r.projectName]
+    (!q || [r.woNumber, r.salesOrderNumber, r.customerName]
       .some(v => String(v || '').toLowerCase().includes(q.toLowerCase()))),
   );
   const { pageRows, pager } = usePager(filtered);
@@ -99,6 +99,7 @@ export default function WorkOrderListPage() {
           <button onClick={() => { setStatus(''); setCustomer(''); setProc(''); setPriority(''); setQ(''); }} style={btn}>✕ Clear</button>
         )}
         <div style={{ flex: 1 }} />
+        <button onClick={() => { setRows(null); load(); }} title="Refresh" style={btn}>⟳</button>
         <ColumnChooser chooser={chooser} />
         <button onClick={() => navigate('/wo/new')} style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
           + New Work Order

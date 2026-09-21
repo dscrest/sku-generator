@@ -22,7 +22,7 @@ Per raw material of the selected finished good:
 | E | PO | Σ `PurchaseRequestLine.purchaseQty` (ordered) |
 | F | Received | Σ `PurchaseRequestLine.receivedQty` |
 | G | Billed | Σ `PurchaseRequestLine.billedQty` |
-| H | **Reservable** | `max(0, min(A − C − D − G, B))` |
+| H | **Reservable** | `max(0, min(A − C − D, B))` — G dropped (CR-152): a PO raised for the WO is received into Main, so it is already in B; subtracting it made purchased stock unreservable once billed |
 | I | **Extra Reserved** | `A + C − D − G` |
 
 Row turns red when `H < max(0, A − C − D)` — the outstanding requirement cannot
@@ -47,10 +47,47 @@ Fixed by the BRD; only the warehouse *ids* are per-org (`OrgSetting`).
 | De-reserve | Reserve | Main | Transfer Order |
 | Issue | Reserve | Issue | Transfer Order |
 | Return | Issue | Main | Transfer Order |
-| Purchase Request confirm | — | delivery = Reserve | one draft PO **per vendor** |
+| Purchase Request confirm | — | delivery = Main | one draft PO **per vendor** (CR-170) |
 
 Reserve, de-reserve, issue and return are one table (`MaterialTxn`) and one code
 path — they differ only by `type` and the warehouse pair.
+
+### Status lifecycle (CR-160)
+
+Table in [`workorder/status.js`](functions/skuapi/workorder/status.js). Status
+moves only from the ⋯ menu — material actions never change it. Within the
+shop-floor stages (Ready For Machining … Ready For Dispatch) the menu also
+offers one step back (`← Stage`, CR-171); nothing moves, dates already stored
+are not re-asked. Completed onwards, Draft and Approved never step back.
+
+| Status | Meaning | Gate to leave / what it allows |
+|--------|---------|--------------------------------|
+| Draft | Fresh WO | Approval (or *→ Ready For Machining* when approvals are off) |
+| PendingApproval / Approved | Sign-off flow (CR-080) | — |
+| ReadyForMachining | Reserve / issue start here | — |
+| MachiningInProgress | RM being processed | **Machining Completion Date** compulsory |
+| ReadyForFitting / FittingInProgress | Fitting | **Fitting Completion Date** compulsory to leave FittingInProgress |
+| ReadyForDispatch | Last shop-floor stage | Completed needs ≥ 1 assembly per FG, QC result, nothing reserved (CR-151) |
+| Completed → Dispatched → Closed | Done; Close warns on unissued lines; Reopen (admin) → Dispatched | — |
+| Hold | Reason required; nothing moves; resumes to the prior status | — |
+| Cancelled | De-reserves (Reserve → Main); issued material stays | — |
+
+Assembly (Details → **Assembly** action, CR-172) is allowed at any shop-floor
+stage (Ready For Machining … Ready For Dispatch) once every BOM line of the
+finished good is fully issued. The tab has two sections (CR-174): **Ready for
+assembly** (fully issued FGs, an *Assemble now* quantity per row for partial
+runs, Proceed opens the assemble modal seeded with it) and **Pending for
+assembly** (FGs still waiting on issues, with the count of open lines). The
+server re-checks fully-issued on Proceed.
+
+Proceed Assembly (CR-176) first looks up the batch/serial pool of every raw
+material at the Issue warehouse; tracked lines open the same picker as
+Issue/Return (FIFO prefilled, each line must be covered exactly) and the picks
+go into the Zoho bundle lines — untracked lines are consumed silently. Each
+produced unit gets a serial `PREFIX + YYYY + NNN` (CR-150); the prefix prefill
+order is the FG item's `cf_valve_type` code before the dash (CR-177) → the SKU
+item's "Valve Type" property code → the SKU's leading letters → typed in the
+modal.
 
 ## 3. Keeping data fresh without burning the API
 
@@ -133,7 +170,8 @@ only thing that changes between jobs is which column you type in.
 2. **Raise purchase request** — quantities already on order are excluded, so
    nothing is ordered twice.
 3. Pick a vendor per line, adjust quantities, **Confirm** → one *draft* PO per
-   vendor, delivered to the Reserve warehouse and tagged with the SO number.
+   vendor, delivered to the Main warehouse and tagged with the SO number
+   (quantity ordered beyond the requirement goes on its own line without it).
    Your normal Books approval takes over from there.
 4. Shortfall alerts arrive by email N days after BOM import if nothing was
    ordered.

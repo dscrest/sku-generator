@@ -8,6 +8,8 @@ const {
   currentUserId,
   makeSession,
   setSessionCookie,
+  setDcCookie,
+  readDcCookie,
   findUserByEmail,
   findUserByZuid,
   createUser,
@@ -17,10 +19,16 @@ const router = express.Router();
 const FRONTEND = process.env.FRONTEND_URL || "http://localhost:5173";
 
 // Public: kick off the OAuth consent flow. ?consent=1 forces the Zoho consent
-// screen (needed to re-obtain a refresh token).
+// screen (needed to re-obtain a refresh token). ?dc=in (or the zdc cookie from
+// the last successful sign-in) starts on that DC's accounts host; unknown or
+// absent → home DC, the old behaviour.
 router.get("/", (req, res) => {
   try {
-    res.redirect(getAuthUrl(req.query.consent === "1"));
+    const dc = req.query.dc || readDcCookie(req);
+    const url = getAuthUrl(req.query.consent === "1", dc);
+    // Which accounts host the consent step starts on (CR-179 diagnosis).
+    console.log(`Zoho auth start: host=${new URL(url).host} dc=${dc || "-"} via=${req.query.dc ? "query" : readDcCookie(req) ? "cookie" : "default"}`);
+    res.redirect(url);
   } catch (err) {
     res.status(503).json({ error: err.message });
   }
@@ -69,6 +77,7 @@ async function completeZohoLogin(req, res, code, dc) {
     return { needsConsent: true };
   }
   await saveToken(req.catalyst, userId, tokenData, dc);
+  setDcCookie(res, dc);
 
   // Returning user who already picked an org: keep it, skip re-selection.
   if (prior && prior.orgId) return { orgSelected: true };

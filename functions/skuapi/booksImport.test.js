@@ -83,6 +83,15 @@ for (const h of ["Material(Custom Feild)", "Material (custom field)", "Material(
   assert.deepStrictEqual(splitBooksRow({ [h]: "Cotton" }).propRow, { Material: "Cotton" });
 }
 
+// Item ID links the row to its Books item; a category column stays in propRow
+// for the Category property; an Excel-mangled id is ignored, not stored.
+{
+  const r = splitBooksRow({ "Item ID": "2954316000000123456", Category: "Fabric" });
+  assert.strictEqual(r.zohoItemId, "2954316000000123456");
+  assert.deepStrictEqual(r.propRow, { Category: "Fabric" });
+  assert.strictEqual(splitBooksRow({ "Item ID": "2.95E+18" }).zohoItemId, "");
+}
+
 // Oversize Books payload refuses the row (10k text column cap).
 assert.throws(() => splitBooksRow({ Brand: "x".repeat(9600) }), /too large/);
 

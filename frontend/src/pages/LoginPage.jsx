@@ -10,6 +10,28 @@ export default function LoginPage({ onAuthed, error }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
 
+  // Inside a Zoho Books Web Tab (iframe) the accounts.zoho page refuses to
+  // render, so Zoho sign-in runs in a popup named 'sku-auth': App.jsx in the
+  // popup posts the session token back after an origin-checked handshake, and
+  // /auth/adopt turns it into a cookie for this frame (CR-152).
+  const framed = window.self !== window.top;
+  function zohoPopup(e) {
+    e.preventDefault();
+    setMsg('');
+    const popup = window.open(e.currentTarget.href, 'sku-auth', 'width=620,height=720');
+    if (!popup) return setMsg('Allow pop-ups for this page, then try again.');
+    const onMsg = async (ev) => {
+      if (ev.origin !== window.location.origin || !ev.data) return;
+      if (ev.data.type === 'sku-auth-ready') return ev.source.postMessage({ type: 'sku-auth-hello' }, ev.origin);
+      if (ev.data.type !== 'sku-auth-token') return;
+      window.removeEventListener('message', onMsg);
+      if (!ev.data.token) return setMsg(ev.data.error || 'Zoho sign-in failed.');
+      const r = await fetch(`${API}/auth/adopt?t=${encodeURIComponent(ev.data.token)}`, { method: 'POST' }).catch(() => null);
+      if (r?.ok) onAuthed(); else setMsg('Could not start the session.');
+    };
+    window.addEventListener('message', onMsg);
+  }
+
   async function submit(e) {
     e.preventDefault();
     setBusy(true);
@@ -87,7 +109,7 @@ export default function LoginPage({ onAuthed, error }) {
           <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
         </div>
 
-        <a href={`${API}/auth/zoho`} style={{
+        <a href={`${API}/auth/zoho`} onClick={framed ? zohoPopup : undefined} style={{
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
           padding: '12px 20px', background: '#e84c3d', color: '#fff', borderRadius: 'var(--radius-md)',
           fontWeight: 600, fontSize: 14, textDecoration: 'none', boxShadow: '0 2px 8px rgba(232,76,61,0.30)',
@@ -95,6 +117,14 @@ export default function LoginPage({ onAuthed, error }) {
           <svg width="18" height="18" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="rgba(255,255,255,0.18)"/>
             <text x="50%" y="56%" dominantBaseline="middle" textAnchor="middle" fontSize="16" fontWeight="bold" fill="white">Z</text></svg>
           Sign in with Zoho
+        </a>
+        {/* Zoho's .com → .in bounce started rejecting India-DC codes on
+            2026-09-16 (CR-179); ?dc=in starts the consent step on
+            accounts.zoho.in. Returning browsers get this automatically via
+            the zdc cookie — this link is for first-time India sign-ins. */}
+        <a href={`${API}/auth/zoho?dc=in`} onClick={framed ? zohoPopup : undefined}
+          style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10, textDecoration: 'none' }}>
+          Zoho India account? Sign in via accounts.zoho.in
         </a>
       </div>
     </div>

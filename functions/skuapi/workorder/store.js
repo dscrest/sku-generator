@@ -56,6 +56,7 @@ const SETTING_KEYS = [
   // ponytail: Stratus upload if anyone ever needs hosted logos.
   { key: "companyName", label: "Company name", type: "text", group: "Company details", hint: "Shown on printed work orders and movement slips" },
   { key: "companyAddress", label: "Company address", type: "text", group: "Company details" },
+  { key: "companyEmail", label: "Company email", type: "text", group: "Company details", hint: "Printed under the consignor address on packing lists" },
   { key: "companyGstin", label: "GSTIN", type: "text", group: "Company details" },
   { key: "companyLogoUrl", label: "Logo URL", type: "text", group: "Company details", hint: "Public image URL, printed top-left" },
 ];

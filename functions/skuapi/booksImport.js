@@ -1,9 +1,10 @@
 "use strict";
-const { rowList, out, orgClause, reqOrg, isActive, findSkuRowId } = require("./store");
+const { rowList, out, orgClause, reqOrg, isActive, findSkuRowId, zStr } = require("./store");
 const { assemble } = require("./skuBuild");
 const { applySeries } = require("./skuSeries");
 const { saveItemValues } = require("./itemValues");
 const { buildResolver } = require("./importItems");
+const { autoCode } = require("./zoho/import");
 
 const TABLE = "SKUItem";
 const MAX_ROWS = 500;
@@ -86,6 +87,7 @@ function splitBooksRow(row) {
   let name = "";
   let sku = "";
   let description = "";
+  let zohoItemId = "";
   const booksData = {};
   const propRow = {};
   for (const [header, rawCell] of Object.entries(row)) {
@@ -97,6 +99,9 @@ function splitBooksRow(row) {
     if (key === "item name") { name = cell; continue; }
     if (key === "sku") { sku = cell; continue; }
     if (key === "sales description") { description = cell; continue; }
+    // Books export's link id. Excel mangles a numeric 19-digit id to 1.2E+18 —
+    // anything not all-digits is ignored rather than stored as a bogus link.
+    if (key === "item id") { if (/^\d+$/.test(cell)) zohoItemId = cell; continue; }
     const f = BOOKS_FIELDS[key];
     if (!f) { propRow[stripped] = cell; continue; }
     let v = cell;
@@ -114,7 +119,7 @@ function splitBooksRow(row) {
   }
   if (JSON.stringify(booksData).length > MAX_BOOKS_JSON)
     throw new Error("Books fields too large for one row");
-  return { name, sku, description, booksData, propRow };
+  return { name, sku, description, zohoItemId, booksData, propRow };
 }
 
 /**
@@ -178,11 +183,53 @@ async function processBooksImport(catalyst, industryId, rows) {
   const table = catalyst.datastore().table(TABLE);
   const orgId = reqOrg(catalyst);
 
+  // Unknown list values (a new Category etc.) are registered instead of failing
+  // the row — same find-or-create + auto code as the Books API import.
+  // buildResolver holds pvByProp by reference, so it sees the new value.
+  // ponytail: values come from raw cells, a typo makes a junk value — fix/merge
+  // it in Property Manager.
+  const listPropByCaption = new Map(
+    properties.filter((p) => p.valueType !== "Range").map((p) => [norm(p.caption).toLowerCase(), p]),
+  );
+  let valuesCreated = 0;
+  const ensureValues = async (propRow) => {
+    for (const [header, cell] of Object.entries(propRow)) {
+      const prop = listPropByCaption.get(header.toLowerCase());
+      if (!prop) continue;
+      const vals = pvByProp[prop.id];
+      const want = cell.toLowerCase();
+      if (vals.some((v) => norm(v.displayValue).toLowerCase() === want || norm(v.name).toLowerCase() === want)) continue;
+      const created = out(
+        await catalyst.datastore().table("PropertyValue").insertRow({
+          displayValue: cell,
+          name: cell,
+          sku: autoCode(cell, new Set(vals.map((v) => v.sku))),
+          description: null,
+          propertyId: String(prop.id),
+          orgId,
+        }),
+      );
+      vals.push(created);
+      pvById.set(String(created.id), created);
+      valuesCreated++;
+    }
+  };
+
   const results = [];
   for (let i = 0; i < rows.length; i++) {
     const rowNum = i + 1;
     try {
-      const { name, sku, description, booksData, propRow } = splitBooksRow(rows[i]);
+      const { name, sku, description, zohoItemId, booksData, propRow } = splitBooksRow(rows[i]);
+      // Link priority matches zoho/import.js: Books item id first, then sku.
+      if (zohoItemId) {
+        const linked = rowList(
+          await zcql.executeZCQLQuery(
+            `SELECT ROWID FROM ${TABLE} WHERE zohoItemId = ${zStr(zohoItemId)} AND ${orgClause(catalyst)} LIMIT 1`,
+          ),
+        );
+        if (linked.length) throw new Error(`Already imported (Item ID ${zohoItemId})`);
+      }
+      await ensureValues(propRow);
       let finalSku = sku;
       let finalName = name;
       let finalDesc = description;
@@ -219,6 +266,7 @@ async function processBooksImport(catalyst, industryId, rows) {
           description: finalDesc || null,
           type: "Trading", // Books simple-item sheets never carry composites
           industryId: String(industryId),
+          zohoItemId: zohoItemId || null,
           booksData: Object.keys(booksData).length ? JSON.stringify(booksData) : null,
           orgId,
         }),
@@ -231,7 +279,7 @@ async function processBooksImport(catalyst, industryId, rows) {
   }
 
   const succeeded = results.filter((r) => r.status === "success").length;
-  return { total: rows.length, succeeded, failed: rows.length - succeeded, results };
+  return { total: rows.length, succeeded, failed: rows.length - succeeded, valuesCreated, results };
 }
 
 module.exports = { splitBooksRow, pushableBooksFields, processBooksImport, CREATE_ONLY };

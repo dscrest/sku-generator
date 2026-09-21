@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>OCTFIS Quote Maker</title>
+  <title>Product Configurator</title>
   <script src="https://live.zwidgets.com/js-sdk/1.2/ZohoEmbededAppSDK.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -25,75 +25,48 @@
     #v-picker { min-height: 100vh; }
     #card { height: 100vh; background: #fff; overflow: hidden; display: flex; flex-direction: column; }
 
-    /* panes: filters | results | quote lines — never wrap; the right pane's
-       action block sits above the scrolling list so the Push / Create Quote
-       button stays on-screen no matter how many lines are added */
     #panes { display: flex; flex: 1; min-height: 0; }
-    #left { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 20px; border-right: 1px solid #e5e7eb; }
+    #left { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid #e5e7eb; }
     #right { flex: 0 1 320px; min-width: 260px; background: #f8fafc; display: flex; flex-direction: column; min-height: 0; }
-
-    #searchbar { position: relative; flex: none; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 4px 8px 4px 12px; border: 1.5px solid #d9dfe8; border-radius: 10px; min-height: 36px; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.04); }
-    #searchbar:focus-within { border-color: #0f172a; }
-    #search { flex: 1; min-width: 120px; border: 0; padding: 4px 2px; font-size: 14px; }
-    /* filter column — every parameter visible at once, own scrollbar (CR-110) */
-    #filter-panel { flex: 0 0 250px; min-width: 200px; border-right: 1px solid #e5e7eb; background: #fbfcfe; display: flex; flex-direction: column; min-height: 0; position: relative; }
-    #fp-head { display: flex; align-items: center; gap: 8px; padding: 12px 12px 0; flex-wrap: wrap; }
-    #fp-title { font-size: 15px; font-weight: 600; letter-spacing: -.01em; flex: 1 1 100%; }
-    #fp-search { flex: 1; min-width: 0; padding: 5px 9px; font-size: 12.5px; }
-    #fp-clear { border: 0; background: none; color: #0f766e; font-size: 12.5px; font-weight: 500; padding: 0; }
-    #fp-clear:hover { text-decoration: underline; }
-    /* compact rows: click a parameter name → value popover (no inline selects) */
-    #fp-grid { display: flex; flex-direction: column; padding: 6px 6px 12px; flex: 1; overflow: auto; }
-    .fp-row { display: flex; align-items: center; gap: 7px; width: 100%; border: 0; background: none; text-align: left; padding: 6px 7px; border-radius: 7px; cursor: pointer; font-size: 12.5px; color: #334155; min-width: 0; }
-    .fp-row:hover { background: #eef2f7; }
-    .fp-row .cap { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-    .fp-row .num { width: 16px; height: 16px; border-radius: 50%; background: #eef2f7; color: #64748b; display: grid; place-items: center; font-size: 9.5px; flex: none; }
-    .fp-row .val { flex: none; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: #94a3b8; }
-    .fp-row.set { background: #f0fdfa; }
-    .fp-row.set .val { color: #0f766e; font-weight: 600; }
-    .fp-row .x { display: none; flex: none; border: 0; background: none; color: #94a3b8; font-size: 13px; line-height: 1; padding: 0 1px; cursor: pointer; }
-    .fp-row.set .x { display: block; }
-    .fp-row .x:hover { color: #dc2626; }
-    .fp-hint { color: #64748b; font-size: 12.5px; padding: 6px 6px 2px; }
-    #fp-pop { position: absolute; left: 10px; right: 10px; z-index: 30; background: #fff; border: 1px solid #d9dfe8; border-radius: 10px; box-shadow: 0 8px 24px rgba(15,23,42,.16); display: flex; flex-direction: column; overflow: hidden; }
-    #fp-pop .pop-head { font-size: 11.5px; font-weight: 600; color: #64748b; padding: 9px 11px 3px; }
-    #fp-pop input { margin: 5px 8px; font-size: 12.5px; padding: 5px 8px; border-radius: 6px; }
-    #fp-pop .pop-list { max-height: 250px; overflow: auto; padding: 4px 5px 6px; }
-    .fp-opt { padding: 6px 8px; border-radius: 6px; font-size: 12.5px; color: #0f172a; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .fp-opt:hover { background: #eef2f7; }
-    .fp-opt.on { background: #f0fdfa; color: #0f766e; font-weight: 600; }
-    .fp-opt.none { color: #64748b; }
-
-    #result-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 12.5px; color: #64748b; }
-    #clear-btn { border: 0; background: none; color: #0f766e; font-weight: 500; padding: 0; }
-    #clear-btn:hover { text-decoration: underline; }
-    #results { flex: 1; overflow: auto; border: 1px solid #e5e7eb; border-radius: 10px; min-height: 120px; }
-    .r-row { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid #eef1f5; }
-    .r-row:hover { background: #f8fafc; }
-    .r-main { flex: 1; min-width: 0; }
-    .r-name { font-size: 14px; font-weight: 500; }
-    .r-sku { font: 500 12px 'IBM Plex Mono', monospace; color: #64748b; margin-left: 8px; }
-    .r-specs { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 4px; }
-    .r-specs span { font-size: 11.5px; color: #334155; background: #f1f5f9; border-radius: 4px; padding: 1px 6px; }
-    .r-row > button { width: 92px; flex: none; font-size: 12.5px; font-weight: 500; padding: 6px 0; }
-    .r-row > button:hover { background: #0f172a; color: #fff; border-color: #0f172a; }
-    .r-row > button.added { border-color: #bbf7d0; background: #f0fdf4; color: #15803d; }
-    .r-row > button.added:hover { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
-    .r-empty { padding: 24px; color: #64748b; text-align: center; line-height: 1.5; }
-
-    /* create card */
-    #create-box { border: 1.5px dashed #b7c3d3; border-radius: 10px; padding: 14px 16px; background: #f8fafc; display: none; }
-    #create-box .title { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; margin-bottom: 10px; }
-    #create-box .title .plus { width: 22px; height: 22px; border-radius: 50%; background: #0f172a; color: #fff; display: grid; place-items: center; font-size: 14px; flex: none; }
-    #c-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
-    #c-chips span { font-size: 12px; color: #334155; background: #fff; border: 1px solid #d9dfe8; border-radius: 5px; padding: 3px 8px; }
-    #c-chips span .cap { font: 500 10px 'IBM Plex Mono', monospace; color: #64748b; margin-right: 4px; }
-    #create-box .row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; align-items: flex-end; }
-    #create-box label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: #64748b; font-weight: 500; }
-    #c-name-lab { flex: 1; min-width: 180px; }
-    #c-rate { width: 100px; text-align: right; }
-    #c-info { font-size: 12.5px; color: #64748b; margin-top: 2px; }
-    #c-error { margin-top: 2px; font-size: 12.5px; }
+    #head { flex: none; display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid #e5e7eb; }
+    #head .ttl { font-size: 15px; font-weight: 600; letter-spacing: -.01em; flex: 1; }
+    #form { flex: 1; overflow: auto; padding: 4px 20px 16px; }
+    .sec { font: 600 11px 'IBM Plex Sans', sans-serif; letter-spacing: .06em; text-transform: uppercase; color: #64748b; margin: 16px 0 8px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px 12px; }
+    .fld { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: #64748b; font-weight: 500; min-width: 0; }
+    .fld .req { color: #dc2626; }
+    .fld select, .fld input { width: 100%; font-size: 13px; }
+    .fld.set select, .fld.set input { border-color: #99d5cf; background: #f0fdfa; }
+    #find-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+    #find-msg { font-size: 12.5px; }
+    #sizing { margin-top: 12px; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; }
+    #sizing .cap { display: flex; align-items: baseline; gap: 10px; padding: 10px 14px; background: #f8fafc; border-bottom: 1px solid #e5e7eb; font-size: 12.5px; color: #64748b; }
+    #sizing .cap b { font-size: 16px; color: #0f172a; font-variant-numeric: tabular-nums; }
+    .opt { display: grid; grid-template-columns: 18px 190px minmax(90px, 1fr) 100px 120px 96px; white-space: nowrap; gap: 10px; align-items: center; padding: 8px 14px; border-bottom: 1px solid #eef1f5; cursor: pointer; font-size: 13px; font-variant-numeric: tabular-nums; }
+    .opt:last-child { border-bottom: 0; }
+    .opt:hover { background: #f8fafc; }
+    .opt.on { background: #f0fdfa; }
+    .opt .dot { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid #94a3b8; }
+    .opt.on .dot { border: 4.5px solid #0f766e; }
+    .opt .m { font-weight: 600; }
+    .opt .s, .opt .r { color: #64748b; font-size: 12.5px; }
+    .opt .sp { color: #0f766e; font-size: 12px; text-align: right; }
+    .opt.up { font-size: 12.5px; color: #64748b; }
+    .opt.up .m { font-weight: 500; }
+    .opt.up .dot { visibility: hidden; }
+    .opt.up.on .dot { visibility: visible; }
+    .big { padding: 8px 14px; font-size: 12.5px; color: #b45309; background: #fffbeb; border-bottom: 1px solid #eef1f5; }
+    #result { flex: none; border-top: 1px solid #e5e7eb; background: #fff; padding: 12px 20px; display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+    #res-main { flex: 1; min-width: 220px; }
+    #res-sku { font: 500 14px 'IBM Plex Mono', monospace; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    #res-name { font-size: 12.5px; color: #64748b; margin-top: 2px; }
+    #res-msg { font-size: 12.5px; margin-top: 2px; }
+    .badge.exists { color: #15803d; background: #dcfce7; }
+    .badge.fresh { color: #b45309; background: #fef3c7; }
+    #result label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; color: #64748b; font-weight: 500; }
+    #result label input { width: 84px; text-align: right; }
+    #result label input[type=checkbox] { width: 18px; height: 18px; margin: 7px 0; }
+    #res-add { padding: 8px 16px; font-weight: 600; }
 
     /* quote lines */
     #lines-head { padding: 14px 16px 8px; display: flex; align-items: baseline; justify-content: space-between; font-size: 14.5px; font-weight: 600; }
@@ -117,8 +90,6 @@
     .l-grid { display: grid; grid-template-columns: 56px 1fr 56px minmax(0,1fr); gap: 6px; align-items: end; margin-top: 8px; }
     .l-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; color: #64748b; font-weight: 500; }
     .l-grid input { width: 100%; padding: 5px 7px; text-align: right; border-radius: 6px; font-size: 13px; }
-    input[type=number] { -moz-appearance: textfield; appearance: textfield; }
-    input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     .l-total { text-align: right; font-size: 13.5px; font-weight: 600; padding-bottom: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .l-empty { margin: 8px 4px; padding: 26px 14px; border: 1.5px dashed #d9dfe8; border-radius: 10px; text-align: center; color: #64748b; line-height: 1.5; }
     #lines-foot { flex: none; padding: 12px 16px; border-bottom: 1px solid #e5e7eb; background: #fff; display: flex; flex-direction: column; gap: 10px; }
@@ -146,38 +117,23 @@
 
   <div id="v-picker" class="hidden"><div id="card">
     <div id="panes">
-      <div id="filter-panel">
-        <div id="fp-head">
-          <span id="fp-title">OCTFIS Quote Maker</span>
-          <input id="fp-search" type="search" placeholder="Search parameter…" autocomplete="off" />
-          <button id="fp-clear" class="hidden" type="button">Clear all</button>
-        </div>
-        <div id="fp-grid"><div class="fp-hint">Loading parameters…</div></div>
-        <div id="fp-pop" class="hidden"></div>
-      </div>
       <div id="left">
-        <div id="searchbar">
-          <input id="search" type="search" placeholder="Search by SKU or name…" autocomplete="off" />
+        <div id="head">
+          <span class="ttl">Product Configurator</span>
+          <label class="muted" for="product">Product</label>
+          <select id="product"></select>
         </div>
-        <div id="result-meta">
-          <span id="result-summary">Type to search, or add a filter.</span>
-          <button id="clear-btn" class="hidden">Clear search</button>
-        </div>
-        <div id="results"><div class="r-empty">Type to search, or add a filter.</div></div>
-        <div id="create-box">
-          <div class="title"><span class="plus">+</span><span id="c-title">No catalog item matches. Create it in Zoho Books</span></div>
-          <div id="c-chips"></div>
-          <div class="row">
-            <label id="c-name-lab">Item name<input id="c-name" /></label>
-            <label>SKU<input id="c-sku" class="mono" style="width:170px" /></label>
-            <label>Rate<input id="c-rate" type="number" min="0" /></label>
-            <label>Type<select id="c-type"><option value="Trading">Direct Purchase</option><option value="Manufacturing">In-House Manufacturing</option></select></label>
-            <label>Industry<select id="c-industry"></select></label>
-            <label title="Push the new item to Zoho Books now. Off = saved to the SKU master only; push it later from the SKU Items page.">Push to Books<input id="c-push" type="checkbox" checked style="width:18px;height:18px;margin:7px 0" /></label>
-            <button id="c-save" class="primary">Create &amp; add to lines</button>
+        <div id="form"><p class="muted">Loading questions…</p></div>
+        <div id="result">
+          <div id="res-main">
+            <div id="res-sku"><span class="muted">Answer the questions to generate the SKU.</span></div>
+            <div id="res-name"></div>
+            <div id="res-msg"></div>
           </div>
-          <div id="c-info"></div>
-          <div id="c-error" class="error"></div>
+          <label id="res-push-lab" class="hidden" title="Push the new item to Zoho Books now. Off = saved to the SKU master only; push it later from the SKU Items page.">Push to Books<input id="res-push" type="checkbox" checked /></label>
+          <label>Qty<input id="res-qty" type="number" min="1" value="1" /></label>
+          <label>Rate<input id="res-rate" type="number" min="0" /></label>
+          <button id="res-add" class="primary" disabled>Add to lines</button>
         </div>
       </div>
       <div id="right">
@@ -188,12 +144,17 @@
           <button id="quote-btn" class="primary hidden" disabled>Create Quote</button>
           <span id="status"></span>
         </div>
-        <div id="lines"><div class="l-empty">No lines yet.<br>Add items from the results.</div></div>
+        <div id="lines"><div class="l-empty">No lines yet.<br>Configure a product and add it.</div></div>
       </div>
     </div>
   </div></div>
 
 <script>
+// Product Configurator CRM widget (CR-181) — guided questions → sizing → SKU →
+// existing-or-new item → Quote lines.
+// ponytail: boot/auth, cart and quote write-back are copied verbatim from
+// widget.html so MSUN's live Quote Maker stays isolated from this page;
+// extract a shared script when a third widget needs them.
 'use strict';
 // Served from the same Catalyst origin as the API — nothing env-specific here.
 var API = '/server/skuapi';
@@ -258,7 +219,7 @@ ZOHO.embeddedApp.on('PageLoad', function (data) {
   if (!recordId) {
     // CreateOrCloneView = unsaved record → no record id to write lines into.
     return message(data.ButtonPosition === 'CreateOrCloneView'
-      ? 'This record is not saved yet. Save it first, then open it and use the SKU button from its detail page.'
+      ? 'This record is not saved yet. Save it first, then open it and use the Configurator button from its detail page.'
       : 'Could not read the record id from CRM. PageLoad data: ' + JSON.stringify(data));
   }
   probe();
@@ -283,12 +244,13 @@ function probe() {
     if (!r.ok) return r.json().then(function (d) { message(d.error || ('Error ' + r.status)); });
     return r.json().then(function (me) {
       if (!me.orgId) return orgStep();
-      if (!(me.addons || []).includes('sku-generator')) {
-        return message('The SKU Generator add-on is not enabled for ' + (me.orgName || 'this organization') + '.');
+      var missing = ['sku-generator', 'recipe-engine'].filter(function (a) { return !(me.addons || []).includes(a); });
+      if (missing.length) {
+        return message('The Product Configurator needs the ' + missing.join(' + ') + ' add-on enabled for ' + (me.orgName || 'this organization') + '.');
       }
-      startPicker(me);
+      startConfigurator();
     });
-  }).catch(function () { message('Cannot reach the SKU Generator API.'); });
+  }).catch(function () { message('Cannot reach the Product Configurator API.'); });
 }
 
 // Token handoff handshake with the OAuth popup/iframe (an /app/ page on our
@@ -325,7 +287,7 @@ function silentAuth() {
   setTimeout(function () {
     if (authDone) return;
     f.remove();
-    message('Sign in to the SKU Generator to continue.', true);
+    message('Sign in to the Product Configurator to continue.', true);
   }, 6000);
 }
 
@@ -360,365 +322,405 @@ function selectOrg(o) {
   }).then(function () { probe(); });
 }
 
-/* ---------- picker ---------- */
+/* ---------- configurator (CR-181) ---------- */
+// Everything here is org data: the Product is an Industry, the questions are
+// its Properties, and the sizing block appears only when the industry has
+// properties carrying a sizingRole (capacity / density / speed / group feed
+// the calculation; series / model receive the picked answer).
+var DUTY_ROLES = ['capacity', 'density', 'speed', 'group'];
 var industryId = '';
-var params = [];        // showInWidget properties of the chosen industry
-var valuesByProp = {};  // propertyId -> [{id, displayValue}] (lazy cache)
-var chips = [];         // { propertyId, caption, valueType, valueId?, text?, display }
-function startPicker(me) {
+var props = [];          // questions of the chosen product, in skuPosition order
+var valuesByProp = {};   // propertyId -> [{ id, displayValue, isDefault }]
+var sel = {};            // propertyId -> valueId (List) | number text (Range)
+var sizing = null;       // last /sizing/select response
+var picked = null;       // chosen option: { modelCode, series, capacity, requiredRpm, valueId }
+var gen = null;          // last /api/sku/generate response
+var existing = null;     // catalog item already carrying gen.sku
+var genKey = null;       // guards against stale generate responses
+var lineSeq = 0;
+
+function roleProp(role) { return props.find(function (p) { return p.sizingRole === role; }); }
+function displayOf(p) {
+  var v = sel[p.id];
+  if (v === undefined || v === null || v === '') return '';
+  if (p.valueType === 'Range') return String(v) + (p.unit ? ' ' + p.unit : '');
+  var hit = (valuesByProp[p.id] || []).find(function (x) { return String(x.id) === String(v); });
+  return hit ? hit.displayValue : '';
+}
+
+function startConfigurator() {
   show('v-picker');
-  $('search').focus();
-  // On Deals the only action is a new Quote linked to the Deal — the Deal
-  // record itself is never written (pushLines' Deals branch is unreachable).
+  // On Deals the only action is a new Quote linked to the Deal.
   if (moduleName === 'Deals') {
     $('quote-btn').classList.remove('hidden');
     $('add-btn').classList.add('hidden');
   }
-  // Widget opens as a small CRM popup by default — ask for room to breathe.
   try {
     if (window.ZOHO && ZOHO.CRM.UI && typeof ZOHO.CRM.UI.Resize === 'function') {
       ZOHO.CRM.UI.Resize({ height: '780', width: '1320' }).catch(function () { /* CRM caps it */ });
     }
   } catch (e) { /* older SDK */ }
   discoverSubforms(); // warm the metadata cache; failures surface at add time
-  // Org default + display labels for the create card's Type select (SKU Settings).
   api('/api/sku-items/settings').then(function (r) { return r.ok ? r.json() : {}; })
     .then(function (s) {
-      if (s.defaultItemType) $('c-type').value = s.defaultItemType;
-      $('c-push').checked = s.widgetAutoPush !== false; // org default, per-line override (CR-184)
       typeLabels = s.typeLabels || {};
-      Array.prototype.forEach.call($('c-type').options, function (o) { o.textContent = typeLabel(o.value); });
+      // Org default for the per-line "Push to Books" switch (SKU Settings, CR-184).
+      $('res-push').checked = s.widgetAutoPush !== false;
       renderCart();
     })
-    .catch(function () { /* keep Trading */ });
+    .catch(function () { /* raw type names */ });
   api('/api/industries').then(function (r) { return r.json(); }).then(function (inds) {
     inds = Array.isArray(inds) ? inds : [];
+    if (!inds.length) { $('form').innerHTML = '<p class="muted">No product is set up yet — add one under Product Configurator in the app.</p>'; return; }
     inds.forEach(function (ind) {
       var opt = document.createElement('option');
       opt.value = ind.id;
       opt.textContent = ind.name;
-      $('c-industry').appendChild(opt);
+      $('product').appendChild(opt);
     });
-    // No industry picker in the widget — the first industry is the working one.
-    if (inds.length) {
-      industryId = String(inds[0].id);
-      loadParams();
-    } else {
-      renderFilterPanel();
-    }
-  });
+    loadProduct();
+  }).catch(function () { $('form').innerHTML = '<p class="error">Failed to load products.</p>'; });
 }
+$('product').addEventListener('change', loadProduct);
 
-function loadParams() {
-  params = [];
-  renderFilterPanel();
-  if (!industryId) return;
-  api('/api/industries/' + industryId + '/properties')
-    .then(function (r) { return r.ok ? r.json() : []; })
-    .then(function (list) {
-      params = (Array.isArray(list) ? list : []).filter(function (p) { return p.showInWidget; });
-      // One batched call fills every property's values (CR-088 endpoint) —
-      // never one request per property, the Dev concurrency cap can't take it.
-      return api('/api/industries/' + industryId + '/property-values')
-        .then(function (r) { return r.ok ? r.json() : {}; })
-        .then(function (byProp) { valuesByProp = byProp || {}; renderFilterPanel(); });
+function loadProduct() {
+  industryId = String($('product').value);
+  props = []; sel = {}; sizing = null; picked = null; gen = null; existing = null; genKey = null;
+  $('form').innerHTML = '<p class="muted">Loading questions…</p>';
+  renderResult();
+  // Two calls total (properties + batched values) — never one per property,
+  // the Dev concurrency cap can't take it.
+  Promise.all([
+    api('/api/industries/' + industryId + '/properties').then(function (r) { return r.ok ? r.json() : []; }),
+    api('/api/industries/' + industryId + '/property-values').then(function (r) { return r.ok ? r.json() : {}; }),
+  ]).then(function (res) {
+    props = (Array.isArray(res[0]) ? res[0] : []).filter(function (p) { return p.showInWidget || p.sizingRole; });
+    valuesByProp = res[1] || {};
+    props.forEach(function (p) {
+      var dflt = (valuesByProp[p.id] || []).find(function (v) { return v.isDefault; });
+      if (dflt) sel[p.id] = String(dflt.id);
+      if (p.sizingRole === 'speed') sel[p.id] = '20'; // sheet default, editable
     });
+    renderForm();
+    refreshResult();
+  }).catch(function () { $('form').innerHTML = '<p class="error">Failed to load questions.</p>'; });
 }
 
-/* ---------- filter panel (CR-110, compact rows CR) ---------- */
-// Every showInWidget parameter is one slim clickable row; clicking opens a
-// shared popover with the value list (List) or a free-text input (Range/other).
-// State still lives in a detached <select>/<input> per parameter, so
-// syncChipsFromPanel + search + create-card code is untouched.
-var panelCtrls = {}; // propertyId -> { prop, el, card, val }
-
-function renderFilterPanel() {
-  closePop();
-  var grid = $('fp-grid');
-  grid.innerHTML = '';
-  panelCtrls = {};
-  if (!industryId) {
-    grid.innerHTML = '<div class="fp-hint">No industry is configured for this organization.</div>';
-    return syncChipsFromPanel();
-  }
-  if (!params.length) {
-    grid.innerHTML = '<div class="fp-hint">No properties are flagged "Show as CRM widget search filter" for this industry.</div>';
-    return syncChipsFromPanel();
-  }
-  params.forEach(function (p, i) {
-    var row = document.createElement('button');
-    row.type = 'button';
-    row.className = 'fp-row';
-    row.dataset.caption = String(p.caption || '').toLowerCase();
-    var num = document.createElement('span');
-    num.className = 'num';
-    num.textContent = i + 1;
-    var cap = document.createElement('span');
-    cap.className = 'cap';
-    cap.textContent = p.caption;
-    cap.title = p.caption;
-    var val = document.createElement('span');
-    val.className = 'val';
-    val.textContent = 'Any';
-    var x = document.createElement('span');
-    x.className = 'x';
-    x.textContent = '✕';
-    x.title = 'Clear';
-    row.appendChild(num);
-    row.appendChild(cap);
-    row.appendChild(val);
-    row.appendChild(x);
-    var vals = valuesByProp[p.id] || [];
-    var ctrl; // detached state holder — never rendered
-    if (vals.length) {
-      ctrl = document.createElement('select');
-      var any = document.createElement('option');
-      any.value = '';
-      any.textContent = '— Any —';
-      ctrl.appendChild(any);
-      vals.forEach(function (v) {
-        var o = document.createElement('option');
-        o.value = v.id;
-        o.textContent = v.displayValue;
-        ctrl.appendChild(o);
-      });
-    } else {
-      // No stored values (Range/Manual property) → free text.
-      ctrl = document.createElement('input');
-    }
-    x.addEventListener('click', function (e) {
-      e.stopPropagation();
-      closePop();
-      ctrl.value = '';
-      syncChipsFromPanel();
-    });
-    row.addEventListener('click', function () { openPop(p, row); });
-    grid.appendChild(row);
-    panelCtrls[p.id] = { prop: p, el: ctrl, card: row, val: val };
-  });
-  applyParamSearch();
-  syncChipsFromPanel();
-}
-
-/* value popover — one shared element, anchored to the clicked row */
-var popFor = null;      // propertyId the popover is open for
-var popCommit = null;   // pending free-text commit, applied on close
-
-function closePop() {
-  if (popCommit) { var fn = popCommit; popCommit = null; fn(); }
-  $('fp-pop').classList.add('hidden');
-  popFor = null;
-}
-
-function openPop(p, row) {
-  if (popFor === p.id) return closePop(); // second click toggles
-  closePop();
-  popFor = p.id;
-  var c = panelCtrls[p.id];
-  var pop = $('fp-pop');
-  pop.innerHTML = '';
-  var head = document.createElement('div');
-  head.className = 'pop-head';
-  head.textContent = p.caption;
-  pop.appendChild(head);
-  var focusEl = null;
-  if (c.el.tagName === 'SELECT') {
-    var opts = Array.prototype.slice.call(c.el.options);
-    var list = document.createElement('div');
-    list.className = 'pop-list';
-    function renderOpts(q) {
-      list.innerHTML = '';
-      opts.forEach(function (o) {
-        var label = o.textContent;
-        if (q && o.value && label.toLowerCase().indexOf(q) === -1) return;
-        var d = document.createElement('div');
-        d.className = 'fp-opt' + (c.el.value === o.value ? ' on' : '') + (o.value ? '' : ' none');
-        d.textContent = label;
-        d.addEventListener('click', function () {
-          c.el.value = o.value;
-          closePop();
-          syncChipsFromPanel();
-        });
-        list.appendChild(d);
-      });
-    }
-    if (opts.length > 9) {
-      var filter = document.createElement('input');
-      filter.type = 'search';
-      filter.placeholder = 'Filter…';
-      filter.addEventListener('input', function () { renderOpts(filter.value.trim().toLowerCase()); });
-      pop.appendChild(filter);
-      focusEl = filter;
-    }
-    renderOpts('');
-    pop.appendChild(list);
+function field(p) {
+  var wrap = document.createElement('label');
+  wrap.className = 'fld' + (sel[p.id] ? ' set' : '');
+  var cap = document.createElement('span');
+  cap.textContent = p.caption + (p.unit ? ' (' + p.unit + ')' : '');
+  if (p.required) { var rq = document.createElement('span'); rq.className = 'req'; rq.textContent = ' *'; cap.appendChild(rq); }
+  wrap.appendChild(cap);
+  var inp;
+  if (p.valueType === 'Range') {
+    inp = document.createElement('input');
+    inp.type = 'number';
+    inp.min = 0;
+    inp.step = 'any';
   } else {
-    // Free text: applied on Enter or when the popover closes.
-    var inp = document.createElement('input');
-    inp.placeholder = 'Any';
-    inp.value = c.el.value;
-    popCommit = function () {
-      var v = inp.value.trim();
-      if (c.el.value !== v) { c.el.value = v; syncChipsFromPanel(); }
-    };
-    inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') closePop(); });
-    pop.appendChild(inp);
-    focusEl = inp;
+    inp = document.createElement('select');
+    var none = document.createElement('option');
+    none.value = '';
+    none.textContent = '—';
+    inp.appendChild(none);
+    (valuesByProp[p.id] || []).forEach(function (v) {
+      var o = document.createElement('option');
+      o.value = v.id;
+      o.textContent = v.displayValue;
+      inp.appendChild(o);
+    });
   }
-  pop.classList.remove('hidden');
-  // Anchor beside the row, clamped inside the panel.
-  var panel = $('filter-panel');
-  var top = row.getBoundingClientRect().top - panel.getBoundingClientRect().top;
-  pop.style.top = Math.max(8, Math.min(top, panel.clientHeight - pop.offsetHeight - 8)) + 'px';
-  if (focusEl) focusEl.focus();
-}
-
-document.addEventListener('click', function (e) {
-  if (popFor === null) return;
-  if ($('fp-pop').contains(e.target)) return;
-  var t = e.target;
-  while (t && t !== document) { if (t.classList && t.classList.contains('fp-row')) return; t = t.parentNode; }
-  closePop();
-});
-document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closePop(); });
-
-function syncChipsFromPanel() {
-  chips = [];
-  params.forEach(function (p) {
-    var c = panelCtrls[p.id];
-    if (!c) return;
-    var isSel = c.el.tagName === 'SELECT';
-    var raw = isSel ? c.el.value : c.el.value.trim();
-    c.card.classList.toggle('set', Boolean(raw));
-    if (!raw) { c.val.textContent = 'Any'; c.val.title = ''; return; }
-    var display = isSel ? c.el.options[c.el.selectedIndex].textContent : raw;
-    c.val.textContent = display;
-    c.val.title = display;
-    if (isSel) {
-      chips.push({ propertyId: p.id, caption: p.caption, valueType: p.valueType, valueId: raw, display: display });
-    } else {
-      chips.push({ propertyId: p.id, caption: p.caption, valueType: p.valueType, text: raw, display: display });
-    }
+  inp.value = sel[p.id] || '';
+  // 'change' (commit), not 'input' — one SKU preview per answer, no timers.
+  inp.addEventListener('change', function () {
+    sel[p.id] = inp.value;
+    wrap.classList.toggle('set', Boolean(inp.value));
+    if (DUTY_ROLES.indexOf(p.sizingRole) > -1) { sizing = null; picked = null; renderSizing(); }
+    // A hand-changed model no longer matches the picked option's speed figures.
+    if ((p.sizingRole === 'model' || p.sizingRole === 'series') && picked) { picked = null; renderSizing(); }
+    refreshResult();
   });
-  $('fp-clear').classList.toggle('hidden', !chips.length);
-  renderChips();
-  triggerSearch(0);
+  wrap.appendChild(inp);
+  return wrap;
 }
 
-function resetPanelControl(propertyId) {
-  var c = panelCtrls[propertyId];
-  if (c) { c.el.value = ''; c.card.classList.remove('set'); }
+function section(title, list) {
+  if (!list.length) return null;
+  var box = document.createElement('div');
+  var h = document.createElement('div');
+  h.className = 'sec';
+  h.textContent = title;
+  var g = document.createElement('div');
+  g.className = 'grid';
+  list.forEach(function (p) { g.appendChild(field(p)); });
+  box.appendChild(h);
+  box.appendChild(g);
+  return box;
 }
 
-function applyParamSearch() {
-  var q = $('fp-search').value.trim().toLowerCase();
-  params.forEach(function (p) {
-    var c = panelCtrls[p.id];
-    if (c) c.card.classList.toggle('hidden', Boolean(q) && c.card.dataset.caption.indexOf(q) === -1);
-  });
-}
-$('fp-search').addEventListener('input', applyParamSearch);
-$('fp-clear').addEventListener('click', function () {
-  params.forEach(function (p) { resetPanelControl(p.id); });
-  syncChipsFromPanel();
-});
-// Selections live in the filter panel only (CR: no chips in the search bar) —
-// this just keeps the Clear button in sync.
-function renderChips() {
-  $('clear-btn').classList.toggle('hidden', !chips.length && !$('search').value.trim());
-}
-$('clear-btn').addEventListener('click', function () {
-  params.forEach(function (p) { resetPanelControl(p.id); });
-  $('search').value = '';
-  syncChipsFromPanel();
-});
-
-/* ---------- search ---------- */
-var searchTimer = null;
-var lastResults = [];
-$('search').addEventListener('input', function () { renderChips(); triggerSearch(300); });
-
-function triggerSearch(delay) {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(runSearch, delay);
-}
-
-function runSearch() {
-  var q = $('search').value.trim();
-  if (!q && !chips.length) {
-    lastResults = [];
-    $('results').innerHTML = '<div class="r-empty">Type to search, or add a filter.</div>';
-    $('result-summary').textContent = 'Type to search, or add a filter.';
-    $('create-box').style.display = 'none';
+function renderForm() {
+  var form = $('form');
+  form.innerHTML = '';
+  var model = roleProp('model');
+  var sized = Boolean(model && roleProp('capacity') && roleProp('density'));
+  if (!sized) {
+    // Generic path: a product without sizing roles is a plain question list.
+    var all = section('Configuration', props);
+    if (all) form.appendChild(all); else form.innerHTML = '<p class="muted">This product has no questions yet.</p>';
     return;
   }
-  var body = { q: q, withValues: true };
-  if (industryId) body.industryId = industryId;
-  if (chips.length) body.filters = chips.map(function (c) {
-    return c.valueId ? { propertyId: c.propertyId, valueId: c.valueId } : { propertyId: c.propertyId, text: c.text };
-  });
-  api('/api/sku-items/search', { method: 'POST', body: JSON.stringify(body) })
-    .then(function (r) { return r.ok ? r.json() : []; })
-    .then(function (items) { renderResults(items); });
+  var isPick = function (p) { return p.sizingRole === 'model' || p.sizingRole === 'series'; };
+  var feed = props.filter(function (p) { return !isPick(p) && (DUTY_ROLES.indexOf(p.sizingRole) > -1 || p.skuPosition < model.skuPosition); });
+  var rest = props.filter(function (p) { return !isPick(p) && feed.indexOf(p) === -1; });
+  var feedBox = section('Feed data', feed);
+  var findRow = document.createElement('div');
+  findRow.id = 'find-row';
+  findRow.innerHTML = '<button id="find-btn" class="primary" type="button">Find suitable models</button><span id="find-msg" class="error"></span>';
+  feedBox.appendChild(findRow);
+  var sz = document.createElement('div');
+  sz.id = 'sizing';
+  sz.className = 'hidden';
+  feedBox.appendChild(sz);
+  form.appendChild(feedBox);
+  form.appendChild(section('Selected model', props.filter(isPick)));
+  var restBox = section('Configuration', rest);
+  if (restBox) form.appendChild(restBox);
+  $('find-btn').addEventListener('click', findModels);
+  renderSizing();
 }
 
-function renderResults(items) {
-  lastResults = items;
-  var box = $('results');
-  box.innerHTML = '';
-  $('result-summary').textContent = items.length + (items.length === 1 ? ' item' : ' items');
-  items.forEach(function (it) {
-    var row = document.createElement('div');
-    row.className = 'r-row';
-    var main = document.createElement('div');
-    main.className = 'r-main';
-    var name = document.createElement('div');
-    name.className = 'r-name';
-    name.textContent = it.name || '';
-    var sku = document.createElement('span');
-    sku.className = 'r-sku mono';
-    sku.textContent = it.sku || '';
-    name.appendChild(sku);
-    main.appendChild(name);
-    var vals = it.values || {};
-    var caps = Object.keys(vals);
-    if (caps.length) {
-      var specs = document.createElement('div');
-      specs.className = 'r-specs';
-      caps.forEach(function (cap) {
-        var s = document.createElement('span');
-        s.textContent = cap + ': ' + vals[cap];
-        specs.appendChild(s);
-      });
-      main.appendChild(specs);
-    }
-    row.appendChild(main);
-    var btn = document.createElement('button');
-    btn.type = 'button';
-    var sync = function () {
-      btn.textContent = findLine(it.id) ? '✓ Added' : 'Add';
-      btn.className = findLine(it.id) ? 'added' : '';
-    };
-    sync();
-    btn.addEventListener('click', function () {
-      if (findLine(it.id)) removeFromCart(it.id); else addToCart(it);
-      sync();
-    });
-    row.appendChild(btn);
-    box.appendChild(row);
-  });
-  var noHit = !items.length;
-  if (noHit) box.innerHTML = '<div class="r-empty">No catalog item matches — create it below.</div>';
-  $('create-box').style.display = noHit ? 'block' : 'none';
-  if (noHit) refreshCreateCard();
+function findModels() {
+  var num = function (role) { var p = roleProp(role); return p ? Number(sel[p.id]) : 0; };
+  var group = roleProp('group');
+  var body = {
+    industryId: industryId, tph: num('capacity'), bd: num('density'), rpm: num('speed') || 20,
+    group: group ? displayOf(group) : '',
+  };
+  $('find-msg').textContent = '';
+  if (!(body.tph > 0) || !(body.bd > 0)) { $('find-msg').textContent = 'Enter ' + roleProp('capacity').caption + ' and ' + roleProp('density').caption + ' first.'; return; }
+  if (group && !body.group) { $('find-msg').textContent = 'Choose ' + group.caption + ' first.'; return; }
+  var btn = $('find-btn');
+  btn.disabled = true;
+  api('/api/recipe/sizing/select', { method: 'POST', body: JSON.stringify(body) })
+    .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+    .then(function (res) {
+      btn.disabled = false;
+      if (!res.ok) { $('find-msg').textContent = res.d.error || res.d.message || 'Sizing failed.'; return; }
+      sizing = res.d;
+      sizing.input = body;
+      picked = null;
+      renderSizing();
+    })
+    .catch(function () { btn.disabled = false; $('find-msg').textContent = 'Sizing failed — network error.'; });
 }
+
+function optRow(o, series, isUp) {
+  var row = document.createElement('div');
+  var on = picked && picked.modelCode === o.modelCode && picked.series === series;
+  row.className = 'opt' + (isUp ? ' up' : '') + (on ? ' on' : '');
+  var cells = [
+    ['dot', ''], ['m', (isUp ? 'one size up: ' : '') + o.modelCode], ['s', series],
+    ['c', o.capacity.toFixed(2) + ' ltr/rev'], ['r', 'runs at ' + o.requiredRpm + ' RPM'], ['sp', '+' + o.sparePct + '% spare'],
+  ];
+  cells.forEach(function (c) {
+    var s = document.createElement('span');
+    s.className = c[0];
+    s.textContent = c[1];
+    row.appendChild(s);
+  });
+  row.addEventListener('click', function () { pick(o, series); });
+  return row;
+}
+
+function renderSizing() {
+  var box = $('sizing');
+  if (!box) return;
+  box.innerHTML = '';
+  box.classList.toggle('hidden', !sizing);
+  if (!sizing) return;
+  var cap = document.createElement('div');
+  cap.className = 'cap';
+  var i = sizing.input;
+  cap.innerHTML = 'Req. Cap <b></b><span></span>';
+  cap.querySelector('b').textContent = sizing.reqCap.toFixed(2) + ' ltr/rev';
+  cap.querySelector('span').textContent = i.tph + ' TPH · ' + i.bd + ' kg/ltr · ' + i.rpm + ' RPM' + (i.group ? ' · ' + i.group : '');
+  box.appendChild(cap);
+  // Options arrive capacity-sorted; show them grouped by series, with the
+  // series' single "one size up" row after its last fitting model.
+  var seriesSeen = [];
+  sizing.options.forEach(function (o) { if (seriesSeen.indexOf(o.series) === -1) seriesSeen.push(o.series); });
+  seriesSeen.forEach(function (series) {
+    var mine = sizing.options.filter(function (o) { return o.series === series; });
+    mine.forEach(function (o) { box.appendChild(optRow(o, series, false)); });
+    if (mine[0].next) box.appendChild(optRow(mine[0].next, series, true));
+  });
+  sizing.tooBig.forEach(function (t) {
+    var d = document.createElement('div');
+    d.className = 'big';
+    d.textContent = 'Above the largest ' + t.series + ' model (' + t.largest.modelCode + ' · ' + t.largest.capacity.toFixed(2) + ' ltr/rev).';
+    box.appendChild(d);
+  });
+  if (!sizing.options.length && !sizing.tooBig.length) {
+    var e = document.createElement('div');
+    e.className = 'big';
+    e.textContent = 'No sizing models are set up for ' + (i.group || 'this product') + '.';
+    box.appendChild(e);
+  }
+}
+
+function pick(o, series) {
+  var model = roleProp('model'), ser = roleProp('series');
+  var seriesValueId = (sizing.options.find(function (x) { return x.series === series; }) || {}).seriesValueId;
+  if (!o.valueId) { $('find-msg').textContent = o.modelCode + ' is missing from the "' + model.caption + '" question values — add it in the app.'; return; }
+  $('find-msg').textContent = '';
+  picked = { modelCode: o.modelCode, series: series, capacity: o.capacity, requiredRpm: o.requiredRpm };
+  sel[model.id] = String(o.valueId);
+  if (ser && seriesValueId) sel[ser.id] = String(seriesValueId);
+  var top = $('form').scrollTop;
+  renderForm(); // re-render so the Selected model dropdowns show the pick
+  $('form').scrollTop = top;
+  refreshResult();
+}
+
+/* ---------- SKU + existing-or-new ---------- */
+// Only SKU-active answers go to the generator; duty data rides the quote line.
+function skuValues() {
+  var sv = {};
+  props.forEach(function (p) {
+    if (p.activeInSku === false) return;
+    if (sel[p.id] !== undefined && sel[p.id] !== '') sv[p.id] = sel[p.id];
+  });
+  return sv;
+}
+// "Caption: Value" for every answer, plus the sizing figures of the picked model.
+function lineValues() {
+  var v = {};
+  props.forEach(function (p) { var d = displayOf(p); if (d) v[p.caption] = d; });
+  if (picked && sizing) {
+    v['Req. Cap'] = sizing.reqCap.toFixed(2) + ' ltr/rev';
+    v['Required Speed'] = picked.requiredRpm + ' RPM';
+  }
+  return v;
+}
+
+function renderResult(msg, isError) {
+  var sku = $('res-sku');
+  sku.innerHTML = '';
+  $('res-name').textContent = '';
+  $('res-msg').textContent = msg || '';
+  $('res-msg').className = isError ? 'error' : 'muted';
+  var ready = Boolean(gen && gen.sku && !(gen.missingRequired || []).length);
+  $('res-add').disabled = !ready;
+  if (!gen || !gen.sku) {
+    var hint = document.createElement('span');
+    hint.className = 'muted';
+    hint.textContent = 'Answer the questions to generate the SKU.';
+    sku.appendChild(hint);
+    return;
+  }
+  sku.appendChild(document.createTextNode(gen.sku));
+  if (ready) {
+    var b = document.createElement('span');
+    b.className = 'badge ' + (existing ? 'exists' : 'fresh');
+    b.id = 'res-badge';
+    sku.appendChild(b);
+  }
+  $('res-push-lab').classList.toggle('hidden', !ready || Boolean(existing && existing.zohoItemId));
+  syncBadge();
+  $('res-name').textContent = (existing && existing.name) || gen.name || '';
+}
+
+function syncBadge() {
+  var b = $('res-badge');
+  if (!b) return;
+  var push = $('res-push').checked;
+  b.textContent = existing ? (existing.zohoItemId ? 'EXISTING ITEM · IN BOOKS' : (push ? 'EXISTING ITEM — WILL BE PUSHED' : 'EXISTING ITEM · NOT IN BOOKS'))
+    : (push ? 'NEW ITEM — WILL BE CREATED & PUSHED' : 'NEW ITEM — WILL BE CREATED, NOT PUSHED');
+}
+$('res-push').addEventListener('change', syncBadge);
+
+function refreshResult() {
+  var sv = skuValues();
+  var key = industryId + '|' + JSON.stringify(sv);
+  if (key === genKey) return;
+  genKey = key;
+  gen = null; existing = null;
+  if (!Object.keys(sv).length) return renderResult();
+  renderResult('Generating SKU…');
+  api('/api/sku/generate', { method: 'POST', body: JSON.stringify({ industryId: industryId, selectedValues: sv }) })
+    .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+    .then(function (res) {
+      if (key !== genKey) return; // stale response
+      if (!res.ok) return renderResult(res.d.error || 'SKU preview failed.', true);
+      gen = res.d;
+      if ((gen.missingRequired || []).length) return renderResult('Still needed: ' + gen.missingRequired.join(', ') + '.');
+      if (!gen.duplicate) return renderResult();
+      // SKU already in the catalog → show that item instead of creating a twin.
+      return api('/api/sku-items/search', { method: 'POST', body: JSON.stringify({ sku: gen.sku }) })
+        .then(function (r) { return r.ok ? r.json() : []; })
+        .then(function (items) {
+          if (key !== genKey) return;
+          existing = (Array.isArray(items) ? items : []).find(function (it) { return it.sku === gen.sku; }) || null;
+          renderResult(existing ? '' : 'SKU exists but the item could not be loaded.', !existing);
+          if (!existing) $('res-add').disabled = true;
+        });
+    })
+    .catch(function () { if (key === genKey) renderResult('SKU preview failed — network error.', true); });
+}
+
+async function pushToBooks(id) {
+  var pr = await api('/api/sku-items/' + id + '/push-zoho', { method: 'POST', body: '{}' });
+  if (pr.ok) return;
+  var pd = await pr.json().catch(function () { return {}; });
+  throw new Error(pd.error || ('HTTP ' + pr.status));
+}
+
+$('res-add').addEventListener('click', async function () {
+  var btn = $('res-add');
+  btn.disabled = true;
+  try {
+    var item = existing, badge = null, note = '';
+    if (!item) {
+      var r = await api('/api/sku/create-item', { method: 'POST', body: JSON.stringify({
+        name: gen.name || gen.sku, sku: gen.sku, description: gen.description || '', type: 'Manufacturing',
+        industryId: industryId, selectedValues: skuValues(),
+      }) });
+      item = await r.json();
+      if (!r.ok) throw new Error(item.error || 'Create failed.');
+      badge = 'books';
+    }
+    // New items, and existing ones never pushed, go to Books now when the Push
+    // box is on. A failure never blocks the quote — the item is in the SKU
+    // master and can be pushed later from the SKU Items page.
+    if (!item.zohoItemId && !$('res-push').checked) {
+      badge = 'pending';
+      note = 'Saved to the SKU master, not pushed — push it later from the SKU Items page.';
+    } else if (!item.zohoItemId) {
+      try { await pushToBooks(item.id); if (!badge) badge = 'books'; } catch (pe) {
+        badge = 'pending';
+        note = 'Books push failed: ' + (pe.message || pe) + '. Push it later from the SKU Items page.';
+      }
+    }
+    addToCart({ id: 'c' + (++lineSeq), sku: item.sku, name: item.name, type: item.type || 'Manufacturing', values: lineValues() },
+      { badge: badge, rate: Number($('res-rate').value) || 0, qty: Math.max(1, Number($('res-qty').value) || 1) });
+    setStatus(note, Boolean(note));
+    $('res-qty').value = 1;
+    genKey = null; // same answers now resolve to the existing item
+    refreshResult();
+  } catch (err) {
+    renderResult(err.message || String(err), true);
+    btn.disabled = false;
+  }
+});
 
 /* ---------- cart (quote lines) ---------- */
 function addToCart(it, opts) {
   opts = opts || {};
   var line = {
     id: it.id, sku: it.sku, name: it.name, type: it.type || '', values: it.values || {},
-    qty: 1, rate: opts.rate || 0, disc: 0,
+    qty: opts.qty || 1, rate: opts.rate || 0, disc: 0,
     rateTouched: Boolean(opts.rate), badge: opts.badge || null,
   };
   lines.push(line);
@@ -739,7 +741,6 @@ function addToCart(it, opts) {
 function removeFromCart(id) {
   lines = lines.filter(function (l) { return l.id !== id; });
   renderCart();
-  renderResults(lastResults); // sync Add/Added buttons
 }
 function lineTotal(l) { return l.qty * l.rate * (1 - l.disc / 100); }
 function updateTotals() {
@@ -755,7 +756,6 @@ function updateTotals() {
 $('lines-clear').addEventListener('click', function () {
   lines = [];
   renderCart();
-  renderResults(lastResults);
 });
 function moveLine(i, d) {
   var j = i + d;
@@ -766,7 +766,7 @@ function moveLine(i, d) {
 function renderCart() {
   var box = $('lines');
   box.innerHTML = '';
-  if (!lines.length) box.innerHTML = '<div class="l-empty">No lines yet.<br>Add items from the results.</div>';
+  if (!lines.length) box.innerHTML = '<div class="l-empty">No lines yet.<br>Configure a product and add it.</div>';
   lines.forEach(function (it, idx) {
     var card = document.createElement('div');
     card.className = 'l-card';
@@ -840,160 +840,6 @@ function renderCart() {
   });
   updateTotals();
 }
-
-/* ---------- create in Books (generator-backed) ---------- */
-// Map chips → the generator's selectedValues: { propertyId: valueROWID | text }.
-// Free text on a List property is promoted to its valueId on an exact match
-// (saveItemValues silently drops non-ROWID values on List props), else warned.
-function buildSelectedValues() {
-  var sv = {}, unstored = [];
-  chips.forEach(function (c) {
-    if (c.valueId) { sv[c.propertyId] = c.valueId; return; }
-    var vals = valuesByProp[c.propertyId] || [];
-    var hit = vals.find(function (v) {
-      return String(v.displayValue).trim().toLowerCase() === String(c.text).trim().toLowerCase();
-    });
-    if (hit) { sv[c.propertyId] = hit.id; return; }
-    sv[c.propertyId] = c.text;
-    if (c.valueType === 'List') unstored.push(c.caption);
-  });
-  return { sv: sv, unstored: unstored };
-}
-function chipValues() {
-  var v = {};
-  chips.forEach(function (c) { v[c.caption] = c.display; });
-  return v;
-}
-
-var gen = null;         // last /api/sku/generate response (null = manual mode)
-var lastGenKey = null;  // industry+values key so previews don't re-fire per keystroke
-var nameTouched = false, skuTouched = false;
-$('c-name').addEventListener('input', function () { nameTouched = true; });
-$('c-sku').addEventListener('input', function () { skuTouched = true; });
-
-function setCreateInfo(text, isError) {
-  $('c-info').textContent = isError ? '' : (text || '');
-  $('c-error').textContent = isError ? text : '';
-}
-
-function refreshCreateCard() {
-  // chip badges mirror the active filters
-  var cb = $('c-chips');
-  cb.innerHTML = '';
-  chips.forEach(function (c) {
-    var s = document.createElement('span');
-    var cap = document.createElement('span');
-    cap.className = 'cap';
-    cap.textContent = c.caption;
-    s.appendChild(cap);
-    s.appendChild(document.createTextNode(c.display));
-    cb.appendChild(s);
-  });
-  if ($('c-industry').value === '' && industryId) $('c-industry').value = industryId;
-
-  if (!industryId || !chips.length) {
-    // Manual mode: plain create, SKU typed by hand.
-    gen = null;
-    lastGenKey = null;
-    $('c-save').disabled = false;
-    if (!nameTouched && !$('c-name').value) $('c-name').value = $('search').value.trim();
-    setCreateInfo(industryId ? 'Add filters above to auto-generate the SKU from parameters.'
-      : 'No industry configured — SKU is typed by hand.');
-    return;
-  }
-  var b = buildSelectedValues();
-  var key = industryId + '|' + JSON.stringify(b.sv);
-  if (key === lastGenKey) return; // same combination — keep preview AND its disabled verdict
-  lastGenKey = key;
-  $('c-save').disabled = false;
-  gen = null;
-  setCreateInfo('Generating SKU preview…');
-  api('/api/sku/generate', { method: 'POST', body: JSON.stringify({ industryId: industryId, selectedValues: b.sv }) })
-    .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
-    .then(function (res) {
-      if (key !== lastGenKey) return; // stale response
-      if (!res.ok) return setCreateInfo(res.d.error || 'SKU preview failed.', true);
-      gen = res.d;
-      if (gen.missingRequired && gen.missingRequired.length) {
-        $('c-save').disabled = true;
-        return setCreateInfo('Add filters for required parameters: ' + gen.missingRequired.join(', ') + '.', true);
-      }
-      if (gen.duplicate) {
-        $('c-save').disabled = true;
-        return setCreateInfo('An item with SKU ' + gen.sku + ' already exists — search for it by SKU.', true);
-      }
-      if (!nameTouched) $('c-name').value = gen.name || $('search').value.trim();
-      if (!skuTouched) $('c-sku').value = gen.sku || '';
-      setCreateInfo(b.unstored.length
-        ? 'Note: free-text value for ' + b.unstored.join(', ') + ' has no matching list value and won’t be stored.'
-        : 'SKU and name generated from the selected parameters — edit if needed.');
-    })
-    .catch(function () { setCreateInfo('SKU preview failed — network error.', true); });
-}
-
-$('c-save').addEventListener('click', async function () {
-  var btn = $('c-save');
-  btn.disabled = true;
-  $('c-error').textContent = '';
-  try {
-    var name = $('c-name').value.trim();
-    var sku = $('c-sku').value.trim();
-    var type = $('c-type').value;
-    var ind = $('c-industry').value;
-    if (!name || !ind) throw new Error('Name and industry are required.');
-
-    // 1. Create the SKU item — generator path stores property values so the
-    //    item stays searchable by parameter; manual path is name+SKU only.
-    var r, useGen = Boolean(gen && chips.length && industryId);
-    if (useGen) {
-      if (!sku) sku = gen.sku;
-      var b = buildSelectedValues();
-      r = await api('/api/sku/create-item', { method: 'POST', body: JSON.stringify({
-        name: name, sku: sku, description: gen.description || '', type: type,
-        industryId: ind, selectedValues: b.sv,
-      }) });
-    } else {
-      if (!sku) throw new Error('SKU is required.');
-      r = await api('/api/sku-items', { method: 'POST', body: JSON.stringify({
-        name: name, sku: sku, type: type, industryId: ind,
-      }) });
-    }
-    var d = await r.json();
-    if (!r.ok) throw new Error(d.error || 'Create failed.');
-
-    // 2. Push to Zoho Books right away (unless the Push box is off). A failure
-    //    never blocks the quote — the item exists locally and can be pushed
-    //    later from SKU Items.
-    var badge = 'books', pushNote = '';
-    if (!$('c-push').checked) {
-      badge = 'pending';
-      pushNote = 'Saved to the SKU master, not pushed — push it later from the SKU Items page.';
-    } else try {
-      var pr = await api('/api/sku-items/' + d.id + '/push-zoho', { method: 'POST', body: '{}' });
-      if (!pr.ok) {
-        var pd = await pr.json().catch(function () { return {}; });
-        throw new Error(pd.error || ('HTTP ' + pr.status));
-      }
-    } catch (pe) {
-      badge = 'pending';
-      pushNote = 'Created locally; Books push failed: ' + (pe.message || pe) + '. Push it later from the SKU Items page.';
-    }
-
-    // 3. Into the quote lines (CRM Product is created at push-to-quote time).
-    addToCart({ id: d.id, sku: d.sku, name: d.name, type: type, values: useGen ? chipValues() : {} },
-      { badge: badge, rate: Number($('c-rate').value) || 0 });
-    setStatus(pushNote, Boolean(pushNote));
-
-    $('create-box').style.display = 'none';
-    $('c-rate').value = '';
-    nameTouched = skuTouched = false;
-    lastGenKey = null;
-    triggerSearch(0); // the new item should now show up in results
-  } catch (err) {
-    $('c-error').textContent = err.message || String(err);
-  }
-  btn.disabled = false;
-});
 
 /* ---------- write-back to the Quote ---------- */
 function setStatus(text, isError) {

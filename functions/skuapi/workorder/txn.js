@@ -14,6 +14,7 @@ const { createTransferOrder, listWarehouses } = require("../zoho/inventoryApi");
 const { validateLine, applyToBalance, TXN_TYPES } = require("./formulas");
 const { routeFor, nextNumber, logActivity, byOrg, settings, inList } = require("./store");
 const { buildGrid, indexRows } = require("./grid");
+const { MATERIAL_OK } = require("./status");
 
 const n = (v) => Number(v) || 0;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -97,6 +98,13 @@ function planLines(type, gridRows, requested) {
 
 async function createDraft(catalyst, orgId, { workOrderId, workOrderFgId, type, requested, notes, fromWarehouseId, toWarehouseId }, userId) {
   const { wo, fg } = await loadContext(catalyst, orgId, workOrderId, workOrderFgId);
+  // Reserve/issue only once the floor is ready (CR-159); dereserve/return may
+  // run from any open status so the completion/cancel sweeps still work.
+  if (["reserve", "issue"].includes(type) && !MATERIAL_OK.includes(String(wo.status))) {
+    const e = new Error(`${wo.woNumber} is ${wo.status} — move it to Ready for Machining before reserving or issuing material`);
+    e.status = 409;
+    throw e;
+  }
   const grid = await buildGrid(catalyst, orgId, wo, fg);
   const { lines, errors } = planLines(type, grid.rows, requested);
   if (errors.length) { const e = new Error(errors.join("\n")); e.status = 400; e.details = errors; throw e; }
@@ -244,7 +252,6 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
 
   await applyBalances(catalyst, orgId, wo, fg, txn.type, lines);
   await adjustSnapshots(catalyst, orgId, route, lines);
-  await advanceWoStatus(catalyst, orgId, wo, txn, userId);
 
   await logActivity(catalyst, orgId, "MaterialTxn", txn.ROWID, `txn.confirm.${txn.type}`, userId, {
     txnNumber: txn.txnNumber, transferOrder: to.transfer_order_number, lines,
@@ -260,25 +267,8 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
   };
 }
 
-/**
- * Confirmed material movement drives the WO lifecycle (BRD §6.1.2): the first
- * reserve marks allocation underway, the first issue marks production started.
- * Forward-only — dereserve/return never demote, so the completion sweep
- * (autoReturnOnComplete) leaves the status alone.
- */
-const STATUS_BUMP = {
-  reserve: { to: "MaterialAllocationPending", from: ["Draft", "Approved"] },
-  issue: { to: "InProgress", from: ["Draft", "Approved", "MaterialAllocationPending", "ReadyForProduction"] },
-};
-
-async function advanceWoStatus(catalyst, orgId, wo, txn, userId) {
-  const bump = STATUS_BUMP[txn.type];
-  if (!bump || !bump.from.includes(String(wo.status))) return;
-  await catalyst.datastore().table("WorkOrder").updateRow({ ROWID: String(wo.ROWID), status: bump.to });
-  await logActivity(catalyst, orgId, "WorkOrder", wo.ROWID, "wo.status", userId, {
-    from: wo.status, to: bump.to, via: txn.txnNumber,
-  });
-}
+// Material movement no longer moves the WO status (CR-159): stages are set
+// from the ⋯ menu, and createDraft gates reserve/issue on MATERIAL_OK.
 
 async function cancelTxn(catalyst, orgId, txnId, userId) {
   const txn = await loadTxn(catalyst, orgId, txnId);
@@ -318,22 +308,23 @@ function sweepLines(gridRows) {
  * Send leftover material back to Main when a work order completes. One
  * dereserve and/or return txn per FG, confirmed immediately (each writes a Zoho
  * Transfer Order). A Zoho failure throws — the caller aborts the status change,
- * and a retry sweeps only what is still outstanding.
+ * and a retry sweeps only what is still outstanding. `types` narrows the sweep
+ * (Cancelled de-reserves only, CR-159).
  */
-async function autoReturnOnComplete(catalyst, orgId, wo, userId) {
+async function autoReturnOnComplete(catalyst, orgId, wo, userId, { types } = {}) {
   const fgs = await byOrg(catalyst, orgId, "WorkOrderFG", `workOrderId = ${zStr(String(wo.ROWID))}`);
   const transferOrders = [];
   for (const fg of fgs) {
     const grid = await buildGrid(catalyst, orgId, wo, fg);
     const sweep = sweepLines(grid.rows);
     for (const [type, lines] of [["dereserve", sweep.dereserve], ["return", sweep.return]]) {
-      if (!lines.length) continue;
+      if (!lines.length || (types && !types.includes(type))) continue;
       const draft = await createDraft(
         catalyst, orgId,
         {
           workOrderId: wo.ROWID, workOrderFgId: fg.ROWID, type,
           requested: lines.map((l) => ({ itemId: l.itemId, qty: l.qty })),
-          notes: "Auto-return on completion",
+          notes: types ? "Auto-release on cancel" : "Auto-return on completion",
         },
         userId,
       );
@@ -444,8 +435,8 @@ async function loadContext(catalyst, orgId, workOrderId, workOrderFgId) {
   );
   if (!fgs.length) { const e = new Error("Finished good not found on this work order"); e.status = 404; throw e; }
   const wo = wos[0];
-  if (["Closed", "Cancelled"].includes(String(wo.status))) {
-    const e = new Error(`${wo.woNumber} is ${String(wo.status).toLowerCase()} — material cannot be moved against it`);
+  if (["Closed", "Cancelled", "Hold"].includes(String(wo.status))) {
+    const e = new Error(`${wo.woNumber} is ${String(wo.status) === "Hold" ? "on hold" : String(wo.status).toLowerCase()} — material cannot be moved against it`);
     e.status = 409;
     throw e;
   }
@@ -509,7 +500,7 @@ async function listTxns(catalyst, orgId, workOrderId) {
 
 module.exports = {
   planLines, createDraft, confirmTxn, cancelTxn, recompute, listTxns,
-  applyBalances, adjustSnapshots, loadContext, loadTxn, sweepLines, autoReturnOnComplete,
+  applyBalances, adjustSnapshots, loadContext, loadTxn, sweepLines, autoReturnOnComplete, trackingProblem,
 };
 
 // ponytail self-check: `node functions/skuapi/workorder/txn.js --selftest`

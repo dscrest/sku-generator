@@ -84,13 +84,12 @@ function assemble(wo, fg, lines, stock, balances, po, lastSyncAt, mainWarehouseI
     workOrderFgId: String(fg.ROWID),
     fgItemId: String(fg.fgItemId),
     fgName: fg.fgName,
+    fgSize: fg.fgSize || "",
     fgQty: n(fg.fgQty),
     revision: n(wo.revision),
     lastSyncAt,
     warehousesConfigured: Boolean(mainWarehouseId),
     rows,
-    // What the header banner and the shortfall badge need, without a second pass.
-    shortCount: rows.filter((r) => r.short).length,
   };
 }
 

@@ -111,8 +111,26 @@ async function syncMappedItems(catalyst, item, desired) {
     ),
   ).map((r) => String(r.zohoItemId)));
   const comp = await getCompositeItem(catalyst, item.zohoItemId);
+  // Legacy RM1/RM2 placeholder lines are ours to remove: put them in the pool.
+  const onComp = new Set((comp.mapped_items || []).map((l) => String(l.item_id)));
+  for (const name of PLACEHOLDER_RMS) {
+    const found = await findItemByName(catalyst, name);
+    if (found && onComp.has(String(found.item_id))) pool.add(String(found.item_id));
+  }
   const { lines, changed } = mergeMappedLines(comp.mapped_items, desired, pool);
-  if (changed) await updateCompositeItem(catalyst, item.zohoItemId, lines);
+  if (changed) await updateCompositeItem(catalyst, item.zohoItemId, requireBomLines(lines));
+}
+
+// Zoho refuses a composite with fewer than two BOM lines (code 2056). The BOM
+// is the configuration's raw materials (flagged property values); a short one
+// fails loudly instead of being padded — CR-165's RM1/RM2 placeholders are
+// gone (CR-184), and any still sitting on a composite are dropped on re-push.
+const PLACEHOLDER_RMS = ["RM1", "RM2"];
+function requireBomLines(mapped) {
+  if (mapped.length >= 2) return mapped;
+  throw new Error(
+    `Composite needs at least 2 raw-material lines (has ${mapped.length}) — flag the properties whose values are Books items ("Create values as items") or add the lines in Books`,
+  );
 }
 
 // Manufacturing → Books composite (assembly) item. Same self-heal shape as the
@@ -138,7 +156,7 @@ async function pushManufacturing(catalyst, item, description, opts = {}, customF
       if (plain) await deleteItem(catalyst, item.zohoItemId);
     }
   }
-  const mappedItems = await buildAssociatedItems(catalyst, item);
+  const mappedItems = requireBomLines(await buildAssociatedItems(catalyst, item));
   const comp = await createCompositeItem(catalyst, {
     name: item.name, sku: item.sku, description, mappedItems, customFields,
     tracking: opts.tracking, inventoryAccountId: opts.inventoryAccountId,
@@ -209,13 +227,16 @@ async function pushToZoho(catalyst, item, description, opts = {}) {
 
 /**
  * Best-effort create/link of a PropertyValue as a standalone Books item.
- * `value` is the API-shaped row (value.id = ROWID). No SKU is sent — value codes
- * are short and collide across properties — so the Books item is name-only.
+ * `value` is the API-shaped row (value.id = ROWID). The Books item's SKU is the
+ * name (see valueItemSku) — value codes are short and collide across properties.
  * Dedupes before creating: (a) already linked → update; (b) a sibling value with
  * the same name already made the item → reuse; (c) an item with that name exists
  * in Books → link; (d) otherwise create. Writes the resolved item_id back.
  * Returns null (no-op) until Zoho is configured.
  */
+// "Cotton : Silk" → "COTTON-SILK". Pure — exported for the self-check.
+const valueItemSku = (name) => String(name).toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 100);
+
 async function pushValueToZoho(catalyst, value) {
   if (!isConfigured()) {
     console.log("[Zoho] value push skipped (not configured) —", value.displayValue);
@@ -257,9 +278,12 @@ async function pushValueToZoho(catalyst, value) {
     if (existing && existing.item_id) zohoItemId = String(existing.item_id);
   }
 
-  // (d) nothing found → create it
+  // (d) nothing found → create it. SKU = the name itself, uppercased: orgs with
+  // Books "SKU mandatory" (Item Preferences) reject a SKU-less item with code
+  // 2112 (CR-163). The value's own code (HM, CN) is too short to be unique
+  // across properties; the name already is — (b)/(c) dedupe on it.
   if (!zohoItemId) {
-    const zohoItem = await createItem(catalyst, name, undefined, description);
+    const zohoItem = await createItem(catalyst, name, valueItemSku(name), description);
     if (zohoItem && zohoItem.item_id) zohoItemId = String(zohoItem.item_id);
   }
 
@@ -269,4 +293,4 @@ async function pushValueToZoho(catalyst, value) {
   return zohoItemId ? { item_id: zohoItemId } : null;
 }
 
-module.exports = { pushToZoho, pushValueToZoho, buildAssociatedItems, mergeMappedLines };
+module.exports = { pushToZoho, pushValueToZoho, buildAssociatedItems, mergeMappedLines, valueItemSku, requireBomLines };

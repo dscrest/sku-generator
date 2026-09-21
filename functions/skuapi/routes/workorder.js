@@ -11,12 +11,13 @@ const express = require("express");
 const { zStr, idOk } = require("../store");
 const { dsDate } = require("../zoho/auth");
 const {
-  getSalesOrder, listSalesOrders, listVendors, findItemByName, findItemBySku, createComponentItem, searchItems,
+  getSalesOrder, listSalesOrders, listVendors, findItemByName, findItemBySku, createComponentItem, searchItems, getItem,
+  stampSalesOrderWo, SO_WO_CF,
 } = require("../zoho/booksApi");
 const { getUserById, requireAdmin } = require("../session");
 const { assertAction } = require("../perms");
 const {
-  updateCompositeItem, listCompositeItems, createCompositeItem,
+  isService, updateCompositeItem, listCompositeItems, createCompositeItem,
   getItemStock, listSerialsBatches, pickSerialsBatches, withBatchFallback,
 } = require("../zoho/inventoryApi");
 const {
@@ -29,26 +30,12 @@ const purchase = require("../workorder/purchase");
 const reports = require("../workorder/reports");
 const { warehouseOptions, reconcileOrg, syncItem } = require("../workorder/sync");
 const assembly = require("../workorder/assembly");
-const { soFields, woHeaderFields, USER_OWNED } = require("../workorder/soFields");
+const { soFields, woHeaderFields, USER_OWNED, soWoStamp } = require("../workorder/soFields");
+// Status lifecycle lives in workorder/status.js (CR-159).
+const { DONE, EDIT_LOCKED, DATE_GATE, nextStatuses, prevStatuses } = require("../workorder/status");
 
 const router = express.Router();
 const n = (v) => Number(v) || 0;
-
-// Status lifecycle (BRD §6.1.2). Cancelled is reachable from anywhere open.
-// Draft/PendingApproval do NOT list "Approved": the only path to Approved is the
-// /approve sign-off flow, so the manual status dropdown can't skip approvals.
-const FLOW = {
-  Draft: ["Cancelled"],
-  PendingApproval: ["Cancelled"],
-  Approved: ["MaterialAllocationPending", "Cancelled"],
-  MaterialAllocationPending: ["ReadyForProduction", "Completed", "Cancelled"],
-  ReadyForProduction: ["InProgress", "Completed", "Cancelled"],
-  InProgress: ["QualityCheck", "Completed", "Cancelled"],
-  QualityCheck: ["Completed", "InProgress", "Cancelled"],
-  Completed: ["Closed"],
-  Closed: [],
-  Cancelled: [],
-};
 
 function isReauth(err) {
   return err.zohoCode === 57 || err.httpStatus === 401 || /INVALID_OAUTH|not authorized/i.test(err.message || "");
@@ -72,7 +59,6 @@ async function loadWo(req) {
 }
 
 // Items are editable until production is done (CR-031).
-const EDIT_LOCKED = ["Completed", "Closed", "Cancelled"];
 function assertEditable(wo) {
   if (EDIT_LOCKED.includes(String(wo.status))) {
     const e = new Error(`${wo.woNumber} is ${wo.status} — items can no longer be edited`);
@@ -121,8 +107,9 @@ router.get("/sales-orders", ok(async (req, res) => {
     orderStatus: s.order_status,
   }));
   const soIds = inList(sos.map((s) => s.id));
+  // A Cancelled WO frees its SO for a fresh WO (CR-173).
   const taken = soIds
-    ? new Set((await byOrg(req.catalyst, req.orgId, "WorkOrder", `salesOrderId IN (${soIds})`))
+    ? new Set((await byOrg(req.catalyst, req.orgId, "WorkOrder", `salesOrderId IN (${soIds}) AND status != ${zStr("Cancelled")}`))
         .map((w) => String(w.salesOrderId)))
     : new Set();
   res.json(creatableSalesOrders(sos, taken));
@@ -147,12 +134,11 @@ router.get("/so/:soId", ok(async (req, res) => {
     status: so.status,
     lineItems: (so.line_items || []).map((l) => ({
       itemId: String(l.item_id), name: l.name, sku: l.sku || null, quantity: n(l.quantity),
+      productType: l.product_type || null,
     })),
-    // Create-modal prefill (CR-113) — user-editable before POST /api/wo.
+    // Create-page prefill: due date = SO Expected Shipment (read-only, CR-159); priority editable.
     dueDate: f.dueDate || null,
     priority: f.woPriority || null,
-    machiningDoneDate: f.machiningDoneDate || null,
-    fittingDoneDate: f.fittingDoneDate || null,
   });
 }));
 
@@ -164,19 +150,22 @@ router.get("/items", ok(async (req, res) => {
   const q = String(req.query.q || "").trim();
   if (q.length < 2) return res.json([]);
   const items = await searchItems(req.catalyst, q);
-  res.json(items.map((i) => ({
+  res.json(items.filter((i) => !isService(i)).map((i) => ({
     id: String(i.item_id), name: i.name, sku: i.sku || null, unit: i.unit || "",
   })));
 }));
 
 // Serial/batch pool + FIFO prefill for the picker dialog (CR-121). The source
 // warehouse comes from the movement type's route, so de-reserve/issue offer
-// what sits in Reserve and return offers what sits in Issue. Static path —
-// must stay above /:id.
+// what sits in Reserve and return offers what sits in Issue — or is given
+// outright (assembly passes the Issue warehouse, CR-176). Static path — must
+// stay above /:id.
 router.get("/tracking-options", ok(async (req, res) => {
   const { itemId, type } = req.query;
   const qty = n(req.query.qty);
-  if (!itemId || !type) { const e = new Error("itemId and type are required"); e.status = 400; throw e; }
+  if (!itemId || !(type || req.query.fromWarehouseId)) {
+    const e = new Error("itemId and type (or fromWarehouseId) are required"); e.status = 400; throw e;
+  }
   const fromWarehouseId = req.query.fromWarehouseId
     ? String(req.query.fromWarehouseId)
     : (await routeFor(req.catalyst, req.orgId, String(type))).fromWarehouseId;
@@ -523,7 +512,6 @@ router.get("/", ok(async (req, res) => {
     salesOrderId: String(w.salesOrderId || ""),
     salesOrderNumber: w.salesOrderNumber,
     customerName: w.customerName,
-    projectName: w.projectName || null,
     dueDate: w.dueDate || null,
     priority: w.woPriority || null,
     status: w.status,
@@ -532,7 +520,7 @@ router.get("/", ok(async (req, res) => {
     // opened. ponytail: org-wide, not per-user, and only PO receipts trigger it.
     attention: Boolean(
       procMap.receiptAt.get(String(w.ROWID))
-      && !["Completed", "Closed", "Cancelled"].includes(String(w.status))
+      && !DONE.includes(String(w.status))
       && (!w.lastViewedAt || String(procMap.receiptAt.get(String(w.ROWID))) > String(w.lastViewedAt)),
     ),
     qcStatus: w.qcStatus || null,
@@ -549,7 +537,7 @@ router.get("/", ok(async (req, res) => {
  * whose item is not a composite comes back as a clear error naming it.
  */
 router.post("/", ok(async (req, res) => {
-  const { salesOrderId, projectName, fgLines, woDate, notes } = req.body || {};
+  const { salesOrderId, fgLines, woDate, notes } = req.body || {};
   if (!salesOrderId || !Array.isArray(fgLines) || !fgLines.length) {
     const e = new Error("Pick a sales order and at least one finished good");
     e.status = 400;
@@ -567,41 +555,64 @@ router.post("/", ok(async (req, res) => {
     salesOrderNumber: String(so.salesorder_number || ""),
     customerId: String(so.customer_id || ""),
     customerName: String(so.customer_name || ""),
-    projectName: projectName || "",
     status: "Draft",
     qcStatus: "",
     revision: 0,
     bomImportedAt: null,
-    estimatedCost: n(so.total),
-    actualCost: 0,
     notes: String(notes || ""),
+    tcRequired: String(req.body.tcRequired || ""),
     ...woHeaderFields(so, req.body),
   });
 
   const fgTable = req.catalyst.datastore().table("WorkOrderFG");
   const seeded = [];
   const problems = [];
+  // SO carries its active WO (CR-173); a Books failure is reported, never blocks.
+  try {
+    await stampSalesOrderWo(req.catalyst, so.salesorder_id, soWoStamp(wo));
+  } catch (err) {
+    problems.push(`Sales order not updated with the WO number (${err.message})`);
+  }
   for (const pick of fgLines) {
     const line = (so.line_items || []).find((l) => String(l.item_id) === String(pick.itemId));
     if (!line) { problems.push(`Item ${pick.itemId} is not on ${so.salesorder_number}`); continue; }
+    if (isService(line)) { problems.push(`${line.name}: service item — not a finished good`); continue; }
     const fgQty = n(pick.qty) || n(line.quantity);
+    // The Books item detail carries the "Size" custom field (list omits CFs) — one call per FG (CR-159).
+    const item = await getItem(req.catalyst, line.item_id).catch(() => null);
     const fg = await fgTable.insertRow({
       orgId: String(req.orgId),
       workOrderId: String(wo.ROWID),
       fgItemId: String(line.item_id),
       fgName: line.name || "",
       fgSku: line.sku || "",
+      fgSize: bom.itemSize(item),
       fgQty,
     });
     try {
       const comp = await bom.getComposite(req.catalyst, req.orgId, line.item_id, true);
-      const lines = bom.linesFromComposite(comp.mappedItems, fgQty);
+      // No material components → the item itself is the one line (CR-159).
+      const lines = bom.requirementLines(comp, line, fgQty);
       const diff = bom.diffBom([], lines);
       await bom.applyBom(req.catalyst, req.orgId, { ...wo, revision: 0 }, fg, diff.lines, diff.summary, req.userId);
       seeded.push({ fgId: String(fg.ROWID), name: line.name, lines: lines.length });
     } catch (err) {
-      // Not a composite item, or Zoho refused — the FG stays on the work order
-      // with an empty BOM so the user can upload one instead.
+      // Zoho answered with a code (anything but 57 = auth) → the SO line is a
+      // plain item, not a composite. It IS the material: seed a one-line BOM of
+      // itself so it shows on the Details grid and reserves like any RM (CR-152).
+      if (err.zohoCode && err.zohoCode !== 57) {
+        try {
+          const diff = bom.diffBom([], [bom.selfLine(line, fgQty)]);
+          await bom.applyBom(req.catalyst, req.orgId, { ...wo, revision: 0 }, fg, diff.lines, diff.summary, req.userId);
+          seeded.push({ fgId: String(fg.ROWID), name: line.name, lines: 1 });
+          continue;
+        } catch (err2) {
+          problems.push(`${line.name}: BOM not seeded (${err2.message})`);
+          continue;
+        }
+      }
+      // Zoho unreachable/unauthorised — the FG stays on the work order with an
+      // empty BOM so the user can upload one instead.
       problems.push(`${line.name}: BOM not seeded (${err.message})`);
     }
   }
@@ -637,8 +648,24 @@ router.get("/:id", ok(async (req, res) => {
       if (USER_OWNED.has(k) && wo[k]) continue;
       if (String(wo[k] || "") !== v) { patch[k] = v; wo[k] = v; }
     }
+    // Self-heal the SO's WO stamp (CR-173): covers a create-time Books failure
+    // and woDate edits. A Cancelled WO never writes — it would blank a newer WO's.
+    if (String(wo.status) !== "Cancelled") {
+      const current = ((so.custom_fields || []).find((c) => c.api_name === SO_WO_CF) || {}).value;
+      const want = soWoStamp(wo);
+      if (String(current ?? "") !== want) stampSalesOrderWo(req.catalyst, wo.salesOrderId, want).catch(() => {});
+    }
   }
   req.catalyst.datastore().table("WorkOrder").updateRow(patch).catch(() => {});
+  // FGs created before CR-159 have no Size yet: fetch once per FG (sequential —
+  // Dev concurrency cap), store "" when the item has none so it never re-fetches.
+  for (const f of fgs) {
+    if (f.fgSize != null) continue;
+    try {
+      f.fgSize = bom.itemSize(await getItem(req.catalyst, f.fgItemId));
+      req.catalyst.datastore().table("WorkOrderFG").updateRow({ ROWID: String(f.ROWID), fgSize: f.fgSize }).catch(() => {});
+    } catch { /* Books down — leave null, try on the next open */ }
+  }
   res.json({
     id: String(wo.ROWID),
     woNumber: wo.woNumber,
@@ -646,26 +673,34 @@ router.get("/:id", ok(async (req, res) => {
     salesOrderId: String(wo.salesOrderId || ""),
     salesOrderNumber: wo.salesOrderNumber,
     customerName: wo.customerName,
-    projectName: wo.projectName || null,
     soDate: wo.soDate || null,
     shipmentDate: wo.shipmentDate || null,
     buyerOrderNo: wo.buyerOrderNo || null,
     buyerOrderDate: wo.buyerOrderDate || null,
     priority: wo.woPriority || null,
     dueDate: wo.dueDate || null,
+    // Logistics CFs from the SO + user-entered TC flag (CR-161).
+    freightCharge: wo.freightCharge || null,
+    delivery: wo.delivery || null,
+    booking: wo.booking || null,
+    transporter: wo.transporter || null,
+    tcRequired: wo.tcRequired || null,
+    status: wo.status,
+    heldFrom: wo.heldFrom || null,
+    // Stage completion dates, captured by the status transition (CR-160).
     machiningDoneDate: wo.machiningDoneDate || null,
     fittingDoneDate: wo.fittingDoneDate || null,
-    status: wo.status,
     procStatus: procMap.get(String(wo.ROWID)) || null,
     qcStatus: wo.qcStatus || null,
     revision: n(wo.revision),
     bomImportedAt: wo.bomImportedAt || null,
-    estimatedCost: n(wo.estimatedCost),
-    actualCost: n(wo.actualCost),
     notes: wo.notes || "",
-    nextStatuses: FLOW[String(wo.status)] || [],
+    nextStatuses: nextStatuses(wo),
+    // Subset of nextStatuses that steps back a stage (CR-171) — the menu shows these as "←".
+    prevStatuses: prevStatuses(wo),
     fgs: fgs.map((f) => ({
       id: String(f.ROWID), fgItemId: String(f.fgItemId), name: f.fgName, sku: f.fgSku || null, qty: n(f.fgQty),
+      size: f.fgSize || null,
       // Assembly progress (CR-126): Closed once assembledQty covers fgQty.
       assembledQty: n(f.assembledQty),
       status: f.status || null,
@@ -684,9 +719,8 @@ router.get("/:id", ok(async (req, res) => {
 router.put("/:id", ok(async (req, res) => {
   const wo = await loadWo(req);
   const fields = { ROWID: String(wo.ROWID) };
-  for (const k of ["projectName", "notes", "woDate", "dueDate", "machiningDoneDate", "fittingDoneDate"]) if (req.body[k] !== undefined) fields[k] = req.body[k] || "";
+  for (const k of ["notes", "woDate", "tcRequired"]) if (req.body[k] !== undefined) fields[k] = req.body[k] || "";
   if (req.body.priority !== undefined) fields.woPriority = req.body.priority || "";
-  for (const k of ["estimatedCost", "actualCost"]) if (req.body[k] !== undefined) fields[k] = n(req.body[k]);
   await req.catalyst.datastore().table("WorkOrder").updateRow(fields);
   await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.update", req.userId, fields);
   res.json({ ok: true });
@@ -737,17 +771,20 @@ router.delete("/:id", ok(async (req, res) => {
   await wipe("Approval", await byOrg(req.catalyst, req.orgId, "Approval", `entityType = 'WorkOrder' AND entityId = ${zStr(woId)}`));
   await wipe("WorkOrderFG", await byOrg(req.catalyst, req.orgId, "WorkOrderFG", `workOrderId = ${zStr(woId)}`));
   await ds.table("WorkOrder").deleteRow(woId);
+  // A deleted Draft leaves the SO with no WO (CR-173); Cancelled was cleared at cancel time.
+  if (String(wo.status) === "Draft") await stampSalesOrderWo(req.catalyst, wo.salesOrderId, "").catch(() => {});
 
   await logActivity(req.catalyst, req.orgId, "WorkOrder", woId, "wo.delete", req.userId, { woNumber: wo.woNumber });
   res.json({ deleted: true });
 }));
 
-/** Status transitions, including the QC gate (FR-BOM-003). */
+/** Status transitions: hold/resume, stage date gates, QC + assembly gates (CR-159). */
 router.post("/:id/status", ok(async (req, res) => {
   const wo = await loadWo(req);
-  const to = String((req.body || {}).status || "");
+  const body = req.body || {};
+  const to = String(body.status || "");
   if (to === "Closed") await assertAction(req.catalyst, req.orgId, req.userId, "wo.action.close");
-  const allowed = FLOW[String(wo.status)] || [];
+  const allowed = nextStatuses(wo);
   if (!allowed.includes(to)) {
     const e = new Error(
       `${wo.woNumber} is ${wo.status} — it can only move to: ${allowed.join(", ") || "nothing (this is a final status)"}`,
@@ -755,26 +792,91 @@ router.post("/:id/status", ok(async (req, res) => {
     e.status = 400;
     throw e;
   }
-  const qcStatus = (req.body || {}).qcStatus;
+  // Hold: reason required, remember where to resume to. Nothing moves.
+  if (to === "Hold") {
+    const reason = String(body.reason || "").trim();
+    if (!reason) { const e = new Error("A reason is required to put a work order on hold"); e.status = 400; throw e; }
+    await req.catalyst.datastore().table("WorkOrder").updateRow({ ROWID: String(wo.ROWID), status: "Hold", heldFrom: String(wo.status) });
+    await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.hold", req.userId, { reason, from: wo.status });
+    return res.json({ ok: true, status: "Hold", heldFrom: wo.status, transferOrders: [] });
+  }
+  if (String(wo.status) === "Hold") {
+    await req.catalyst.datastore().table("WorkOrder").updateRow({ ROWID: String(wo.ROWID), status: to, heldFrom: "" });
+    await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.resume", req.userId, { from: "Hold", to });
+    return res.json({ ok: true, status: to, transferOrders: [] });
+  }
+  // Draft leaves only through approval unless the org has approvals off.
+  if (to === "ReadyForMachining" && String(wo.status) === "Draft"
+      && approvalLevelCount(await settings(req.catalyst, req.orgId)) > 0) {
+    const e = new Error("Approve the work order before moving it to Ready for Machining"); e.status = 409; throw e;
+  }
+  // Machining / Fitting dates are asked on entering a stage (CR-170): the client
+  // prompts on `needDate` with every field of the gate and resends the dates.
+  const fields = { ROWID: String(wo.ROWID) };
+  const gate = DATE_GATE[to] || {};
+  const missing = [];
+  for (const [field, required] of Object.entries(gate)) {
+    const value = String(body[field] || wo[field] || "");
+    if (required && !value) missing.push(field);
+    else if (value && !wo[field]) fields[field] = value;
+  }
+  if (missing.length) {
+    return res.status(400).json({
+      code: "needDate",
+      fields: Object.entries(gate).map(([field, required]) => ({ field, required, value: wo[field] || "" })),
+      error: `Enter the ${missing[0] === "machiningDoneDate" ? "Machining" : "Fitting"} Date first`,
+    });
+  }
+  const qcStatus = body.qcStatus;
   if (to === "Completed" && !qcStatus && !wo.qcStatus) {
-    const e = new Error("Record the quality check result (Passed or Rejected) before completing this work order");
+    const e = new Error("Record the quality check result (Passed, Rejected or Not Applicable) before completing this work order");
     e.status = 400;
     throw e;
   }
-  if (qcStatus && !["Passed", "Rejected"].includes(qcStatus)) {
-    const e = new Error("Quality check result must be Passed or Rejected");
+  // NotApplicable (CR-161) completes like Passed — it just records that no QC applied.
+  if (qcStatus && !["Passed", "Rejected", "NotApplicable"].includes(qcStatus)) {
+    const e = new Error("Quality check result must be Passed, Rejected or Not Applicable");
     e.status = 400;
     throw e;
   }
-  // QC rejected sends the job back to production rather than forward (§6.1.4).
-  const status = qcStatus === "Rejected" ? "InProgress" : to;
+  // QC rejected only records the result — the WO stays where it is (CR-159).
+  if (qcStatus === "Rejected") {
+    await req.catalyst.datastore().table("WorkOrder").updateRow({ ROWID: String(wo.ROWID), qcStatus });
+    await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.qc", req.userId, { qcStatus });
+    return res.json({ ok: true, status: wo.status, qcStatus, transferOrders: [] });
+  }
+  const status = to;
   // Closing means manufacturing consumed the material — warn when items are not
   // fully issued; the client resends with force:true to close anyway (CR-080).
-  const force = Boolean((req.body || {}).force);
-  if (status === "Closed" && !force) {
+  const force = Boolean(body.force);
+  let rows = [];
+  if (status === "Completed" || (status === "Closed" && !force)) {
     const fgs = await byOrg(req.catalyst, req.orgId, "WorkOrderFG", `workOrderId = ${zStr(String(wo.ROWID))}`);
+    // No assembly, no completion: every finished good needs at least one (CR-159).
+    if (status === "Completed") {
+      const bare = fgs.filter((fg) => n(fg.assembledQty) <= 0);
+      if (bare.length) {
+        const e = new Error(`${bare.map((fg) => fg.fgName).join(", ")} not assembled yet — create an assembly before completing`);
+        e.status = 409;
+        throw e;
+      }
+    }
     const grids = await buildGridsBulk(req.catalyst, req.orgId, fgs.map((fg) => ({ wo, fg })));
-    const short = reports.unissuedRows(grids.flatMap((g) => g.rows));
+    rows = grids.flatMap((g) => g.rows);
+  }
+  // Issue is a must: a WO cannot complete while any line still has material in
+  // Reserve — issue it or de-reserve it first. Hard block, no force (CR-151).
+  if (status === "Completed") {
+    const held = reports.reservedRows(rows);
+    if (held.length) {
+      const names = held.slice(0, 3).map((r) => r.name || r.sku).join(", ") + (held.length > 3 ? ` +${held.length - 3} more` : "");
+      const e = new Error(`${held.length} item${held.length === 1 ? " is" : "s are"} still reserved (${names}) — issue or de-reserve before completing`);
+      e.status = 409;
+      throw e;
+    }
+  }
+  if (status === "Closed" && !force) {
+    const short = reports.unissuedRows(rows);
     if (short.length) {
       return res.status(409).json({
         code: "unissued",
@@ -783,16 +885,21 @@ router.post("/:id/status", ok(async (req, res) => {
       });
     }
   }
-  // Production is over: whatever still sits in the Reserve/Issue warehouses for
-  // this WO goes back to Main (CR-031). A Zoho failure aborts the transition —
-  // a retry only sweeps the remainder, since confirmed txns update balances.
+  // Production is over: any over-issue (issued beyond requirement) goes back to
+  // Main (CR-031). Reserved is always 0 here since CR-151 gates on it above. A
+  // Zoho failure aborts the transition — a retry only sweeps the remainder.
+  // Cancelling releases whatever is still reserved; issued material stays put.
   let transferOrders = [];
   if (status === "Completed") {
     transferOrders = (await txn.autoReturnOnComplete(req.catalyst, req.orgId, wo, req.userId)).transferOrders;
+  } else if (status === "Cancelled") {
+    transferOrders = (await txn.autoReturnOnComplete(req.catalyst, req.orgId, wo, req.userId, { types: ["dereserve"] })).transferOrders;
   }
-  const fields = { ROWID: String(wo.ROWID), status };
+  fields.status = status;
   if (qcStatus) fields.qcStatus = qcStatus;
   await req.catalyst.datastore().table("WorkOrder").updateRow(fields);
+  // The SO drops its WO on cancel (CR-173); best-effort — the next WO overwrites anyway.
+  if (status === "Cancelled") await stampSalesOrderWo(req.catalyst, wo.salesOrderId, "").catch(() => {});
   await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.status", req.userId, {
     from: wo.status, to: status, qcStatus, transferOrders, ...(status === "Closed" && force ? { forced: true } : {}),
   });
@@ -800,9 +907,9 @@ router.post("/:id/status", ok(async (req, res) => {
 }));
 
 /**
- * Admin-only: reopen a Closed work order back to Completed, reason required
- * (CR-080). Deliberately NOT in FLOW — Closed stays terminal for the generic
- * status endpoint, so only this guarded route can reopen.
+ * Admin-only: reopen a Closed work order back to Dispatched, reason required
+ * (CR-080, CR-159). Deliberately NOT in FLOW — Closed stays terminal for the
+ * generic status endpoint, so only this guarded route can reopen.
  */
 router.post("/:id/reopen", requireAdmin, ok(async (req, res) => {
   const wo = await loadWo(req);
@@ -817,9 +924,9 @@ router.post("/:id/reopen", requireAdmin, ok(async (req, res) => {
     e.status = 400;
     throw e;
   }
-  await req.catalyst.datastore().table("WorkOrder").updateRow({ ROWID: String(wo.ROWID), status: "Completed" });
-  await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.reopen", req.userId, { reason, from: "Closed", to: "Completed" });
-  res.json({ ok: true, status: "Completed" });
+  await req.catalyst.datastore().table("WorkOrder").updateRow({ ROWID: String(wo.ROWID), status: "Dispatched" });
+  await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.reopen", req.userId, { reason, from: "Closed", to: "Dispatched" });
+  res.json({ ok: true, status: "Dispatched" });
 }));
 
 // ---- BOM ------------------------------------------------------------------
@@ -883,7 +990,8 @@ router.post("/:id/bom/preview", ok(async (req, res) => {
     unmatched = matched.unmatched;
   } else {
     const comp = await bom.getComposite(req.catalyst, req.orgId, fg.fgItemId, true);
-    incoming = bom.linesFromComposite(comp.mappedItems, n(fg.fgQty));
+    // Empty composite → the FG itself (CR-159); Refresh BOM heals WOs seeded before the fix.
+    incoming = bom.requirementLines(comp, { item_id: fg.fgItemId, name: fg.fgName, sku: fg.fgSku }, n(fg.fgQty));
   }
 
   const diff = bom.diffBom(current.map((l) => ({ ...l, rmItemId: String(l.rmItemId) })), incoming);
@@ -1059,16 +1167,35 @@ router.post("/:id/txn", ok(async (req, res) => {
   );
   // The grid's Confirm button does both in one call — Draft is only kept as a
   // separate step for people who want to stage an action.
-  if (confirm) return res.json(await txn.confirmTxn(req.catalyst, req.orgId, draft.id, req.userId));
+  if (confirm) {
+    try {
+      return res.json(await txn.confirmTxn(req.catalyst, req.orgId, draft.id, req.userId));
+    } catch (err) {
+      // A refused confirm (Zoho rejected the TO, cap raced) must not leave a
+      // Draft behind — WO-0020 collected six of them in two minutes (CR-152).
+      await txn.cancelTxn(req.catalyst, req.orgId, draft.id, req.userId).catch(() => {});
+      throw err;
+    }
+  }
   res.json(draft);
 }));
 
 // Assemble a finished good (CR-126): Zoho bundle consumes Issue-warehouse
-// material and produces the composite's stock in Main. Body: { qty }.
+// material and produces the composite's stock in Main. Body: { qty, prefix,
+// components?: [{ itemId, tracking }] } (CR-176: explicit batch/serial picks per RM).
+// CR-155: what the next assembly would assign (prefix prefill + serials +
+// the components to consume); no side effects.
+router.get("/:id/fg/:fgId/assemble/preview", ok(async (req, res) => {
+  await assertAction(req.catalyst, req.orgId, req.userId, "wo.action.assemble");
+  const wo = await loadWo(req);
+  res.json(await assembly.previewAssembly(req.catalyst, req.orgId, wo.ROWID, req.params.fgId, req.query.qty, req.query.prefix));
+}));
+
 router.post("/:id/fg/:fgId/assemble", ok(async (req, res) => {
   await assertAction(req.catalyst, req.orgId, req.userId, "wo.action.assemble");
   const wo = await loadWo(req);
-  res.json(await assembly.assembleFg(req.catalyst, req.orgId, wo.ROWID, req.params.fgId, (req.body || {}).qty, req.userId));
+  const { qty, prefix, components } = req.body || {};
+  res.json(await assembly.assembleFg(req.catalyst, req.orgId, wo.ROWID, req.params.fgId, qty, req.userId, prefix, components));
 }));
 
 router.post("/:id/recompute", ok(async (req, res) => {
@@ -1197,7 +1324,9 @@ router.post("/refresh", ok(async (req, res) => {
   const force = req.query.force === "1" || req.query.force === "true";
   const limit = full ? Number(req.query.limit) || 50 : null;
   const offset = Number(req.query.offset) || 0;
-  res.json({ ok: true, ...(await reconcileOrg(req.catalyst, req.orgId, { full, force, offset, limit })) });
+  // ?woId= limits the sweep to that work order's own lines (the WO page button).
+  const woId = idOk(req.query.woId) ? String(req.query.woId) : null;
+  res.json({ ok: true, ...(await reconcileOrg(req.catalyst, req.orgId, { full, force, offset, limit, woId })) });
 }));
 
 // Instant per-item stock sync (static path — keep above /:id). Reflects a Zoho

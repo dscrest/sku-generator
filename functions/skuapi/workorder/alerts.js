@@ -25,7 +25,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 function shortfallCandidates(workOrders, nowMs, days) {
   const cutoff = nowMs - n(days) * DAY_MS;
   return (workOrders || []).filter((w) => {
-    if (["Closed", "Cancelled", "Completed"].includes(String(w.status))) return false;
+    if (["Closed", "Cancelled", "Completed", "Dispatched"].includes(String(w.status))) return false;
     if (!w.bomImportedAt) return false;
     const at = new Date(w.bomImportedAt).getTime();
     return Number.isFinite(at) && at <= cutoff;

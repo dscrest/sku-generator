@@ -2,9 +2,9 @@
 
 /**
  * Purchase Request (BRD §6.6): the bridge from a shortfall on the grid to draft
- * Purchase Orders in Books — one PO per vendor, every line tagged with the
- * originating Sales Order and delivered into the Reserve warehouse, so received
- * material lands already allocated to the project.
+ * Purchase Orders in Books — one PO per vendor, every required line tagged with
+ * the originating Sales Order and delivered into the Main warehouse (CR-170), so
+ * received material shows up as stock the grid can reserve.
  */
 const { zStr } = require("../store");
 const { dsDate } = require("../zoho/auth");
@@ -122,6 +122,25 @@ function collapseLines(lines) {
     }
   }
   return [...byItem.values()];
+}
+
+/**
+ * Pure: a PR line ordered beyond its requirement becomes two PO lines (CR-170):
+ * the required qty keeps its SO reference, the excess rides as an unattributed
+ * extra (no cf_so_no). Both entries share the source ROWID so the PO stamp
+ * lands on the one row. Lines at or under requirement pass through untouched.
+ */
+function splitExtra(lines) {
+  return lines.flatMap((l) => {
+    const req = n(l.requiredQty);
+    const qty = n(l.purchaseQty);
+    const extra = l.isExtra === true || l.isExtra === "true";
+    if (extra || req <= 0 || qty <= req) return [l];
+    return [
+      { ...l, purchaseQty: req },
+      { ...l, purchaseQty: qty - req, requiredQty: 0, isExtra: true, soNumber: "", soId: "" },
+    ];
+  });
 }
 
 /**
@@ -422,13 +441,14 @@ async function confirmPR(catalyst, orgId, prId, userId) {
 
   // Single-WO request: every line traces to the WO's one Sales Order — stamp it
   // so the PO line carries it in cf_so_no (id for the lookup, number for text).
+  // Qty ordered beyond the requirement splits off as an SO-less extra line.
   const soNumber = wo.salesOrderNumber || "";
   const soId = wo.salesOrderId || "";
-  for (const group of groupByVendor(pending.map((l) => ({ ...l, soNumber, soId })))) {
+  for (const group of groupByVendor(splitExtra(pending.map((l) => ({ ...l, soNumber, soId }))))) {
     try {
       const { poNumber } = await createPoForLines(catalyst, orgId, group, {
         referenceNumber: wo.salesOrderNumber || "",
-        warehouseId: wh.reserve,
+        warehouseId: wh.main,
         notes: `${pr.prNumber} · ${wo.woNumber || ""} · SO ${wo.salesOrderNumber || ""}`,
         description: wo.salesOrderNumber ? `SO ${wo.salesOrderNumber}` : undefined,
       });
@@ -547,7 +567,7 @@ async function raiseItemPO(catalyst, orgId, { vendorId, vendorName, items }, use
   try {
     ({ poNumber } = await createPoForLines(catalyst, orgId, { vendorId, vendorName, lines: localLines }, {
       referenceNumber: prNumber,
-      warehouseId: wh.reserve,
+      warehouseId: wh.main,
       notes: `${prNumber} · consolidated purchase request`,
       description: `PR ${prNumber}`,
     }));
@@ -1019,7 +1039,7 @@ async function procStatusByWo(catalyst, orgId, workOrderId) {
 
 module.exports = {
   SETTLED_PO, shortfallLines, applyDraftCoverage, openDraftLines, validatePR, groupByVendor, collapseLines,
-  shortfallByItem, procurementStatus, createPoForLines, raiseItemPO, procStatusByWo,
+  splitExtra, shortfallByItem, procurementStatus, createPoForLines, raiseItemPO, procStatusByWo,
   createPR, updatePRLine, addPRLine, deletePR, deletePRLine, confirmPR, refreshPurchaseOrders, listPRs, listAllPRs,
   poPutBody, poDetail, deletePo, setPoStatus, updatePoLines, poListRow, listAllPOs,
 };
@@ -1126,6 +1146,18 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(withExtra.length, 2, "required vs extra stay separate lines");
   assert.strictEqual(withExtra.find((l) => l.isExtra === true).purchaseQty, 2);
   assert.strictEqual(withExtra.find((l) => l.isExtra === false).purchaseQty, 4, "\"false\" string merges with false boolean");
+
+  // CR-170: ordered beyond requirement → required line keeps the SO, excess is extra without it.
+  const split = splitExtra([
+    { ROWID: "L1", rmItemId: "11", requiredQty: 2, purchaseQty: 4, soNumber: "SO-1", soId: "S1" },
+    { ROWID: "L2", rmItemId: "22", requiredQty: 3, purchaseQty: 3, soNumber: "SO-1", soId: "S1" },
+    { ROWID: "L3", rmItemId: "33", requiredQty: 0, purchaseQty: 5, isExtra: "true" },
+  ]);
+  assert.strictEqual(split.length, 4, "only the over-ordered line splits");
+  const [reqPart, extraPart] = split.filter((l) => l.ROWID === "L1");
+  assert.deepStrictEqual([reqPart.purchaseQty, reqPart.soId, reqPart.isExtra], [2, "S1", undefined]);
+  assert.deepStrictEqual([extraPart.purchaseQty, extraPart.soId, extraPart.soNumber, extraPart.isExtra, extraPart.requiredQty], [2, "", "", true, 0]);
+  assert.strictEqual(collapseLines(split.filter((l) => l.ROWID === "L1")).length, 2, "the two halves stay separate PO lines");
 
   // Validation.
   assert.deepStrictEqual(

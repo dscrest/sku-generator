@@ -25,7 +25,7 @@ const PERM_KEYS = [
   "wo.action.assemble", "wo.action.approve", "wo.action.close",
   "wo.action.po.create", "wo.action.po.modify",
   "sku", "reserve", "estimate",
-  "recipe.recipes", "recipe.materials", "recipe.costs", "recipe.configure", "recipe.quotations",
+  "recipe.recipes", "recipe.materials", "recipe.costs", "recipe.sizing", "recipe.configure", "recipe.quotations",
   "users.manage",
 ];
 
@@ -138,6 +138,8 @@ const WO_MAP = [
 ];
 const RECIPE_MAP = [
   [/^\/materials/, ["recipe.materials"]],
+  [/^\/(sizing-models|seed-rav)/, ["recipe.sizing"]],
+  [/^\/sizing\//, ["recipe.configure"]],
   [/^\/cost-elements/, ["recipe.costs", "recipe.recipes"]],
   [/^\/quotations/, ["recipe.quotations", "recipe.configure"]],
   [/^\/books-items/, ["recipe.materials", "recipe.recipes"]],
@@ -178,5 +180,7 @@ if (require.main === module && process.argv.includes("--selftest")) {
   console.assert(eq(cls(RECIPE_MAP, ["recipe.recipes"], "/books-items"), ["recipe.materials", "recipe.recipes"]), "recipe books items");
   console.assert(eq(cls(RECIPE_MAP, ["recipe.recipes"], "/books-composites"), ["recipe.recipes", "recipe.configure"]), "recipe books composites");
   console.assert(eq(cls(RECIPE_MAP, ["recipe.recipes"], "/recipes/1/push-books"), ["recipe.recipes", "recipe.configure"]), "recipe push");
+  console.assert(eq(cls(RECIPE_MAP, ["recipe.recipes"], "/sizing-models/4"), ["recipe.sizing"]), "recipe sizing master");
+  console.assert(eq(cls(RECIPE_MAP, ["recipe.recipes"], "/sizing/select"), ["recipe.configure"]), "recipe sizing select");
   console.log("perms.js self-check passed");
 }

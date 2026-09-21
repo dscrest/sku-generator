@@ -45,6 +45,15 @@ function unissuedRows(rows) {
 }
 
 /**
+ * Pure: grid rows with material still sitting in Reserve (C > 0). The Complete
+ * gate (CR-151) — a work order cannot complete until reserved material has been
+ * issued (or de-reserved by hand).
+ */
+function reservedRows(rows) {
+  return rows.filter((r) => n(r.reserved) > 0);
+}
+
+/**
  * SO-BOM report: one row per work order — BOM status, material status, and
  * whether anything is short. Filters are optional.
  */
@@ -329,7 +338,7 @@ async function history(catalyst, orgId, workOrderId) {
   }));
 }
 
-module.exports = { rollUp, unissuedRows, soBom, shortfall, history, pipelineRollup, itemPipeline, reconcileRows, reconciliation, warehouseStock };
+module.exports = { rollUp, unissuedRows, reservedRows, soBom, shortfall, history, pipelineRollup, itemPipeline, reconcileRows, reconciliation, warehouseStock };
 
 // ponytail self-check: `node functions/skuapi/workorder/reports.js --selftest`
 if (require.main === module && process.argv.includes("--selftest")) {
@@ -356,6 +365,8 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(t.shortItems, 1, "only item 2 is short");
   assert.strictEqual(t.shortQty, 4);
   assert.strictEqual(t.complete, false, "a short item means not complete");
+  assert.deepStrictEqual(reservedRows(rows).map((r) => r.itemId), ["1", "3"], "items 1 and 3 still hold reserved qty (CR-151)");
+  assert.strictEqual(reservedRows([gridRow({ rmItemId: "9", requiredQty: 5 }, { stockOnHand: 9 }, { issuedQty: 5 }, {})]).length, 0, "fully issued → nothing reserved");
 
   const done = rollUp([gridRow({ rmItemId: "1", requiredQty: 5 }, { stockOnHand: 9 }, { reservedQty: 5 }, {})]);
   assert.strictEqual(done.complete, true, "everything reserved and nothing short → complete");

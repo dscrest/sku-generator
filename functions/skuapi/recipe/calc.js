@@ -159,7 +159,8 @@ if (require.main === module && process.argv.includes("--selftest")) {
     { code: "ASSEMBLY", calcType: "FIXED", sequence: 4 },
   ];
   // Note: the legacy costing sheet's CI/WCB "CS Cost" rows (4400/6600) contradict
-  // its own rate master (70×55=3850, 100×55=5500); RATE × castWeight is the spec.
+  // its own rate master (70×55=3850, 100×55=5500) — its lookup reads one row below
+  // (FG260 / SGI rates); user confirmed the sheet is wrong. RATE × castWeight is the spec.
   const ci = optionCost({ castWeight: 55, fixedCosts: { MACHINING: 2000, DRILLING: 1000, ASSEMBLY: 400 } }, { rate: 70 }, ELS);
   console.assert(ci.total === 7250, `CI casing 7250, got ${ci.total}`);
   const wcb = optionCost({ castWeight: 55, fixedCosts: { MACHINING: 2000, DRILLING: 1000, ASSEMBLY: 500 } }, { rate: 100 }, ELS);

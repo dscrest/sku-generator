@@ -27,6 +27,7 @@ const RecipeListPage = lazy(() => import('./pages/RecipeListPage.jsx'));
 const RecipeBuilderPage = lazy(() => import('./pages/RecipeBuilderPage.jsx'));
 const RecipeMaterialsPage = lazy(() => import('./pages/RecipeMaterialsPage.jsx'));
 const RecipeCostMasterPage = lazy(() => import('./pages/RecipeCostMasterPage.jsx'));
+const RecipeSizingModelsPage = lazy(() => import('./pages/RecipeSizingModelsPage.jsx'));
 // Settings hub: one chunk holding all settings pages (see SettingsLayout.jsx).
 const SettingsLayout = lazy(() => import('./pages/SettingsLayout.jsx'));
 
@@ -243,11 +244,12 @@ const NAV_LINKS = [
     ] },
   { to: '/reserve', addon: 'reserve', perm: 'reserve', label: 'Reserve / De-reserve', icon: <><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></> },
   // Product-first order: build the recipe, then configure & quote it.
-  { to: '/recipe/recipes', match: '/recipe', addon: 'recipe-engine', label: 'Recipe Engine', icon: <><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></>,
+  { to: '/recipe/recipes', match: '/recipe', addon: 'recipe-engine', label: 'Product Configurator', icon: <><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></>,
     children: [
-      { to: '/recipe/recipes', label: 'Recipes', perm: 'recipe.recipes' },
+      { to: '/recipe/recipes', label: 'Product Designs', perm: 'recipe.recipes' },
       { to: '/recipe/materials', label: 'Materials', perm: 'recipe.materials' },
       { to: '/recipe/costs', label: 'Cost Master', perm: 'recipe.costs' },
+      { to: '/recipe/sizing', label: 'Sizing Models', perm: 'recipe.sizing' },
       { to: '/recipe/configure', label: 'Configure & Quote', perm: 'recipe.configure' },
       { to: '/recipe/quotations', label: 'Quotations', perm: 'recipe.quotations' },
     ] },
@@ -322,6 +324,7 @@ function RecipeLayout({ hasPerm }) {
         <Route path="recipes/:id" element={g('recipe.recipes', <RecipeBuilderPage />)} />
         <Route path="materials" element={g('recipe.materials', <RecipeMaterialsPage />)} />
         <Route path="costs" element={g('recipe.costs', <RecipeCostMasterPage />)} />
+        <Route path="sizing" element={g('recipe.sizing', <RecipeSizingModelsPage />)} />
         <Route path="*" element={<Navigate to="recipes" replace />} />
       </Routes>
     </div>
@@ -632,7 +635,9 @@ export default function App() {
     const hashQ = new URLSearchParams(window.location.hash.split('?')[1] || '');
     const preQ = new URLSearchParams(window.location.search);
     const crmDeepLink = ['dealId', 'quoteId'].some(k => hashQ.get(k) || preQ.get(k));
-    if (crmDeepLink && !sessionStorage.getItem('autoAuthTried')) {
+    // Top-level only: inside a Books Web Tab the redirect would load
+    // accounts.zoho in the frame, which Zoho refuses (CR-152).
+    if (crmDeepLink && window.self === window.top && !sessionStorage.getItem('autoAuthTried')) {
       sessionStorage.setItem('autoAuthTried', '1');
       sessionStorage.setItem('returnTo', window.location.hash || `#/estimate?${preQ}`);
       window.location.replace(`${API}/auth/zoho`);

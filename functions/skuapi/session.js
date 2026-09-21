@@ -76,7 +76,12 @@ function setSessionCookie(res, userId) {
     `${COOKIE}=${makeSession(userId)}`,
     "Path=/",
     "HttpOnly",
-    "SameSite=Lax",
+    // None + Partitioned (CHIPS): the app also runs inside a Zoho Books Web
+    // Tab iframe (CR-152). Partitioned keys the cookie by the top-level site,
+    // so it survives the frame yet can't ride along from another site — a
+    // stricter CSRF posture than Lax. Top-level use is unchanged.
+    "SameSite=None",
+    "Partitioned",
     `Max-Age=${Math.floor(MAX_AGE_MS / 1000)}`,
     "Secure", // prod is https; harmless on localhost over http-in-modern-browsers, and dev proxies same-origin
   ];
@@ -84,7 +89,19 @@ function setSessionCookie(res, userId) {
 }
 
 function clearSessionCookie(res) {
-  res.append("Set-Cookie", `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  res.append("Set-Cookie", `${COOKIE}=; Path=/; HttpOnly; SameSite=None; Partitioned; Secure; Max-Age=0`);
+}
+
+// Zoho DC of the last successful sign-in on this browser (CR-179): GET
+// /auth/zoho starts the consent step on that DC's accounts host, skipping the
+// .com → .in bounce. Same cookie attributes as the session (Books Web Tab).
+const DC_COOKIE = "zdc";
+function setDcCookie(res, dc) {
+  if (!/^[a-z]{2}$/.test(dc || "")) return;
+  res.append("Set-Cookie", `${DC_COOKIE}=${dc}; Path=/; HttpOnly; SameSite=None; Partitioned; Secure; Max-Age=31536000`);
+}
+function readDcCookie(req) {
+  return parseCookies(req)[DC_COOKIE];
 }
 
 function currentUserId(req) {
@@ -172,6 +189,8 @@ module.exports = {
   currentUserId,
   setSessionCookie,
   clearSessionCookie,
+  setDcCookie,
+  readDcCookie,
   findUserByEmail,
   findUserByZuid,
   getUserById,

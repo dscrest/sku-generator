@@ -12,7 +12,7 @@
  */
 const { rowList, zStr } = require("../store");
 const { dsDate } = require("../zoho/auth");
-const { getCompositeItem } = require("../zoho/inventoryApi");
+const { getCompositeItem, isService } = require("../zoho/inventoryApi");
 const { logActivity, byOrg, inList } = require("./store");
 
 const n = (v) => Number(v) || 0;
@@ -65,8 +65,9 @@ function safeParse(text, fallback) {
 // ---- pure BOM shaping -----------------------------------------------------
 
 // composite_item.mapped_items[] × FG qty → the requirement lines (column A).
+// The composite's Services section (labour) is not material — dropped (CR-149).
 function linesFromComposite(mappedItems, fgQty) {
-  return (mappedItems || []).map((m) => ({
+  return (mappedItems || []).filter((m) => !isService(m)).map((m) => ({
     rmItemId: String(m.item_id),
     rmName: m.name || "",
     rmSku: m.sku || "",
@@ -75,6 +76,28 @@ function linesFromComposite(mappedItems, fgQty) {
     requiredQty: n(m.quantity) * n(fgQty),
     source: "composite",
   }));
+}
+
+// A Books item's "Size" custom field (CR-159), matched by label like soFields.
+function itemSize(item) {
+  const cf = (item && item.custom_fields || []).find((c) => String(c.label || "").trim().toLowerCase() === "size");
+  return String(cf ? cf.value ?? "" : "").trim();
+}
+
+// A plain (non-composite) finished good IS its own material: one line of
+// itself, qty = FG qty, so it shows on the grid and reserves like any RM.
+function selfLine(item, fgQty) {
+  return {
+    rmItemId: String(item.item_id), rmName: item.name || "", rmSku: item.sku || "", uom: item.unit || "",
+    perUnitQty: 1, requiredQty: n(fgQty), source: "self",
+  };
+}
+
+// Requirement lines for an FG: the composite's components, or — when Zoho
+// returns no material components at all (CR-159, WO-0022) — the item itself.
+function requirementLines(comp, item, fgQty) {
+  const lines = linesFromComposite(comp && comp.mappedItems, fgQty);
+  return lines.length ? lines : [selfLine(item, fgQty)];
 }
 
 /**
@@ -244,7 +267,7 @@ async function balancesFor(catalyst, orgId, workOrderId, workOrderFgId) {
 }
 
 module.exports = {
-  CACHE_TTL_MS, refreshComposite, getComposite, linesFromComposite, matchUpload,
+  CACHE_TTL_MS, refreshComposite, getComposite, linesFromComposite, itemSize, selfLine, requirementLines, matchUpload,
   diffBom, guardAgainstCommitted, currentLines, applyBom, balancesFor, safeParse, inList,
 };
 
@@ -256,15 +279,29 @@ if (require.main === module && process.argv.includes("--selftest")) {
   const mapped = [
     { item_id: 11, name: "Shaft", sku: "SH-1", quantity: 2, unit: "nos" },
     { item_id: 22, name: "Seal", sku: "SL-9", quantity: 1 },
+    { item_id: 33, name: "Body Labour 50mm", product_type: "service", quantity: 1 },
   ];
   const lines = linesFromComposite(mapped, 3);
-  assert.strictEqual(lines.length, 2);
+  assert.strictEqual(lines.length, 2, "service items (labour) never become WO lines");
   assert.deepStrictEqual(
     lines[0],
     { rmItemId: "11", rmName: "Shaft", rmSku: "SH-1", uom: "nos", perUnitQty: 2, requiredQty: 6, source: "composite" },
   );
   assert.strictEqual(lines[1].requiredQty, 3, "1 per unit × 3 FG = 3");
   assert.deepStrictEqual(linesFromComposite(null, 5), [], "missing mapped_items is not a crash");
+
+  // CR-159: no material components → the FG itself is the one requirement line.
+  const valve = { item_id: 99, name: "Valve", sku: "V-50", unit: "nos" };
+  assert.deepStrictEqual(
+    requirementLines({ mappedItems: [] }, valve, 15),
+    [{ rmItemId: "99", rmName: "Valve", rmSku: "V-50", uom: "nos", perUnitQty: 1, requiredQty: 15, source: "self" }],
+  );
+  assert.strictEqual(requirementLines({ mappedItems: [mapped[2]] }, valve, 2)[0].source, "self", "services-only composite → self");
+  assert.strictEqual(requirementLines({ mappedItems: mapped }, valve, 3).length, 2, "real components win");
+  assert.strictEqual(requirementLines(null, valve, 1)[0].rmItemId, "99", "null composite is not a crash");
+  assert.strictEqual(itemSize({ custom_fields: [{ label: " SIZE ", value: " 50 MM " }] }), "50 MM");
+  assert.strictEqual(itemSize({ custom_fields: [{ label: "Colour", value: "Red" }] }), "");
+  assert.strictEqual(itemSize(null), "");
 
   // Diff: added / changed / removed / unchanged.
   const current = [

@@ -56,6 +56,13 @@ router.get("/stock-accounts", async (req, res) => {
 // legacy per-industry seriesStart fallback, see skuSeries.js).
 const clampPad = (v) => Math.min(8, Math.max(1, Number(v) || 4));
 const TYPES = ["Trading", "Manufacturing"];
+const TRACKING = ["none", "serial", "batch"];
+// Per-org display labels for the stored item types (CR-180). The label is also
+// the value the CRM quote widget writes to Products.Item_Source, so it should
+// match the org's CRM picklist. Stored values never change.
+const TYPE_LABEL_DEFAULT = { Trading: "Direct Purchase", Manufacturing: "In-House Manufacturing" };
+const labelKey = (t) => `skuTypeLabel${t}`;
+const cleanLabel = (v) => String(v || "").trim().slice(0, 60);
 
 function settingsOut(s) {
   return {
@@ -63,6 +70,14 @@ function settingsOut(s) {
     seriesMode: s.skuSeriesMode || "",
     seriesPad: clampPad(s.skuSeriesPad),
     defaultItemType: TYPES.includes(s.skuDefaultItemType) ? s.skuDefaultItemType : "Trading",
+    typeLabels: Object.fromEntries(TYPES.map((t) => [t, cleanLabel(s[labelKey(t)]) || TYPE_LABEL_DEFAULT[t]])),
+    // Push-dialog defaults (CR-166): preselected in the dialog, still editable per push.
+    pushTracking: TRACKING.includes(s.skuPushTracking) ? s.skuPushTracking : "serial",
+    pushAccountId: s.skuPushAccountId || "",
+    // CRM widgets (CR-184): a new item is always saved to the SKU master; this
+    // decides whether it is also pushed to Books at once (else later, from the
+    // SKU Items page). Stored inverted so blank = on.
+    widgetAutoPush: s.cfgNoAutoPush !== "true",
   };
 }
 
@@ -101,6 +116,15 @@ router.put("/settings", async (req, res) => {
     await setSetting(req.catalyst, req.orgId, "skuSeriesPad", String(clampPad(b.seriesPad)));
     await setSetting(req.catalyst, req.orgId, "skuDefaultItemType",
       TYPES.includes(b.defaultItemType) ? b.defaultItemType : "");
+    for (const t of TYPES) {
+      await setSetting(req.catalyst, req.orgId, labelKey(t), cleanLabel(b.typeLabels && b.typeLabels[t]));
+    }
+    await setSetting(req.catalyst, req.orgId, "skuPushTracking", TRACKING.includes(b.pushTracking) ? b.pushTracking : "");
+    await setSetting(req.catalyst, req.orgId, "skuPushAccountId", b.pushAccountId ? String(b.pushAccountId) : "");
+    // Absent from the payload (older client) = leave as is.
+    if (b.widgetAutoPush !== undefined) {
+      await setSetting(req.catalyst, req.orgId, "cfgNoAutoPush", b.widgetAutoPush ? "" : "true");
+    }
     res.json(settingsOut(await settings(req.catalyst, req.orgId)));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -333,10 +357,12 @@ router.post("/:id/push-zoho", async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: "SKU item not found" });
     const item = out(rows[0]);
     // Push dialog options (CR-087): tracking + inventory account, create-only.
+    // A caller that sends neither gets the org defaults (CR-166).
     const { tracking, inventoryAccountId } = req.body || {};
+    const d = settingsOut(await settings(req.catalyst, req.orgId));
     const result = await pushToZoho(req.catalyst, item, item.description, {
-      tracking: ["none", "serial", "batch"].includes(tracking) ? tracking : undefined,
-      inventoryAccountId: inventoryAccountId ? String(inventoryAccountId) : undefined,
+      tracking: TRACKING.includes(tracking) ? tracking : d.pushTracking,
+      inventoryAccountId: inventoryAccountId ? String(inventoryAccountId) : (d.pushAccountId || undefined),
     });
     const updated = rowList(await req.catalyst.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE ROWID = ${id}`));
     res.json({ success: true, zohoItemId: out(updated[0]).zohoItemId, item: result });

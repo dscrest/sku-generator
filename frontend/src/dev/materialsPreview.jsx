@@ -39,9 +39,9 @@ function row([name, sku, uom, bom, stock, reserved, issued, po, received, billed
 const rows = SEED.map(row);
 const grid = {
   workOrderId: 'WO-0009', workOrderFgId: 'fg-1', fgItemId: 'fg-item-1',
-  fgName: 'Dhiraj SA Workorder', fgQty: 1, revision: 1,
+  fgName: 'Dhiraj SA Workorder', fgSize: '50 MM', fgQty: 1, revision: 1,
   lastSyncAt: '07:05 today', warehousesConfigured: true,
-  rows, shortCount: rows.filter(r => r.short).length,
+  rows,
 };
 
 // Intercept the three endpoints MaterialsGrid talks to.

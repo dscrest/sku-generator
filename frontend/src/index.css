@@ -91,7 +91,9 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  /* clip-path, not overflow: hidden — overflow would make the table its own
+     sticky context and kill sticky headers (CR-152). Same rounded clip. */
+  clip-path: inset(0 round var(--radius-lg));
 }
 .grid-table th, .grid-table td { border-bottom: 1px solid var(--border); }
 .grid-table tr:last-child td { border-bottom: none; }

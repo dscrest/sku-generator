@@ -54,6 +54,14 @@ router.post("/logout", (_req, res) => {
   res.json({ ok: true });
 });
 
+// Embedded login (Books Web Tab, CR-152): the OAuth popup hands its session
+// token to the framed app via postMessage; this turns it into a cookie inside
+// the frame's own partition. requireAuth already accepts the token as ?t=.
+router.post("/adopt", requireAuth, (req, res) => {
+  setSessionCookie(res, req.userId);
+  res.json({ ok: true });
+});
+
 router.get("/me", requireAuth, async (req, res) => {
   try {
     // Parallel: independent lookups — shorter execution = a concurrency slot

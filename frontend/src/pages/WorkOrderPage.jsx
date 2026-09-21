@@ -7,9 +7,10 @@ import WoItemsTab from '../components/WoItemsTab.jsx';
 import PurchaseTab from '../components/PurchaseTab.jsx';
 import Modal, { ModalFooter, ModalBtn, CloseX } from '../components/Modal.jsx';
 import { FilterSelect, distinct } from '../components/GridFooter.jsx';
-import { StatusChip, ProcChip, DueDays, AccessNotice, can, spaced, btn, thStyle, cell, WO_PRIORITIES } from '../components/woCommon.jsx';
-import { fmtMoney, fmtDate, dueDays } from '../format.js';
+import { StatusChip, NextStage, ProcChip, DueDays, AccessNotice, can, spaced, btn, thStyle, cell, WO_PRIORITIES } from '../components/woCommon.jsx';
+import { fmtDate, dueDays } from '../format.js';
 import DateInput from '../components/DateInput.jsx';
+import { combineIssued } from '../components/woIssueCopy.js';
 
 /**
  * One work order, Zoho Books style (CR-018): compact list of work orders on
@@ -45,6 +46,8 @@ export default function WorkOrderPage({ user }) {
   const [qcPrompt, setQcPrompt] = useState(null); // pending status awaiting QC answer
   const [closeWarn, setCloseWarn] = useState(null); // 409 "unissued" payload from a Close attempt
   const [reopening, setReopening] = useState(false);
+  const [holding, setHolding] = useState(false); // Hold reason modal (CR-160)
+  const [datePrompt, setDatePrompt] = useState(null); // { status, field } — stage completion date needed
   // Rail filters (CR-112): client-side only, reset on leaving the page.
   const [railQ, setRailQ] = useState('');
   const [railStatus, setRailStatus] = useState('');
@@ -75,8 +78,9 @@ export default function WorkOrderPage({ user }) {
   const allApproved = levels > 0 && [1, 2].slice(0, levels).every(lv => approvalOf(lv) === 'Approved');
   const nextLevel = approvalOf(1) !== 'Approved' ? 1 : 2;
   const canDelete = wo && ['Draft', 'Cancelled'].includes(wo.status);
-  // Forward status moves (Cancel lives in the ⋯ menu, not the status dropdown).
-  const forward = (wo?.nextStatuses || []).filter(s => s !== 'Cancelled');
+  // Forward status moves (Cancel, Hold and the one-step-back move get their own ⋯ entries).
+  const back = wo?.prevStatuses || [];
+  const forward = (wo?.nextStatuses || []).filter(s => s !== 'Cancelled' && s !== 'Hold' && !back.includes(s));
 
   async function approve(status) {
     setBusy(true);
@@ -89,7 +93,8 @@ export default function WorkOrderPage({ user }) {
     } finally { setBusy(false); }
   }
 
-  async function changeStatus(status, qcStatus, force) {
+  // `extra` carries a Hold reason or the machining / fitting dates (CR-160, CR-170).
+  async function changeStatus(status, qcStatus, force, extra) {
     // The QC gate is the one transition that needs an answer first.
     if (status === 'Completed' && !wo.qcStatus && !qcStatus) {
       setQcPrompt(status);
@@ -97,10 +102,12 @@ export default function WorkOrderPage({ user }) {
     }
     setBusy(true);
     try {
-      const { data } = await axios.post(`/api/wo/${id}/status`, { status, qcStatus, force });
-      toast.success(`Moved to ${spaced(data.status)}`);
-      // Completion sweeps leftover material back to Main (CR-031) — surface
-      // the Zoho Transfer Orders it created.
+      const { data } = await axios.post(`/api/wo/${id}/status`, { status, qcStatus, force, ...extra });
+      setHolding(false);
+      setDatePrompt(null);
+      toast.success(qcStatus === 'Rejected' ? 'Quality check recorded as Rejected' : `Moved to ${spaced(data.status)}`);
+      // Completion / cancel sweeps leftover material back to Main (CR-031,
+      // CR-160) — surface the Zoho Transfer Orders it created.
       if (data.transferOrders?.length) {
         toast.success(
           `Leftover material returned to Main: ${data.transferOrders.map(t => t.transferOrderNumber || t.txnNumber).join(', ')}`,
@@ -109,8 +116,11 @@ export default function WorkOrderPage({ user }) {
       }
       load();
     } catch (err) {
+      const code = err.response?.data?.code;
       // Not everything issued yet — ask before closing (CR-080).
-      if (err.response?.status === 409 && err.response.data?.code === 'unissued') setCloseWarn(err.response.data);
+      if (err.response?.status === 409 && code === 'unissued') setCloseWarn(err.response.data);
+      // Entering Ready for Machining / Fitting in Progress asks for dates (CR-170).
+      else if (code === 'needDate') setDatePrompt({ status, fields: err.response.data.fields || [] });
       else toast.error(err.response?.data?.error || 'Could not change the status', { duration: 6000 });
     } finally { setBusy(false); }
   }
@@ -153,6 +163,13 @@ export default function WorkOrderPage({ user }) {
     setTimeout(() => window.print(), 80);
   }
 
+  // CR-190 — one combined copy of everything issued on this WO.
+  function printIssueCopy() {
+    const copy = combineIssued(wo.transactions);
+    if (!copy.lines.length) { toast.error('Nothing issued on this work order yet'); return; }
+    printTxnSlip(copy);
+  }
+
   return (
     <div style={{ height: '100%', display: 'flex', minHeight: 0, overflow: 'hidden' }}>
       {/* Left rail: all work orders, click to switch */}
@@ -188,12 +205,12 @@ export default function WorkOrderPage({ user }) {
               <StatusChip status={w.status} />
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {fmtDate(w.woDate)}
-              {w.dueDate && (
+              {/* Due date + days only — no customer (CR-171). */}
+              {w.dueDate ? (
                 <span style={{ color: dueDays(w.dueDate) !== null && dueDays(w.dueDate) < 4 ? '#dc2626' : undefined }}>
-                  {' · Due '}{fmtDate(w.dueDate)}
+                  Due {fmtDate(w.dueDate)} · <DueDays date={w.dueDate} />
                 </span>
-              )}
+              ) : '—'}
             </div>
           </div>
         ))}
@@ -203,12 +220,15 @@ export default function WorkOrderPage({ user }) {
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {!wo || String(wo.id) !== String(id) ? <Empty>Loading work order…</Empty> : (
           <>
-            <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ padding: '8px 20px 10px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
+              {/* One row: title + chips · actions · ⋯ · ✕ (CR-156). */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginRight: 6 }}>
                   <b style={{ fontSize: 15 }}>{wo.woNumber}</b>
                   {/* Status chips are display-only — status moves live in the ⋯ menu. */}
                   <StatusChip status={wo.status} />
+                  {/* Where it goes next (CR-173): first forward move; Hold shows the resume target. */}
+                  <NextStage next={forward[0]} />
                   <ProcChip status={wo.procStatus} />
                   {/* WO-level material receipt vs on-order qty (CR-120). */}
                   <ReceiptChip r={(wo.purchaseRequests || []).flatMap(pr => pr.lines || [])
@@ -216,11 +236,7 @@ export default function WorkOrderPage({ user }) {
                     .reduce((a, l) => ({ po: a.po + (Number(l.purchaseQty) || 0), received: a.received + (Number(l.receivedQty) || 0) }), { po: 0, received: 0 })} />
                 </div>
                 <div style={{ flex: 1 }} />
-                <CloseX onClick={() => navigate('/wo')} title="Back to the list" />
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
-                <div style={{ flex: 1 }} />
-                {wo.status === 'Completed' && can(user, 'wo.action.close') && (
+                {wo.status === 'Dispatched' && can(user, 'wo.action.close') && (
                   <button onClick={() => changeStatus('Closed')} disabled={busy} style={btn}>Close WO</button>
                 )}
                 {wo.status === 'Closed' && user?.isAdmin && (
@@ -236,17 +252,22 @@ export default function WorkOrderPage({ user }) {
                     Approve
                   </button>
                 ))}
+                <button onClick={load} disabled={busy} title="Refresh — re-pulls SO fields and stock from Zoho Books" style={btn}>⟳</button>
+                <button onClick={() => setEditing(true)} disabled={busy} style={btn}>✎ Edit</button>
                 <Menu
                   trigger="⋯"
                   triggerStyle={{ ...btn, fontWeight: 700 }}
                   align="right"
                   items={[
-                    ...forward.map(s => ({ label: `→ ${spaced(s)}`, onClick: () => changeStatus(s) })),
-                    ...(levels > 0 && !allApproved ? [{ label: `✕ Reject — Level ${nextLevel}`, tone: '#b91c1c', onClick: () => approve('Rejected') }] : []),
+                    // CR-178: plain text, no icons — direction is spelled out instead of arrows.
+                    ...forward.map(s => ({ label: wo.status === 'Hold' ? `Resume (${spaced(s)})` : `Move to ${spaced(s)}`, onClick: () => changeStatus(s) })),
+                    ...back.map(s => ({ label: `Back to ${spaced(s)}`, onClick: () => changeStatus(s) })),
+                    ...(wo.nextStatuses?.includes('Hold') ? [{ label: 'Put on Hold', onClick: () => setHolding(true) }] : []),
+                    ...(levels > 0 && !allApproved ? [{ label: `Reject — Level ${nextLevel}`, tone: '#b91c1c', onClick: () => approve('Rejected') }] : []),
                     ...(wo.nextStatuses?.includes('Cancelled') ? [{ label: 'Cancel Work Order', tone: '#b91c1c', onClick: () => changeStatus('Cancelled') }] : []),
-                    { label: '✎ Edit Work Order', onClick: () => setEditing(true) },
-                    { label: '🖨 Print / PDF', onClick: printPdf },
-                    { label: '📦 Print Packing List', onClick: () => window.open(`/server/skuapi/packing?woId=${id}`, '_blank') },
+                    { label: 'Print / PDF', onClick: printPdf },
+                    { label: 'Print Material Issue Copy', onClick: printIssueCopy },
+                    { label: 'Print Packing List', onClick: () => window.open(`/server/skuapi/packing?woId=${id}`, '_blank') },
                     {
                       label: 'Delete Work Order', tone: '#b91c1c',
                       disabled: !canDelete,
@@ -255,24 +276,33 @@ export default function WorkOrderPage({ user }) {
                     },
                   ]}
                 />
+                <CloseX onClick={() => navigate('/wo')} title="Back to the list" />
               </div>
               {/* SO-derived header fields (CR-110, MSUN): re-synced from Books on every open. */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '8px 16px', marginTop: 10, padding: '12px 14px', background: 'var(--blue-light)', border: '1px solid var(--blue-border)', borderRadius: 10 }}>
+              {/* 7 equal columns on a wide screen = 14 fields in two full rows; wraps to more rows below ~1200px. */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(max(150px, calc((100% - 6 * 16px) / 7)), 1fr))', gap: '8px 16px', marginTop: 8, padding: '8px 14px', background: 'var(--blue-light)', border: '1px solid var(--blue-border)', borderRadius: 10 }}>
                 {[
                   ['WO No', wo.woNumber],
                   ['WO Date', fmtDate(wo.woDate)],
                   ['SO No', wo.salesOrderNumber],
                   ['SO Date', fmtDate(wo.soDate)],
                   ['Customer', wo.customerName],
-                  ...(wo.projectName ? [['Project', wo.projectName]] : []),
                   ['Expected Shipment', fmtDate(wo.shipmentDate)],
                   ['Buyer Order No', wo.buyerOrderNo || '—'],
                   ['Buyer Order Date', fmtDate(wo.buyerOrderDate)],
                   ['WO Due Date', <span style={{ color: dueDays(wo.dueDate) !== null && dueDays(wo.dueDate) < 4 ? '#dc2626' : undefined }}>{fmtDate(wo.dueDate)}</span>],
                   ['WO Due Days', <DueDays date={wo.dueDate} />],
                   ['Priority', wo.priority || '—'],
-                  ['Machining Completion', fmtDate(wo.machiningDoneDate)],
-                  ['Fitting Completion', fmtDate(wo.fittingDoneDate)],
+                  // Logistics CFs from the SO, TC flag and QC result (CR-161).
+                  ['Freight Charge', wo.freightCharge || '—'],
+                  ['Delivery', wo.delivery || '—'],
+                  ['Booking', wo.booking || '—'],
+                  ['Transporter', wo.transporter || '—'],
+                  ['TC Required', wo.tcRequired || '—'],
+                  ['QC Status', wo.qcStatus ? spaced(wo.qcStatus) : '—'],
+                  // Stage dates, captured on entering Ready for Machining / Fitting in Progress (CR-170).
+                  ...(wo.machiningDoneDate ? [['Machining Date', fmtDate(wo.machiningDoneDate)]] : []),
+                  ...(wo.fittingDoneDate ? [['Fitting Date', fmtDate(wo.fittingDoneDate)]] : []),
                 ].map(([label, value]) => (
                   <div key={label}>
                     <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--blue)' }}>{label}</div>
@@ -285,7 +315,7 @@ export default function WorkOrderPage({ user }) {
             <div style={{ display: 'flex', gap: 2, padding: '0 20px', background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
               {TABS.map(t => (
                 <button key={t} onClick={() => setTab(t)} style={{
-                  padding: '9px 14px', fontSize: 13, background: 'none', border: 'none', cursor: 'pointer',
+                  padding: '7px 14px', fontSize: 13, background: 'none', border: 'none', cursor: 'pointer',
                   color: tab === t ? 'var(--blue)' : 'var(--text-secondary)', fontWeight: tab === t ? 500 : 400,
                   borderBottom: tab === t ? '2px solid var(--blue)' : '2px solid transparent',
                 }}>
@@ -295,7 +325,7 @@ export default function WorkOrderPage({ user }) {
             </div>
 
             <div style={{ flex: 1, minHeight: 0 }}>
-              {tab === 'Details' && <MaterialsGrid workOrderId={id} fgs={wo.fgs} onChanged={load} user={user} />}
+              {tab === 'Details' && <MaterialsGrid workOrderId={id} fgs={wo.fgs} status={wo.status} onChanged={load} user={user} />}
               {tab === 'Item List' && <WoItemsTab workOrderId={id} fgs={wo.fgs} status={wo.status} onChanged={load} user={user} />}
               {tab === 'Purchase' && <PurchaseTab workOrderId={id} wo={wo} onChanged={load} user={user} />}
               {tab === 'Approvals' && <ApprovalsTab workOrderId={id} wo={wo} onChanged={load} />}
@@ -307,10 +337,13 @@ export default function WorkOrderPage({ user }) {
             {qcPrompt && (
               <Modal title="Quality check" onClose={() => setQcPrompt(null)} width={440}>
                 <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                  Did the quality check pass? Rejecting sends the job back to production.
+                  Did the quality check pass? Rejecting records the result and keeps the work order at Ready For Dispatch. Not Applicable completes without a check.
                 </div>
                 <ModalFooter>
                   <ModalBtn onClick={() => setQcPrompt(null)}>Cancel</ModalBtn>
+                  <ModalBtn disabled={busy} onClick={() => { const s = qcPrompt; setQcPrompt(null); changeStatus(s, 'NotApplicable'); }}>
+                    Not Applicable
+                  </ModalBtn>
                   <ModalBtn disabled={busy} onClick={() => { const s = qcPrompt; setQcPrompt(null); changeStatus(s, 'Rejected'); }}>
                     Rejected
                   </ModalBtn>
@@ -352,7 +385,26 @@ export default function WorkOrderPage({ user }) {
               </Modal>
             )}
 
-            {reopening && <ReopenModal wo={wo} busy={busy} onClose={() => setReopening(false)} onReopen={reopen} />}
+            {reopening && (
+              <ReasonModal
+                title={`Reopen ${wo.woNumber}?`} blurb="The work order goes back to Dispatched. The reason is recorded in the audit trail."
+                label="Reason for reopening" cta="Reopen work order" busyCta="Reopening…"
+                busy={busy} onClose={() => setReopening(false)} onSubmit={reopen}
+              />
+            )}
+            {holding && (
+              <ReasonModal
+                title={`Put ${wo.woNumber} on hold?`} blurb="Nothing moves while on hold — material stays in its warehouse. Resume returns the work order to its current status."
+                label="Reason for the hold" cta="Put on hold" busyCta="Holding…"
+                busy={busy} onClose={() => setHolding(false)} onSubmit={reason => changeStatus('Hold', undefined, false, { reason })}
+              />
+            )}
+            {datePrompt && (
+              <DateModal
+                fields={datePrompt.fields} busy={busy} onClose={() => setDatePrompt(null)}
+                onSubmit={values => changeStatus(datePrompt.status, undefined, false, values)}
+              />
+            )}
 
             {confirmDelete && (
               <Modal title={`Delete ${wo.woNumber}?`} onClose={() => setConfirmDelete(false)} width={440}>
@@ -415,28 +467,50 @@ function Menu({ trigger, triggerStyle, items, align = 'left' }) {
   );
 }
 
-// ---- reopen (admin only, CR-080) ------------------------------------------
+// ---- reason modal: reopen (admin only, CR-080) + hold (CR-160) ---------------
 
-function ReopenModal({ wo, busy, onClose, onReopen }) {
+function ReasonModal({ title, blurb, label, cta, busyCta, busy, onClose, onSubmit }) {
   const [reason, setReason] = useState('');
-  const submit = () => reason.trim() && onReopen(reason.trim());
+  const submit = () => reason.trim() && onSubmit(reason.trim());
   return (
-    <Modal title={`Reopen ${wo.woNumber}?`} onClose={onClose} onSubmit={submit} width={460}>
-      <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-        The work order goes back to Completed. The reason is recorded in the audit trail.
-      </div>
-      <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', margin: '10px 0 4px' }}>
-        Reason for reopening
-      </label>
+    <Modal title={title} onClose={onClose} onSubmit={submit} width={460}>
+      <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{blurb}</div>
+      <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', margin: '10px 0 4px' }}>{label}</label>
       <textarea
         value={reason} onChange={e => setReason(e.target.value)} rows={3} autoFocus
         style={{ width: '100%', padding: '8px 11px', fontSize: 13, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)', resize: 'vertical', fontFamily: 'inherit' }}
       />
       <ModalFooter>
         <ModalBtn onClick={onClose}>Cancel</ModalBtn>
-        <ModalBtn variant="primary" disabled={busy || !reason.trim()} onClick={submit}>
-          {busy ? 'Reopening…' : 'Reopen work order'}
-        </ModalBtn>
+        <ModalBtn variant="primary" disabled={busy || !reason.trim()} onClick={submit}>{busy ? busyCta : cta}</ModalBtn>
+      </ModalFooter>
+    </Modal>
+  );
+}
+
+// Machining / Fitting dates asked on entering a stage (CR-170). `fields` comes
+// from the server's needDate reply: [{ field, required, value }]. Required
+// fields default to today, optional ones stay blank; blanks are not sent.
+const DATE_LABEL = { machiningDoneDate: 'Machining Date', fittingDoneDate: 'Fitting Date' };
+function DateModal({ fields, busy, onClose, onSubmit }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [values, setValues] = useState(() => Object.fromEntries(fields.map(f => [f.field, f.value || (f.required ? today : '')])));
+  const ok = fields.every(f => !f.required || values[f.field]);
+  const submit = () => ok && onSubmit(Object.fromEntries(Object.entries(values).filter(([, v]) => v)));
+  const title = fields.length > 1 ? 'Machining & Fitting Dates' : DATE_LABEL[fields[0]?.field] || 'Date';
+  return (
+    <Modal title={title} onClose={onClose} onSubmit={submit} width={400}>
+      {fields.map(f => (
+        <div key={f.field} style={{ marginTop: 10 }}>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>
+            {DATE_LABEL[f.field] || f.field}{f.required ? '' : ' (optional)'}
+          </label>
+          <DateInput value={values[f.field]} onChange={e => setValues(v => ({ ...v, [f.field]: e.target.value }))} style={{ width: '100%', padding: '8px 11px', fontSize: 13, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)' }} />
+        </div>
+      ))}
+      <ModalFooter>
+        <ModalBtn onClick={onClose}>Cancel</ModalBtn>
+        <ModalBtn variant="primary" disabled={busy || !ok} onClick={submit}>{busy ? 'Saving…' : 'Save and continue'}</ModalBtn>
       </ModalFooter>
     </Modal>
   );
@@ -445,12 +519,8 @@ function ReopenModal({ wo, busy, onClose, onReopen }) {
 // ---- edit ------------------------------------------------------------------
 
 function EditModal({ wo, onClose, onSaved }) {
-  const [f, setF] = useState({
-    projectName: wo.projectName || '', woDate: wo.woDate || '', notes: wo.notes || '',
-    estimatedCost: wo.estimatedCost, actualCost: wo.actualCost,
-    dueDate: wo.dueDate || '', priority: wo.priority || '',
-    machiningDoneDate: wo.machiningDoneDate || '', fittingDoneDate: wo.fittingDoneDate || '',
-  });
+  // Due date is the SO's Expected Shipment (CR-159) — edit it in Books, not here.
+  const [f, setF] = useState({ woDate: wo.woDate || '', notes: wo.notes || '', priority: wo.priority || '', tcRequired: wo.tcRequired || '' });
   const [busy, setBusy] = useState(false);
   const set = k => e => setF(v => ({ ...v, [k]: e.target.value }));
   const field = { width: '100%', padding: '8px 11px', fontSize: 13, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)' };
@@ -459,7 +529,7 @@ function EditModal({ wo, onClose, onSaved }) {
   async function save() {
     setBusy(true);
     try {
-      await axios.put(`/api/wo/${wo.id}`, { ...f, estimatedCost: Number(f.estimatedCost) || 0, actualCost: Number(f.actualCost) || 0 });
+      await axios.put(`/api/wo/${wo.id}`, f);
       toast.success('Work order updated');
       onSaved();
     } catch (err) {
@@ -470,44 +540,28 @@ function EditModal({ wo, onClose, onSaved }) {
 
   return (
     <Modal title={`Edit ${wo.woNumber}`} onClose={onClose} onSubmit={save} width={460}>
-      <label style={{ ...label, marginTop: 0 }}>Project name</label>
-      <input value={f.projectName} onChange={set('projectName')} style={field} />
-      <label style={label}>Date</label>
-      <DateInput value={f.woDate} onChange={set('woDate')} style={field} />
       <div style={{ display: 'flex', gap: 10 }}>
         <div style={{ flex: 1 }}>
-          <label style={label}>WO Due Date</label>
-          <DateInput value={f.dueDate} onChange={set('dueDate')} style={field} />
+          <label style={{ ...label, marginTop: 0 }}>Date</label>
+          <DateInput value={f.woDate} onChange={set('woDate')} style={field} />
         </div>
         <div style={{ flex: 1 }}>
-          <label style={label}>Priority</label>
+          <label style={{ ...label, marginTop: 0 }}>Priority</label>
           <select value={f.priority} onChange={set('priority')} style={field}>
             <option value=""></option>
             {WO_PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
         </div>
-      </div>
-      <div style={{ display: 'flex', gap: 10 }}>
         <div style={{ flex: 1 }}>
-          <label style={label}>Machining Completion</label>
-          <DateInput value={f.machiningDoneDate} onChange={set('machiningDoneDate')} style={field} />
-        </div>
-        <div style={{ flex: 1 }}>
-          <label style={label}>Fitting Completion</label>
-          <DateInput value={f.fittingDoneDate} onChange={set('fittingDoneDate')} style={field} />
+          <label style={{ ...label, marginTop: 0 }}>TC Required</label>
+          <select value={f.tcRequired} onChange={set('tcRequired')} style={field}>
+            <option value=""></option>
+            <option value="Yes">Yes</option>
+            <option value="No">No</option>
+          </select>
         </div>
       </div>
-      <div style={{ display: 'flex', gap: 10 }}>
-        <div style={{ flex: 1 }}>
-          <label style={label}>Estimated cost</label>
-          <input type="number" min="0" step="any" value={f.estimatedCost} onChange={set('estimatedCost')} style={field} />
-        </div>
-        <div style={{ flex: 1 }}>
-          <label style={label}>Actual cost</label>
-          <input type="number" min="0" step="any" value={f.actualCost} onChange={set('actualCost')} style={field} />
-        </div>
-      </div>
-      <label style={label}>Notes</label>
+      <label style={label}>Special Instruction</label>
       <textarea value={f.notes} onChange={set('notes')} rows={3} style={{ ...field, resize: 'vertical', fontFamily: 'inherit' }} />
       <ModalFooter>
         <ModalBtn onClick={onClose}>Cancel</ModalBtn>
@@ -543,7 +597,6 @@ function WoPrintSheet({ wo, lines, company }) {
       <h1 style={{ fontSize: 20, margin: '0 0 2px' }}>Work Order {wo.woNumber}</h1>
       <div style={{ fontSize: 12, marginBottom: 14 }}>
         {wo.woDate} · Status: {spaced(wo.status)} · SO {wo.salesOrderNumber} · {wo.customerName}
-        {wo.projectName ? ` · ${wo.projectName}` : ''}
       </div>
 
       <h2 style={{ fontSize: 14, margin: '14px 0 6px' }}>Finished Goods</h2>
@@ -568,10 +621,7 @@ function WoPrintSheet({ wo, lines, company }) {
         </table>
       )}
 
-      <div style={{ marginTop: 14, fontSize: 12 }}>
-        <b>Estimated cost:</b> {fmtMoney(wo.estimatedCost)} &nbsp;·&nbsp; <b>Actual cost:</b> {fmtMoney(wo.actualCost)}
-      </div>
-      {wo.notes && <div style={{ marginTop: 8, fontSize: 12 }}><b>Notes:</b> {wo.notes}</div>}
+      {wo.notes && <div style={{ marginTop: 14, fontSize: 12 }}><b>Special Instruction:</b> {wo.notes}</div>}
     </div>
   );
 }
@@ -582,7 +632,7 @@ function WoPrintSheet({ wo, lines, company }) {
 function IssueSlip({ wo, txn, company, whNames }) {
   const th = { textAlign: 'left', borderBottom: '1px solid #000', padding: '4px 8px', fontSize: 11 };
   const td = { borderBottom: '1px solid #ccc', padding: '4px 8px', fontSize: 12 };
-  const title = { issue: 'Material Issue Slip', return: 'Material Return Slip', reserve: 'Material Reservation Slip', dereserve: 'Material De-reservation Slip' }[txn.type] || 'Material Movement Slip';
+  const title = { issue: 'Material Issue Slip', return: 'Material Return Slip', reserve: 'Material Reservation Slip', issueCopy: 'Material Issue Copy', dereserve: 'Material De-reservation Slip' }[txn.type] || 'Material Movement Slip';
   const whName = id => (id && (whNames?.[String(id)] || id)) || null;
   // Per-line explicit picks (CR-121); old txns fall back to the notes blob below.
   const trackingText = t => (t
@@ -590,6 +640,7 @@ function IssueSlip({ wo, txn, company, whNames }) {
       : (t.batches || []).map(b => `${b.batch_number} × ${b.qty}`).join(', '))
     : '');
   const hasTracking = (txn.lines || []).some(l => trackingText(l.tracking));
+  const hasReturned = (txn.lines || []).some(l => l.returned > 0); // issue copy only
   return (
     <div className="wo-print-sheet">
       <PrintHeader company={company} />
@@ -602,7 +653,6 @@ function IssueSlip({ wo, txn, company, whNames }) {
       </div>
       <div style={{ fontSize: 12, marginBottom: 14 }}>
         Work Order {wo.woNumber} · SO {wo.salesOrderNumber} · {wo.customerName}
-        {wo.projectName ? ` · ${wo.projectName}` : ''}
       </div>
 
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -610,7 +660,9 @@ function IssueSlip({ wo, txn, company, whNames }) {
           <tr>
             <th style={th}>Material</th><th style={th}>SKU</th><th style={th}>UoM</th>
             {hasTracking && <th style={th}>Batch / Serial</th>}
-            <th style={{ ...th, textAlign: 'right' }}>Qty</th>
+            <th style={{ ...th, textAlign: 'right' }}>{hasReturned ? 'Issued' : 'Qty'}</th>
+            {hasReturned && <th style={{ ...th, textAlign: 'right' }}>Returned</th>}
+            {hasReturned && <th style={{ ...th, textAlign: 'right' }}>Net</th>}
           </tr>
         </thead>
         <tbody>
@@ -621,6 +673,8 @@ function IssueSlip({ wo, txn, company, whNames }) {
               <td style={td}>{l.uom || '—'}</td>
               {hasTracking && <td style={{ ...td, fontSize: 11 }}>{trackingText(l.tracking) || '—'}</td>}
               <td style={{ ...td, textAlign: 'right' }}>{l.qty}</td>
+              {hasReturned && <td style={{ ...td, textAlign: 'right' }}>{l.returned || '—'}</td>}
+              {hasReturned && <td style={{ ...td, textAlign: 'right' }}>{+(l.qty - l.returned).toFixed(4)}</td>}
             </tr>
           ))}
         </tbody>
@@ -714,6 +768,9 @@ const ACTION_LABELS = {
   'wo.update': 'Work order updated',
   'wo.delete': 'Work order deleted',
   'wo.status': 'Status changed',
+  'wo.hold': 'Put on hold',
+  'wo.resume': 'Resumed from hold',
+  'wo.qc': 'Quality check recorded',
   'wo.reopen': 'Work order reopened',
   'bom.revise': 'BOM revised',
   'pr.create': 'Purchase request raised',

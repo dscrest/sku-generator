@@ -49,7 +49,10 @@ function gridRow(line, stock, bal, po) {
   const F = n(po && po.receivedQty);
   const G = n(po && po.billedQty);
 
-  const H = Math.max(0, Math.min(A - C - D - G, B));
+  // G (billed PO qty) is NOT subtracted: a PO raised for this WO is received
+  // into Main, so that material is already in B — subtracting it made purchased
+  // stock unreservable once billed (WO-0019 / M.S Yoke, CR-152).
+  const H = Math.max(0, Math.min(A - C - D, B));
   const I = A + C - D - G;
   const needed = Math.max(0, A - C - D);
 
@@ -132,7 +135,13 @@ function applyToBalance(type, bal, qty) {
   return b;
 }
 
-module.exports = { ROUTES, TXN_TYPES, gridRow, cap, validateLine, applyToBalance };
+// An FG is ready to assemble once every BOM line is fully issued (CR-172).
+// Same rule as the Details → Assembly tab; a removed line (A = 0) is ignored.
+function fullyIssued(rows) {
+  return rows.some((r) => r.bom > 0) && rows.every((r) => r.bom <= 0 || r.issued >= r.bom);
+}
+
+module.exports = { ROUTES, TXN_TYPES, gridRow, cap, validateLine, applyToBalance, fullyIssued };
 
 // ponytail self-check: `node functions/skuapi/workorder/formulas.js --selftest`
 if (require.main === module && process.argv.includes("--selftest")) {
@@ -163,10 +172,11 @@ if (require.main === module && process.argv.includes("--selftest")) {
     { reservedQty: 0, issuedQty: 5, returnedQty: 2 }, {});
   assert.strictEqual(r4.issued, 3, "D is issued net of returns");
 
-  // Billed quantity reduces what may still be reserved (G in the formula).
-  const r5 = row({ rmItemId: "1", requiredQty: 10 }, { stockOnHand: 100 }, {},
+  // Billed PO quantity is already on hand (B) — it must not shrink H (CR-152).
+  const r5 = row({ rmItemId: "1", requiredQty: 10 }, { stockOnHand: 10 }, {},
     { poQty: 4, receivedQty: 4, billedQty: 4 });
-  assert.strictEqual(r5.reservable, 6, "10 − 4 billed = 6");
+  assert.strictEqual(r5.reservable, 10, "billed stock is in B, so all 10 reservable");
+  assert.strictEqual(r5.billed, 4, "G still reported");
 
   // H can never go negative.
   const r6 = row({ rmItemId: "1", requiredQty: 2 }, { stockOnHand: 50 }, { reservedQty: 9 }, {});
@@ -209,6 +219,11 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(rt.reserved, 0);
   assert.strictEqual(rt.issued, 0, "round trip nets back to zero allocated");
   assert.strictEqual(rt.reservable, 5, "and the material is reservable again");
+
+  // Ready to assemble = every live line fully issued (CR-172).
+  assert.strictEqual(fullyIssued([r3]), false, "partly issued → not ready");
+  assert.strictEqual(fullyIssued([row({ rmItemId: "1", requiredQty: 3 }, {}, { issuedQty: 3 }, {}), row({ rmItemId: "2", requiredQty: 0 }, {}, {}, {})]), true, "issued = BOM, removed line ignored");
+  assert.strictEqual(fullyIssued([]), false, "no lines → nothing to assemble");
 
   // Routing is exhaustive and each type has a distinct warehouse pair.
   assert.strictEqual(TXN_TYPES.length, 4);

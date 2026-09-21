@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import Modal, { ModalFooter, ModalBtn } from './Modal.jsx';
-import { can } from './woCommon.jsx';
+import AssembleModal from './AssembleModal.jsx';
+import { can, fgLabel } from './woCommon.jsx';
 
 /**
  * The Materials grid — one screen, four actions.
@@ -31,7 +32,16 @@ const ACTIONS = [
   // still short). Confirm raises a purchase request instead of a stock move.
   { key: 'purchase', label: 'Raise PR', verb: 'Request', gerund: 'Requesting', capKey: 'shortfallQty', uncapped: true,
     move: 'Creates a purchase request — no stock moves', help: 'Raise a purchase request for the typed quantities. MAX fills what is still short.' },
+  // CR-172: finished goods, not raw materials — one row per FG whose every BOM
+  // line is fully issued; Proceed opens the assemble modal. No cap, no qty column.
+  { key: 'assembly', label: 'Assembly', verb: 'Assemble', gerund: 'Assembling',
+    move: 'Issue warehouse → finished-good stock in Main (Zoho assembly)', help: 'Finished goods with all material issued — send them to assembly.' },
 ];
+
+// Same rule as formulas.js fullyIssued (server re-checks on Proceed).
+const fullyIssued = rows => rows.some(r => r.bom > 0) && rows.every(r => r.bom <= 0 || r.issued >= r.bom);
+// Shop-floor stages (status.js MATERIAL_OK) — the only ones that may assemble.
+const SHOP_FLOOR = ['ReadyForMachining', 'MachiningInProgress', 'ReadyForFitting', 'FittingInProgress', 'ReadyForDispatch'];
 
 // The four core columns (Needed / In stock / Reserved / Issued) and the coverage
 // bar are always shown. COLS are the extra BRD-reconciliation columns, hidden by
@@ -68,16 +78,21 @@ const th = {
   padding: '9px 10px', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', textAlign: 'right',
   background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap',
   textTransform: 'uppercase', letterSpacing: '0.03em',
+  // Header stays put while a long BOM scrolls (CR-152); .grid-table clips with
+  // clip-path, not overflow, so the sticky context is the scrolling div.
+  position: 'sticky', top: 0, zIndex: 1,
 };
 
 // Action tab → permission key (CR-125). No user prop = full access (other mounts).
 const ACTION_PERM = {
   reserve: 'wo.action.reserve', dereserve: 'wo.action.dereserve',
   issue: 'wo.action.issue', return: 'wo.action.return', purchase: 'wo.action.po.create',
+  assembly: 'wo.action.assemble',
 };
 
-export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
+export default function MaterialsGrid({ workOrderId, fgs, status, onChanged, user }) {
   const [action, setAction] = useState('reserve');
+  const [assembling, setAssembling] = useState(null); // fg in the assemble modal (CR-172)
   const [grids, setGrids] = useState(null);    // one grid per FG (Haresh item 1)
   const [qty, setQty] = useState({});          // rowKey (fgId|itemId) -> typed quantity
   const [sel, setSel] = useState(() => new Set());   // rowKeys ticked for bulk fill
@@ -92,7 +107,7 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
   const [dragKey, setDragKey] = useState(null);
   // Warehouse selection (Haresh item 3): only active when the org setting is on.
   const [whCfg, setWhCfg] = useState(null);           // { allow, options, roles }
-  const [picker, setPicker] = useState(null);         // CR-121: [{entry, pool}] awaiting serial/batch picks
+  const [picker, setPicker] = useState(null);         // CR-123: [{entry, pool}] awaiting serial/batch picks
   const [fromWh, setFromWh] = useState('');
   const [toWh, setToWh] = useState('');
   const act = ACTIONS.find(a => a.key === action);
@@ -164,16 +179,32 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [workOrderId]);
 
-  // Refresh = re-pull stock/PO numbers from Zoho, then re-read the grid.
+  // Refresh = re-pull stock/PO numbers from Zoho for THIS work order's lines
+  // only (CR-157), then re-read the grid. Typed quantities survive the reload.
   async function syncStock() {
     setSyncing(true);
     try {
-      await axios.post('/api/wo/refresh');
-      load();
+      await axios.post('/api/wo/refresh', null, { params: { woId: workOrderId } });
+      load(qty);
     } catch (err) {
       toast.error(err.response?.data?.error || 'Stock sync failed');
     } finally {
       setSyncing(false);
+    }
+  }
+  // One item, one Zoho call (CR-157): the row's ⟳ hits the per-item sync the
+  // stock report already uses, then re-reads the grid.
+  const [syncingItem, setSyncingItem] = useState(null);
+  async function syncOne(itemId) {
+    setSyncingItem(itemId);
+    try {
+      await axios.post(`/api/wo/items/${itemId}/sync-stock`);
+      load(qty);
+      toast.success('Stock refreshed');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not refresh this item');
+    } finally {
+      setSyncingItem(null);
     }
   }
 
@@ -184,6 +215,19 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
   ), [grids]);
   const multiFg = (grids || []).length > 1;
   const grid = grids?.[0];   // banner metadata is the same across the batch
+  // Assembly tab: FGs not yet fully assembled, split by whether every BOM line
+  // is issued (ready) or not (pending — carries the count of lines still open).
+  const { readyFgs, pendingFgs } = useMemo(() => {
+    const ready = [], pending = [];
+    for (const f of fgs) {
+      if (f.status === 'Closed') continue;
+      const rows = (grids || []).find(g => g.workOrderFgId === f.id)?.rows || [];
+      if (fullyIssued(rows)) ready.push(f);
+      else pending.push({ ...f, openLines: rows.filter(r => r.bom > 0 && r.issued < r.bom).length });
+    }
+    return { readyFgs: ready, pendingFgs: pending };
+  }, [fgs, grids]);
+  const isAssembly = action === 'assembly';
 
   // A line still needs reserving when it isn't fully covered; for the other
   // actions the actionable set is simply "there's a cap to act on".
@@ -219,14 +263,20 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
   // Fill the most each line can take — the "reserve everything I can" case. Scoped
   // to whatever the user is looking at: ticked rows if any, else the current filter.
   function fillAvailable() {
-    // ponytail: MAX on the same raw material under two FGs can jointly exceed
-    // main stock — the server re-validates per FG at confirm and rejects the
-    // second, same as the old FG-switch flow. No client-side joint cap.
+    // Reserve caps are per FG but Main stock is shared: the same raw material
+    // under two FGs draws from one pool, so walk rows in order and give each
+    // only what is left (CR-170). Rows that get nothing are skipped silently.
     const target = sel.size ? visible.filter(r => sel.has(r.key)) : visible;
     const next = { ...qty };
+    const left = new Map();
     let any = false;
     for (const r of target) {
-      const cap = r[act.capKey];
+      let cap = r[act.capKey];
+      if (action === 'reserve') {
+        const pool = left.has(r.itemId) ? left.get(r.itemId) : (Number(r.stock) || 0);
+        cap = Math.min(cap, pool);
+        left.set(r.itemId, pool - Math.max(0, cap));
+      }
       if (cap > 0) { next[r.key] = String(cap); any = true; }
     }
     setQty(next);
@@ -247,19 +297,6 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
     });
   }
 
-  // Flip to Purchase mode with the shortfall prefilled — ticked rows if any,
-  // else every short line. The PR itself is raised by the confirm bar.
-  function requestPurchase() {
-    if (action !== 'purchase' && entered.length
-      && !window.confirm('Switching to Purchase clears the quantities you typed. Continue?')) return;
-    const target = sel.size ? rows.filter(r => sel.has(r.key)) : rows.filter(r => r.shortfallQty > 0);
-    const next = {};
-    for (const r of target) if (r.shortfallQty > 0) next[r.key] = String(r.shortfallQty);
-    setAction('purchase');
-    setQty(next);
-    if (!Object.keys(next).length) toast('Nothing is short — tick rows or type quantities to request extra');
-  }
-
   async function confirm() {
     if (!entered.length) return toast.error('Enter a quantity on at least one line');
     setBusy(true);
@@ -276,7 +313,7 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
         onChanged?.();
         return;
       }
-      // CR-121: serial/batch-tracked lines get the picker before anything moves.
+      // CR-123: serial/batch-tracked lines get the picker before anything moves.
       // Sequential lookups — the Catalyst dev tier throttles concurrent calls.
       const tracked = [];
       for (const e of entered) {
@@ -344,6 +381,7 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
 
   if (!fgs.length) return <Empty>Add a finished good to this work order first.</Empty>;
 
+  const whNames = Object.fromEntries((whCfg?.options || []).map(w => [String(w.id), w.name]));
   const leftLabel = `Left to ${act.verb.toLowerCase()}`;
   const chips = [
     { key: 'all', label: 'All', n: counts.all },
@@ -354,8 +392,8 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-      {/* action selector — the only thing that changes between the four jobs */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' }}>
+      {/* one toolbar row: action selector · FG filter · chips · search · bulk fill · sync · columns (CR-156) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 20px', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' }}>
         <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
           {allowedActions.map(a => (
             <button
@@ -378,17 +416,12 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
             </button>
           ))}
         </div>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{act.move}</span>
-        <select value={fgSel} onChange={e => setFgSel(e.target.value)} style={{ ...select, maxWidth: 260 }}>
-          <option value="all">All finished goods</option>
-          {fgs.map(f => <option key={f.id} value={f.id}>{f.name} × {f.qty}</option>)}
-        </select>
+        {!isAssembly && chips.map(c => (
+          <button key={c.key} onClick={() => setFilter(c.key)} style={chipStyle(filter === c.key)}>
+            {c.label} <span style={{ fontWeight: 700 }}>{c.n}</span>
+          </button>
+        ))}
         <div style={{ flex: 1 }} />
-        <button
-          onClick={requestPurchase}
-          style={{ ...btn, background: '#b45309', borderColor: '#b45309', color: '#fff', fontWeight: 600 }}>
-          Proceed Purchase
-        </button>
         <button onClick={syncStock} disabled={syncing} style={btn}>{syncing ? 'Syncing…' : '⟳ Refresh stock'}</button>
         <div style={{ position: 'relative' }}>
           <button onClick={() => setDraftCfg(draftCfg ? null : colCfg)} title="Columns" aria-label="Columns"
@@ -448,21 +481,12 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
         </div>
       </div>
 
-      {grid && !grid.warehousesConfigured && (
-        <Banner tone="warn">
-          Warehouses are not configured yet — material cannot be moved. Set the Main, Reserve and Issue
-          warehouses in <b>Settings</b> (account menu, top right).
-        </Banner>
-      )}
-
-      {/* filter chips + search + bulk fill */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 20px 4px', flexWrap: 'wrap' }}>
-        {chips.map(c => (
-          <button key={c.key} onClick={() => setFilter(c.key)} style={chipStyle(filter === c.key)}>
-            {c.label} <span style={{ fontWeight: 700 }}>{c.n}</span>
-          </button>
-        ))}
-        <div style={{ flex: 1 }} />
+      {/* filters row: FG · warehouses · search */}
+      {!isAssembly && <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 20px', flexWrap: 'wrap', borderBottom: '1px solid var(--border)' }}>
+        <select value={fgSel} onChange={e => setFgSel(e.target.value)} style={{ ...select, maxWidth: 260 }}>
+          <option value="all">All finished goods</option>
+          {fgs.map(f => <option key={f.id} value={f.id}>{fgLabel(f)}</option>)}
+        </select>
         {whCfg?.allow && action !== 'purchase' && (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}>
             From
@@ -479,20 +503,30 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Find an item or code"
-          style={{ ...select, width: 220, maxWidth: 220 }}
+          style={{ ...select, width: 180, maxWidth: 180 }}
         />
-        <button onClick={fillAvailable} style={{ ...btn, background: 'var(--blue)', borderColor: 'var(--blue)', color: '#fff', fontWeight: 600 }}>
-          {act.verb} everything available
-        </button>
-      </div>
+      </div>}
 
+      {grid && !grid.warehousesConfigured && (
+        <Banner tone="warn">
+          Warehouses are not configured yet — material cannot be moved. Set the Main, Reserve and Issue
+          warehouses in <b>Settings</b> (account menu, top right).
+        </Banner>
+      )}
+
+      {isAssembly ? (
+        <AssemblyPanel
+          ready={readyFgs} pending={pendingFgs} loading={loading} canAssemble={SHOP_FLOOR.includes(status)}
+          onAssemble={(f, q) => setAssembling({ ...f, initialQty: q })}
+        />
+      ) : (<>
       <div style={{ flex: 1, overflow: 'auto', padding: '0 20px' }}>
         {loading ? <Empty>Loading…</Empty> : !rows.length ? (
           <Empty>No BOM lines yet — import the BOM on the <b>BOM</b> tab.</Empty>
         ) : !visible.length ? (
           <Empty>No lines match this filter.</Empty>
         ) : (
-          <table className="grid-table" style={{ width: '100%' }}>
+          <table className="grid-table" style={{ width: '100%', marginTop: 8 }}>
             <thead>
               <tr>
                 <th style={{ ...th, textAlign: 'center', width: 34 }}>
@@ -522,9 +556,10 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
                       <tr key={`fg-${r.fgId}`} style={{ background: 'var(--bg-page)', borderBottom: '1px solid var(--border)' }}>
                         <td colSpan={span} style={{ padding: '8px 12px', fontSize: 13, fontWeight: 700 }}>
                           {g?.fgName || 'Finished Good'} × {g?.fgQty ?? ''}
-                          {g?.shortCount > 0 && (
-                            <span style={{ marginLeft: 10, fontSize: 11, fontWeight: 600, color: '#b91c1c' }}>
-                              {g.shortCount} line{g.shortCount > 1 ? 's' : ''} not in stock
+                          {/* FG Size from the Books item (CR-159) — replaces the short-line count */}
+                          {g?.fgSize && (
+                            <span style={{ marginLeft: 10, fontSize: 11, fontWeight: 600, color: 'var(--text-muted)' }}>
+                              Size {g.fgSize}
                             </span>
                           )}
                         </td>
@@ -536,6 +571,7 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
                       key={r.key} r={r} act={act} visibleCols={visibleCols}
                       qtyVal={qty[r.key] ?? ''} ticked={sel.has(r.key)}
                       onToggle={toggleRow} onQty={setRowQty}
+                      onSync={syncOne} syncing={syncingItem === r.itemId}
                     />,
                   );
                 }
@@ -548,7 +584,7 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
 
       {/* live confirm bar — pinned; nothing commits until pressed */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px',
+        display: 'flex', alignItems: 'center', gap: 12, padding: '8px 20px',
         borderTop: '1px solid var(--border)', background: 'var(--bg-card)',
       }}>
         <div style={{ flex: 1, fontSize: 13, color: 'var(--text-secondary)' }}>
@@ -558,16 +594,14 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
               <span style={{ color: 'var(--text-muted)' }}> · {act.move}</span>
             </>
           ) : (
-            <span style={{ color: 'var(--text-muted)' }}>Enter a quantity or press MAX to {act.verb.toLowerCase()} a line.</span>
-          )}
-          {grid?.lastSyncAt && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-              Stock last synced {grid.lastSyncAt} · BOM revision {grid.revision}
-            </div>
+            <span style={{ color: 'var(--text-muted)' }}>{act.move}</span>
           )}
         </div>
         <button onClick={() => setQty({})} disabled={!entered.length} style={{ ...btn, opacity: entered.length ? 1 : 0.5 }}>
           Discard changes
+        </button>
+        <button onClick={fillAvailable} style={btn}>
+          {act.verb} everything available
         </button>
         <button
           onClick={confirm}
@@ -581,10 +615,22 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
           {busy ? 'Working…' : `Proceed ${act.label}`}
         </button>
       </div>
+      </>)}
+      {assembling && (
+        <AssembleModal
+          workOrderId={workOrderId}
+          fg={assembling}
+          whNames={whNames}
+          onClose={() => setAssembling(null)}
+          onDone={msg => { setAssembling(null); toast.success(msg, { duration: 7000 }); load(); onChanged?.(); }}
+        />
+      )}
       {picker && (
         <TrackingPicker
           items={picker}
           verb={act.verb}
+          whNames={whNames}
+          canPickWarehouse={Boolean(whCfg?.allow)}
           onCancel={() => setPicker(null)}
           onConfirm={confirmPicks}
         />
@@ -593,12 +639,122 @@ export default function MaterialsGrid({ workOrderId, fgs, onChanged, user }) {
   );
 }
 
+// Assembly tab (CR-172/174): two sections. Ready = every BOM line issued, with
+// a per-row quantity (prefilled to remaining, edit for a partial run) that
+// Proceed carries into the assemble modal. Pending = still waiting on issues.
+function AssemblyPanel({ ready, pending, loading, canAssemble, onAssemble }) {
+  const [qtys, setQtys] = useState({}); // fgId -> typed qty ('' = remaining)
+  const left = { ...num, textAlign: 'left', fontFamily: 'var(--font)' };
+  const remaining = f => f.qty - (f.assembledQty || 0);
+  const qtyOf = f => (qtys[f.id] === undefined || qtys[f.id] === '' ? remaining(f) : Number(qtys[f.id]));
+  const sectionHead = { padding: '14px 0 6px', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.03em' };
+  const fgCell = f => (
+    <td style={left}>
+      <div style={{ fontWeight: 500 }}>{f.name}</div>
+      {f.sku && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{f.sku}</div>}
+    </td>
+  );
+  const head = (last) => (
+    <thead>
+      <tr>
+        <th style={{ ...th, textAlign: 'left' }}>Finished good</th>
+        <th style={{ ...th, textAlign: 'left' }}>Size</th>
+        <th style={th}>Ordered</th>
+        <th style={th}>Assembled</th>
+        <th style={th}>Remaining</th>
+        {last}
+      </tr>
+    </thead>
+  );
+  if (loading) return <div style={{ flex: 1, overflow: 'auto', padding: '0 20px' }}><Empty>Loading…</Empty></div>;
+  return (
+    <div style={{ flex: 1, overflow: 'auto', padding: '0 20px' }}>
+      <div style={sectionHead}>Ready for assembly · {ready.length}</div>
+      {!ready.length ? (
+        <Empty>Nothing is fully issued yet — issue everything on the <b>Issue</b> tab first.</Empty>
+      ) : (
+        <table className="grid-table" style={{ width: '100%' }}>
+          {head(<>
+            <th style={{ ...th, minWidth: 110 }}>Assemble now</th>
+            <th style={{ ...th, minWidth: 150 }} />
+          </>)}
+          <tbody>
+            {ready.map(f => {
+              const rem = remaining(f);
+              const q = qtyOf(f);
+              const bad = !(q > 0 && q <= rem);
+              return (
+                <tr key={f.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                  {fgCell(f)}
+                  <td style={left}>{f.size || '—'}</td>
+                  <td style={num}>{f.qty}</td>
+                  <td style={num}>{f.assembledQty || 0}</td>
+                  <td style={{ ...num, fontWeight: 700 }}>{rem}</td>
+                  <td style={{ padding: '4px 8px' }}>
+                    <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', alignItems: 'center' }}>
+                      <input
+                        type="number" min="1" max={rem} step="1"
+                        value={qtys[f.id] ?? rem}
+                        onChange={e => setQtys(s => ({ ...s, [f.id]: e.target.value }))}
+                        title={`Up to ${rem} — less for a partial assembly`}
+                        style={{
+                          width: 72, padding: '5px 8px', fontSize: 13, textAlign: 'right', fontFamily: 'var(--font-mono)',
+                          borderRadius: 'var(--radius-sm)', border: `1px solid ${bad ? '#dc2626' : 'var(--border)'}`,
+                          background: 'var(--bg-card)', color: bad ? '#dc2626' : 'inherit',
+                        }}
+                      />
+                      <button onClick={() => setQtys(s => ({ ...s, [f.id]: String(rem) }))} style={maxBtn}>MAX</button>
+                    </div>
+                  </td>
+                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                    {canAssemble && (
+                      <button
+                        onClick={() => onAssemble(f, q)} disabled={bad}
+                        style={{ ...btn, background: bad ? 'var(--bg-card)' : 'var(--blue)', color: bad ? 'var(--text-muted)' : '#fff', borderColor: bad ? 'var(--border)' : 'var(--blue)', fontWeight: 600, cursor: bad ? 'not-allowed' : 'pointer' }}
+                      >
+                        Proceed Assembly
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      <div style={sectionHead}>Pending for assembly · {pending.length}</div>
+      {!pending.length ? (
+        <Empty>Nothing pending — every finished good is either ready or fully assembled.</Empty>
+      ) : (
+        <table className="grid-table" style={{ width: '100%', marginBottom: 16 }}>
+          {head(<th style={{ ...th, minWidth: 150 }}>Waiting on</th>)}
+          <tbody>
+            {pending.map(f => (
+              <tr key={f.id} style={{ borderBottom: '1px solid var(--border)', opacity: 0.75 }}>
+                {fgCell(f)}
+                <td style={left}>{f.size || '—'}</td>
+                <td style={num}>{f.qty}</td>
+                <td style={num}>{f.assembledQty || 0}</td>
+                <td style={{ ...num, fontWeight: 700 }}>{remaining(f)}</td>
+                <td style={{ ...num, color: '#b45309' }}>
+                  {f.openLines ? `${f.openLines} line${f.openLines === 1 ? '' : 's'} not fully issued` : 'No BOM lines'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 /**
- * Serial/batch picker (CR-121): mandatory for tracked items before a stock
+ * Serial/batch picker (CR-123): mandatory for tracked items before a stock
  * move. Prefilled with the same FIFO picks the silent auto-pick would make;
  * the user adjusts and must cover each line's quantity exactly.
  */
-function TrackingPicker({ items, verb, onCancel, onConfirm }) {
+export function TrackingPicker({ items, verb, whNames = {}, canPickWarehouse, onCancel, onConfirm }) {
   // key -> Set(serials) for serial lines; key -> {batch_id: qtyString} for batch lines.
   const [picks, setPicks] = useState(() => {
     const init = {};
@@ -613,6 +769,13 @@ function TrackingPicker({ items, verb, onCancel, onConfirm }) {
     }
     return init;
   });
+  // CR-158: view-only filter on the MFG batch column; hidden rows keep their typed qty.
+  const [mfgFilter, setMfgFilter] = useState('');
+  const q = mfgFilter.trim().toLowerCase();
+  const hasBatches = items.some(({ pool }) => pool.tracking === 'batch' && pool.batches.length);
+  // CR-170: MFG date is noise when reserving (and at assembly, CR-176); Issue / Return keep it.
+  const showMfgDate = verb !== 'Reserve' && verb !== 'Assembly';
+  const batchCols = ['Batch', 'MFG batch', ...(showMfgDate ? ['MFG date'] : []), 'Available', 'Take'];
 
   const lineStatus = ({ entry, pool }) => {
     if (pool.tracking === 'serial') {
@@ -623,6 +786,9 @@ function TrackingPicker({ items, verb, onCancel, onConfirm }) {
     return { count, ok: count === entry.qty };
   };
   const allOk = items.every(it => lineStatus(it).ok);
+  // A batch line whose stock is all in other warehouses can't be covered from here.
+  const stuck = items.some(({ pool }) => pool.tracking === 'batch' && !pool.batches.length && pool.elsewhere?.length);
+  const whereElse = (pool) => (pool.elsewhere || []).map(l => `${l.balance} in ${whNames[l.location_id] || l.location_id}`).join(', ');
 
   const toggleSerial = (key, s) => setPicks(p => {
     const next = new Set(p[key]);
@@ -649,7 +815,20 @@ function TrackingPicker({ items, verb, onCancel, onConfirm }) {
     <Modal title="Select batch / serial numbers" onClose={onCancel} width={640}>
       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
         These items are batch/serial tracked in Zoho — the numbers below sit in the source warehouse for this movement.
+        {stuck && (
+          <div style={{ color: '#b91c1c', marginTop: 4 }}>
+            Stock for an item sits in another warehouse — move it to the source warehouse first
+            {canPickWarehouse ? ', or pick a different From warehouse in the toolbar' : ''}.
+          </div>
+        )}
       </div>
+      {hasBatches && (
+        <input
+          value={mfgFilter} onChange={e => setMfgFilter(e.target.value)}
+          placeholder="Filter by MFG batch" aria-label="Filter by MFG batch"
+          style={{ ...select, width: 220, marginBottom: 12 }}
+        />
+      )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxHeight: '55vh', overflowY: 'auto' }}>
         {items.map(it => {
           const { entry, pool } = it;
@@ -684,22 +863,28 @@ function TrackingPicker({ items, verb, onCancel, onConfirm }) {
               ) : (
                 !pool.batches.length ? (
                   <div style={{ fontSize: 12, color: '#b91c1c' }}>
-                    This item is batch-tracked in Zoho Books, but the stock at the source warehouse has no
-                    batch numbers. Receive or adjust the stock with batch numbers in Books, then press ⟳ Refresh here.
+                    {pool.elsewhere?.length
+                      ? `All stock for this item sits elsewhere (${whereElse(pool)}) — move it to the source warehouse first.`
+                      : 'No batch numbers exist for this item in Zoho Books. Receive or adjust stock with batch numbers in Books, then press Proceed again.'}
                   </div>
                 ) : (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr>
-                        {['Batch', 'Available', 'Take'].map((h, i) => (
-                          <th key={h} style={{ padding: '4px 8px', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', textAlign: i ? 'right' : 'left', borderBottom: '1px solid var(--border)' }}>{h}</th>
+                        {batchCols.map((h, i) => (
+                          <th key={h} style={{ padding: '4px 8px', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', textAlign: i < batchCols.length - 2 ? 'left' : 'right', borderBottom: '1px solid var(--border)' }}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {pool.batches.map(b => (
+                      {/* Only batches with stock at the source, oldest MFG date first (CR-152). */}
+                      {(() => {
+                        const shown = pool.batches.filter(b => !q || (b.mfgBatch || '').toLowerCase().includes(q));
+                        return shown.length ? shown.map(b => (
                         <tr key={b.batch_id}>
                           <td style={{ padding: '4px 8px', fontSize: 12, fontFamily: 'var(--font-mono)' }}>{b.batch_number}</td>
+                          <td style={{ padding: '4px 8px', fontSize: 12, fontFamily: 'var(--font-mono)' }}>{b.mfgBatch || '—'}</td>
+                          {showMfgDate && <td style={{ padding: '4px 8px', fontSize: 12, fontFamily: 'var(--font-mono)' }}>{b.mfgDate || '—'}</td>}
                           <td style={{ padding: '4px 8px', fontSize: 12, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{b.available}</td>
                           <td style={{ padding: '4px 8px', textAlign: 'right' }}>
                             <input
@@ -713,7 +898,10 @@ function TrackingPicker({ items, verb, onCancel, onConfirm }) {
                             />
                           </td>
                         </tr>
-                      ))}
+                        )) : (
+                          <tr><td colSpan={batchCols.length} style={{ padding: '8px', fontSize: 12, color: 'var(--text-muted)' }}>No batches match this filter.</td></tr>
+                        );
+                      })()}
                     </tbody>
                   </table>
                 )
@@ -735,7 +923,7 @@ function TrackingPicker({ items, verb, onCancel, onConfirm }) {
 // neutral track when it just hasn't been reserved yet.
 // Memoized row: typing in one row's qty input re-renders only that row, not
 // the whole grid — matters on multi-hundred-line BOMs.
-const GridRow = memo(function GridRow({ r, act, visibleCols, qtyVal, ticked, onToggle, onQty }) {
+const GridRow = memo(function GridRow({ r, act, visibleCols, qtyVal, ticked, onToggle, onQty, onSync, syncing }) {
   const cap = r[act.capKey];
   // Uncapped action (Purchase): the input is always open — the cap only says
   // what MAX would fill, it is not a limit on what may be requested.
@@ -751,7 +939,18 @@ const GridRow = memo(function GridRow({ r, act, visibleCols, qtyVal, ticked, onT
         {r.sku && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{r.sku}{r.uom ? ` · ${r.uom}` : ''}</div>}
       </td>
       <td style={{ ...num, fontWeight: r.needed > 0 ? 700 : 400, color: r.short ? '#b91c1c' : undefined }}>{r.bom.toLocaleString()}</td>
-      <td style={num}>{r.stock.toLocaleString()}</td>
+      <td style={{ ...num, whiteSpace: 'nowrap' }}>
+        {r.stock.toLocaleString()}
+        <button
+          onClick={() => onSync(r.itemId)} disabled={syncing}
+          title="Refresh this item's stock from Zoho (one call)" aria-label={`Refresh stock for ${r.name || r.itemId}`}
+          style={{
+            marginLeft: 6, padding: '0 4px', border: 'none', background: 'none', cursor: syncing ? 'wait' : 'pointer',
+            color: 'var(--text-muted)', fontSize: 12, lineHeight: 1, verticalAlign: 'middle',
+          }}>
+          ⟳
+        </button>
+      </td>
       <td style={num}>{r.reserved.toLocaleString()}</td>
       <td style={num}>{r.issued.toLocaleString()}</td>
       {visibleCols.map(c => (
@@ -794,10 +993,13 @@ const GridRow = memo(function GridRow({ r, act, visibleCols, qtyVal, ticked, onT
 
 // Material-receipt status against the line's on-order quantity (CR-120):
 // nothing until a PO exists; then Not received / Partial x/y / Received.
+// "Received" only while the line still needs reserving — once it is fully
+// reserved the receipt is old news (CR-170). WO-header callers pass no
+// `needed`, so they keep the chip.
 export function ReceiptChip({ r }) {
   const po = Number(r.po) || 0;
   const rec = Number(r.received) || 0;
-  if (po <= 0) return null;
+  if (po <= 0 || (rec >= po && r.needed === 0)) return null;
   const [label, color, bg] = rec <= 0
     ? ['Not received', '#92400e', '#fef3c7']
     : rec < po

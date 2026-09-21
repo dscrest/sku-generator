@@ -1,27 +1,8 @@
-// T&C data + persistence for the estimate's last page. Pure ESM (no React /
+// T&C seed data + normalize for the estimate's last page. Pure ESM (no React /
 // JSX) so the node self-check can run it — components live in EstimateTerms.jsx.
-// Content is editable per-print and kept in localStorage only — every browser
-// starts from DEFAULT_TERMS.
-// ponytail: localStorage-only; wire to OrgSetting + PUT /settings when
-// org-wide shared defaults are needed.
-
-export const STORAGE_KEY = 'estimateTerms';
-export const EXPORT_STORAGE_KEY = 'estimateTermsExport';
-export const TERMS_VERSION = '2026-08-26'; // bump to push clients onto new default terms
-const VERSION_KEY = 'estimateTermsVersion';
-
-// One-time reset: when TERMS_VERSION changes, drop stored term lists so clients
-// pick up new defaults (e.g. the A/B Delivery/Duties terms). ponytail: full
-// reset, not a field-level merge — custom term edits are discarded, acceptable
-// for shared org defaults.
-function ensureTermsVersion() {
-  try {
-    if (localStorage.getItem(VERSION_KEY) === TERMS_VERSION) return;
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(EXPORT_STORAGE_KEY);
-    localStorage.setItem(VERSION_KEY, TERMS_VERSION);
-  } catch { /* no localStorage (SSR/self-check) — defaults are returned anyway */ }
-}
+// These lists are only the seed: the live, org-wide templates are managed in
+// Settings → Quote T&C (EstimateTermsSettingsPage.jsx, /api/crm/estimate-terms).
+// Changing text here only affects orgs that never saved.
 
 export const DEFAULT_TERMS = {
   terms: [
@@ -45,9 +26,9 @@ export const DEFAULT_TERMS = {
     ['Name Of Bank', 'HDFC BANK LIMITED', 'IFSC Code', 'HDFC0000889'],
     ['Account No', '50200076743945', 'Account Type', 'CURRENT'],
     ['GST No', '24AAQCM4066R1ZN', 'PAN No.', 'AAQCM4066R'],
-    ['Mr. Kamal Patel', '(+91) 75748 57831', '(+91) 75748 57832', 'Kamal@marutivalves.com'],
-    ['Mr. Dipan Patel', '(+91) 95125 06161', '(+91) 95125 06262', 'Sales@msunvalve.com'],
-    ['MARUTI OFFICE', '(+91) 90235 80049', '(+91) 98983 74361', 'Sales@marutivalves.com'],
+    // Contact rows: name, mobile, designation, email.
+    ['Mr. Dipan Patel', '(+91) 95125 06161', 'Sales Head', 'Sales@msunvalve.com'],
+    ['MARUTI OFFICE', '(+91) 7574857881', 'Office', 'Sales@marutivalves.com'],
   ],
   footer: 'Factory:- B-10, Swastik Industrial Estate, Ahmedabad - Indore Highway, Kothiya - Kunha, Kubadthal, Kothiya, Ahmedabad',
 };
@@ -78,6 +59,30 @@ export const EXPORT_TERMS = {
   footer: DEFAULT_TERMS.footer,
 };
 
+// What an org that never saved a template sees (and what Settings → Quote T&C
+// persists on first open).
+export const SEED_TEMPLATES = [
+  { id: null, name: 'Domestic', terms: DEFAULT_TERMS.terms },
+  { id: null, name: 'Export', terms: EXPORT_TERMS.terms },
+];
+
+// Term text is an HTML fragment (bold/color from the editor) that is now shared
+// org-wide and rendered with innerHTML — so everything loaded from the server
+// goes through this allowlist: formatting tags only, no attributes except a
+// color. A raw "<" is always markup here (the editor emits text as &lt;).
+const SAFE_TAGS = new Set(['b', 'strong', 'i', 'em', 'u', 'br', 'div', 'span', 'font']);
+const COLOR_RE = /color\s*[=:]\s*["']?\s*(#[0-9a-f]{3,8}|rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)|[a-z]+)/i;
+export function sanitizeHtml(html) {
+  return String(html ?? '').replace(/<[^>]*>?/g, (m) => {
+    const t = m.match(/^<(\/?)([a-z0-9]+)([^>]*)>$/i);
+    if (!t || !SAFE_TAGS.has(t[2].toLowerCase())) return '';
+    const tag = t[2].toLowerCase();
+    if (t[1]) return `</${tag}>`;
+    const color = t[3].match(COLOR_RE);
+    return color ? `<${tag} style="color:${color[1]}">` : `<${tag}>`;
+  });
+}
+
 // Merge a stored (possibly old/corrupt) value over the defaults. Pure so the
 // node self-check can exercise it without a browser.
 export function normalizeTerms(raw, defaults = DEFAULT_TERMS) {
@@ -85,26 +90,11 @@ export function normalizeTerms(raw, defaults = DEFAULT_TERMS) {
   if (!raw || typeof raw !== 'object') return d;
   return {
     terms: Array.isArray(raw.terms)
-      ? raw.terms.map((t) => ({ label: String(t?.label ?? ''), text: String(t?.text ?? '') }))
+      ? raw.terms.map((t) => ({ label: sanitizeHtml(t?.label), text: sanitizeHtml(t?.text) }))
       : d.terms,
     bank: Array.isArray(raw.bank)
-      ? raw.bank.map((r) => [0, 1, 2, 3].map((i) => String((Array.isArray(r) ? r[i] : null) ?? '')))
+      ? raw.bank.map((r) => [0, 1, 2, 3].map((i) => sanitizeHtml(Array.isArray(r) ? r[i] : null)))
       : d.bank,
     footer: typeof raw.footer === 'string' ? raw.footer : d.footer,
   };
-}
-
-export function loadTerms(isExport = false) {
-  ensureTermsVersion();
-  const key = isExport ? EXPORT_STORAGE_KEY : STORAGE_KEY;
-  const defaults = isExport ? EXPORT_TERMS : DEFAULT_TERMS;
-  try {
-    return normalizeTerms(JSON.parse(localStorage.getItem(key)), defaults);
-  } catch {
-    return defaults;
-  }
-}
-
-export function saveTerms(t, isExport = false) {
-  localStorage.setItem(isExport ? EXPORT_STORAGE_KEY : STORAGE_KEY, JSON.stringify(t));
 }

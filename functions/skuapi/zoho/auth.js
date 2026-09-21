@@ -59,7 +59,7 @@ function dsDate(ms) {
   return new Date(ms).toISOString().slice(0, 19).replace("T", " ");
 }
 
-function getAuthUrl(forceConsent) {
+function getAuthUrl(forceConsent, dc) {
   assertConfigured();
   // No prompt=consent by default: Zoho shows consent only on the FIRST
   // authorization; a returning user is bounced straight back with no
@@ -74,7 +74,11 @@ function getAuthUrl(forceConsent) {
     access_type: "offline",
   });
   if (forceConsent) params.set("prompt", "consent");
-  return `https://accounts.zoho.${DC}/oauth/v2/auth?${params}`;
+  // `dc` (a DC_HOSTS key) starts the consent leg on that DC's accounts host,
+  // skipping Zoho's .com → .in bounce, whose codes began failing the exchange
+  // with "Platform not allowed" on 2026-09-16 (CR-179). Unknown → home DC.
+  const host = DC_HOSTS[dc] ? DC_HOSTS[dc].accounts : `accounts.zoho.${DC}`;
+  return `https://${host}/oauth/v2/auth?${params}`;
 }
 
 // Tokens are per app-user. userId falls back to the id stashed on the request's
@@ -134,7 +138,9 @@ async function exchangeCode(code, dc) {
   // A returning user (no prompt=consent) gets an access token but NO new refresh
   // token — that's fine, we keep the one already stored. Only a hard failure has
   // no access token at all.
-  if (!data.access_token) throw new Error(`Zoho token exchange failed: ${JSON.stringify(data)}`);
+  // dc + status in the message: "Platform not allowed" etc. are undocumented by
+  // Zoho, so the log line must say which accounts host answered and how.
+  if (!data.access_token) throw new Error(`Zoho token exchange failed (dc=${dc || DC}, http ${res.status}): ${JSON.stringify(data)}`);
   return data;
 }
 

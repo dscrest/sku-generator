@@ -106,6 +106,7 @@ export default function SKUGeneratorPage() {
   // Org-wide series settings (CR-136) gate the series chip; GET resolves the
   // legacy per-industry fallback server-side.
   const [seriesSettings, setSeriesSettings] = useState({ seriesMode: 'off', seriesPad: 4 });
+  const typeLabel = (t) => seriesSettings.typeLabels?.[t] || t; // org naming (CR-180)
 
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -575,7 +576,7 @@ export default function SKUGeneratorPage() {
                     title={editItem.zohoItemId ? 'Type is locked after pushing to Zoho Books' : 'Type can be changed in the SKUs list before the first push'}
                     style={{ background: T.bgSubtle, borderRadius: 8, padding: '7px 10px', marginBottom: 14, fontSize: 12.5, fontWeight: 500, color: T.ink3, textAlign: 'center' }}
                   >
-                    {editItem.type}{editItem.zohoItemId ? ' · linked to Zoho Books' : ''}
+                    {typeLabel(editItem.type)}{editItem.zohoItemId ? ' · linked to Zoho Books' : ''}
                   </div>
                 ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', background: T.bgSubtle, borderRadius: 8, padding: 3, marginBottom: 14 }}>
@@ -592,7 +593,7 @@ export default function SKUGeneratorPage() {
                         boxShadow: itemType === t ? shadowSm : 'none',
                         transition: 'all 0.12s',
                       }}
-                    >{t}</button>
+                    >{typeLabel(t)}</button>
                   ))}
                 </div>
                 )}

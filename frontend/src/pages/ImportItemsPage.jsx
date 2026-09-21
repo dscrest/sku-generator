@@ -37,7 +37,7 @@ const card = (active) => ({
 
 // Fixed columns of the Zoho Books item import/export sheet (sample_items.csv).
 const BOOKS_HEADERS = [
-  'Item Name', 'SKU', 'HSN/SAC', 'Sales Description', 'Selling Price',
+  'Item Name', 'SKU', 'Item ID', 'HSN/SAC', 'Sales Description', 'Selling Price',
   'Is Returnable Item', 'Brand', 'Manufacturer', 'UPC', 'EAN', 'ISBN',
   'Part Number', 'Product Type', 'Sales Account', 'Unit', 'Purchase Description',
   'Purchase Price', 'Item Type', 'Purchase Account', 'Inventory Account',
@@ -198,6 +198,7 @@ export default function ImportItemsPage() {
   }
 
   return (
+    <div style={{ height: '100%', overflowY: 'auto' }}>
     <div style={{ padding: 24, maxWidth: 920, margin: '0 auto', fontFamily: T.sans, color: T.ink }}>
       <h2 style={{ margin: '0 0 4px', fontSize: 20 }}>Bulk Item Import</h2>
       <p style={{ margin: '0 0 20px', color: T.ink3, fontSize: 13 }}>
@@ -415,6 +416,7 @@ export default function ImportItemsPage() {
           </div>
         </div>
       )}
+    </div>
     </div>
   );
 }

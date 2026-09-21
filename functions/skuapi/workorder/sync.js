@@ -41,9 +41,10 @@ async function mapLimit(items, limit, fn) {
 }
 
 // The only items worth syncing: raw materials on work orders still in play.
-async function workingSet(catalyst, orgId) {
+// woId narrows the set to one work order (the WO page's Refresh stock, CR-157).
+async function workingSet(catalyst, orgId, woId = null) {
   const wos = await byOrg(catalyst, orgId, "WorkOrder");
-  const open = wos.filter((w) => !OPEN_WO.includes(String(w.status)));
+  const open = wos.filter((w) => !OPEN_WO.includes(String(w.status)) && (!woId || String(w.ROWID) === String(woId)));
   const ids = inList(open.map((w) => w.ROWID));
   if (!ids) return { itemIds: [], fgItemIds: [], workOrders: [] };
   const [lines, fgs] = await Promise.all([
@@ -147,8 +148,8 @@ const newestLmt = (bulk) => {
 // and `force` do the full sweep, which is paged (`limit` → items[offset..+limit],
 // returns `{ total, nextOffset, done }`) so each request clears the 30s ceiling;
 // the cursor is advanced once a sweep completes.
-async function reconcileOrg(catalyst, orgId, { full = false, force = false, offset = 0, limit = null } = {}) {
-  const ws = full ? { itemIds: [], fgItemIds: [] } : await workingSet(catalyst, orgId);
+async function reconcileOrg(catalyst, orgId, { full = false, force = false, offset = 0, limit = null, woId = null } = {}) {
+  const ws = full ? { itemIds: [], fgItemIds: [] } : await workingSet(catalyst, orgId, woId);
   const result = { items: 0, purchaseOrders: 0, compositeItems: 0 };
   if (!full && !ws.itemIds.length) return result;
 

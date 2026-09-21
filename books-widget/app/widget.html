@@ -5,8 +5,10 @@
   (served by index.js with a frame-ancestors CSP; see the /widget comment there).
 
   Line items come from the SO linked to the invoice (or the SO itself). The user
-  builds box/pallet rows by hand; the plan persists per SO/invoice via
-  /api/packing (routes/packing.js). Print = Export or Domestic variant, iframe
+  builds packages (wooden/corrugated box, pallet, loose) by hand, each holding
+  one or more items; packed qty may not exceed ordered qty. The plan persists
+  per SO/invoice via /api/packing (routes/packing.js). Print = Export or
+  Domestic sheet (A4 portrait, paginated to fill each page), or one A4-landscape sticker per package; both via iframe
   srcdoc + contentWindow.print() (same pattern as estimate-prototype).
 -->
 <html>
@@ -42,6 +44,9 @@
   th, td { border: 1px solid #dde1e6; padding: 4px 7px; text-align: left; font-size: 12px; }
   th { background: #f0f2f5; font-weight: 600; white-space: nowrap; }
   td input, td select { width: 100%; font: inherit; border: 1px solid #c8cdd4; border-radius: 4px; padding: 3px 5px; }
+  td select { appearance: none; -webkit-appearance: none; cursor: pointer; }
+  td input[type=number] { -moz-appearance: textfield; }
+  td input[type=number]::-webkit-inner-spin-button, td input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
   td.num, th.num { text-align: right; }
   td input.num { text-align: right; }
   .rowbtn { border: none; background: none; cursor: pointer; padding: 1px 4px; font-size: 13px; }
@@ -80,6 +85,7 @@
     <span id="saved-note" class="hidden">Saved ✓</span>
     <button id="save-btn" class="btn">Save</button>
     <button id="print-btn" class="btn primary">Print</button>
+    <button id="stickers-btn" class="btn primary">Print Stickers</button>
     <button id="close-btn" class="btn">Close</button>
   </div>
 
@@ -117,37 +123,62 @@
   </fieldset>
 
   <fieldset>
-    <legend>Boxes &amp; pallets</legend>
+    <legend>Packages (a box can hold several items)</legend>
     <table id="boxes">
       <thead><tr>
         <th>#</th><th>Type</th><th style="min-width:180px">Item</th><th style="width:70px" class="num">Qty</th>
-        <th style="width:80px" class="num">Wt/pc (kg)</th><th class="num">Net (kg)</th><th style="width:90px" class="num">Gross (kg)</th>
-        <th style="min-width:150px">Box size</th><th style="width:80px"></th>
+        <th style="width:80px" class="num">Wt/pc (kg)</th><th class="num">Net (kg)</th><th style="width:28px"></th>
+        <th style="width:48px" class="num">L (cm)</th><th style="width:48px" class="num">W (cm)</th><th style="width:48px" class="num">H (cm)</th><th style="width:90px" class="num">Gross (kg)</th><th style="width:80px"></th>
       </tr></thead>
       <tbody></tbody>
     </table>
-    <p><button id="add-box" class="btn">+ Add box / pallet</button></p>
+    <p><button id="add-box" class="btn">+ Add package</button></p>
   </fieldset>
 </div>
 
-<!-- Print: A4 sheet cloned into the iframe; only these styles travel with it. -->
+<!-- Print: A4 sheet cloned into the iframe; only these styles travel with it (@page is added per print by printHtml). -->
 <style id="printStyles">
-  @page { size: A4 landscape; margin: 8mm; }
   body { font-family: "Times New Roman", Georgia, serif; color: #000; margin: 0; }
   .pl-sheet { width: 100%; }
   .pl-sheet table { border-collapse: collapse; width: 100%; }
   .pl-sheet td, .pl-sheet th { border: 1.5px solid #000; padding: 3px 6px; font-size: 12px; vertical-align: top; }
-  .pl-title { text-align: center; font-size: 22px; font-weight: bold; padding: 6px; }
+  .pl-sheet td.pl-title { text-align: center; font-size: 22px; font-weight: bold; padding: 6px; }
   .pl-part { font-weight: bold; font-size: 15px; }
   .pl-lbl { text-align: center; }
   .pl-val { text-align: center; font-weight: bold; }
   .num { text-align: right; }
   .ctr { text-align: center; }
   .boxdim { font-weight: bold; font-size: 11px; }
-  .pl-sign { height: 70px; vertical-align: bottom; text-align: right; font-weight: bold; }
+  .pl-sign { height: 90px; vertical-align: bottom; text-align: right; font-weight: bold; }
+  .pl-sheet td[rowspan] { vertical-align: middle; }
+  /* Sheet pages (built by paginateSheet): fixed A4-portrait height, header repeated,
+     blank area stretches to the bottom, "Page No" strip last — per the MSUN reference PDF. */
+  .pl-page { width: 194mm; height: 279mm; box-sizing: border-box; display: flex; flex-direction: column; break-after: page; page-break-after: always; }
+  .pl-page:last-child { break-after: auto; page-break-after: auto; }
+  .pl-page.measure { height: auto; }
+  #pl-probe { height: 279mm; width: 1px; position: absolute; visibility: hidden; }
+  .pl-items { table-layout: fixed; margin-top: -1.5px; }
+  .pl-items td, .pl-items th { font-size: 11px; padding: 2px 4px; overflow-wrap: anywhere; vertical-align: middle; }
+  .pl-items th { font-size: 9.5px; padding: 2px 1px; overflow-wrap: normal; }
+  .pl-fill { flex: 1; border-left: 1.5px solid #000; border-right: 1.5px solid #000; }
+  .pl-sum td { text-align: center; font-weight: bold; }
+  .pl-sum td.pl-decl { font-weight: normal; vertical-align: middle; width: 55%; }
+  .pl-sum td.pl-sign { text-align: center; }
+  .pl-pageno { text-align: center; font-size: 11px; font-weight: bold; border: 1.5px solid #000; padding: 2px; }
   tr { break-inside: avoid; }
+  /* Stickers: one package per page, big type for the box face. */
+  /* Fills the A4-landscape page: the last (box details) table takes the remaining height. */
+  .stk { break-after: page; page-break-after: always; height: 192mm; display: flex; flex-direction: column; }
+  .stk table { border-collapse: collapse; width: 100%; margin-bottom: 5mm; }
+  .stk table:last-child { flex: 1; margin-bottom: 0; }
+  .stk td, .stk th { border: 2px solid #000; padding: 8px 12px; font-size: 22px; vertical-align: top; }
+  .stk th { text-align: center; }
+  .stk .big { font-size: 32px; font-weight: bold; text-align: center; }
+  .stk .huge { font-size: 64px; font-weight: bold; text-align: center; vertical-align: middle; }
+  .stk .hd { font-weight: bold; font-size: 26px; }
+  .stk td[rowspan] { vertical-align: middle; }
 </style>
-<iframe id="ifPrint" style="display:none"></iframe>
+<iframe id="ifPrint" style="position:absolute;left:-10000px;top:0;width:210mm;height:10px;border:0" tabindex="-1" aria-hidden="true"></iframe>
 
 <script>
 'use strict';
@@ -192,12 +223,11 @@ function message(text, withSignin) {
 var entity = null;        // { invoiceId } | { soId }
 var booksOrgId = null;    // org of the Books page we're embedded in
 var docKey = null;
-var source = null;        // { soNumber, invoiceNumber, invoiceDate, customer, lines }
-var company = null;       // { name, address, gstin, logoUrl }
+var source = null;        // { soNumber, invoiceNumber, invoiceDate, reference, customer, lines }
+var company = null;       // { name, address, email, gstin, logoUrl }
 var header = {};          // header field values (data-h inputs)
-var boxes = [];           // [{ kind, dims, itemId, qty, weightPc, grossWeight }] — one item per box row
-// ponytail: UI is one item per box; the API/schema already take an items[] array
-// if mixed-item boxes are ever needed.
+var boxes = [];           // [{ kind, l, w, h, grossWeight, items: [{ itemId, qty, weightPc }] }]  (dims persisted as "L X W X H")
+var KIND_LABEL = { wooden: 'Wooden Box', corrugated: 'Corrugated Box', pallet: 'Pallet', loose: 'Loose Packing' };
 
 /* ---------- boot: Books SDK first, then app auth ---------- */
 window.onload = function () {
@@ -334,17 +364,24 @@ function loadDoc() {
       // Doc-specific fields always come from the live record, not the prefill.
       if (!saved || !saved.header) {
         header.invoiceNoDate = [source.invoiceNumber, fmtDate(source.invoiceDate)].filter(Boolean).join(' | ');
-        header.buyerOrderNoDate = '';
+        header.buyerOrderNoDate = source.reference || '';
         header.workorderNoDate = '';
         header.consigneeName = source.customer.name || '';
         header.consigneeAddress = source.customer.address || '';
       }
+      // A plan saved with a blank consignee (e.g. saved before the customer loaded) refills from the live record.
+      if (!header.consigneeName) header.consigneeName = source.customer.name || '';
+      if (!header.consigneeAddress) header.consigneeAddress = source.customer.address || '';
+      if (!header.buyerOrderNoDate) header.buyerOrderNoDate = source.reference || '';
       if (!header.consignorName) header.consignorName = company.name || '';
-      if (!header.consignorAddress) header.consignorAddress = company.address || '';
+      if (!header.consignorAddress) header.consignorAddress = [company.address, company.email].filter(Boolean).join('\n');
       if (!header.countryOrigin) header.countryOrigin = 'India';
       boxes = ((saved && saved.boxes) || []).map(function (b) {
-        var it = (b.items && b.items[0]) || {};
-        return { kind: b.kind, dims: b.dims, itemId: it.itemId || '', qty: it.qty || 0, weightPc: it.weightPc || 0, grossWeight: it.grossWeight || 0 };
+        var d = String(b.dims || '').split(/\s*[xX×]\s*/); // legacy "120 X 80 X 33" → l/w/h
+        return {
+          kind: KIND_LABEL[b.kind] ? b.kind : 'wooden', l: Number(d[0]) || 0, w: Number(d[1]) || 0, h: Number(d[2]) || 0, grossWeight: b.grossWeight || 0,
+          items: (b.items || []).map(function (it) { return { itemId: it.itemId || '', qty: it.qty || 0, weightPc: it.weightPc || 0 }; }),
+        };
       });
       var v = (saved && saved.variant) || 'export';
       document.querySelectorAll('[name=variant]').forEach(function (r) { r.checked = r.value === v; });
@@ -380,110 +417,142 @@ document.querySelectorAll('[name=variant]').forEach(function (r) {
 });
 
 /* ---------- boxes ---------- */
+// Per-type numbering: Pallet 1, Pallet 2, Wooden Box 1 … (not one running series).
+function kindNo(i) { return boxes.slice(0, i + 1).filter(function (x) { return x.kind === boxes[i].kind; }).length; }
+function kindTotal(k) { return boxes.filter(function (x) { return x.kind === k; }).length; }
 function lineById(id) { return source.lines.find(function (l) { return l.itemId === id; }); }
 function netOf(b) { return (Number(b.qty) || 0) * (Number(b.weightPc) || 0); }
+function dimsOf(b) { return [b.l, b.w, b.h].map(function (v) { return Number(v) || 0; }).filter(Boolean).join(' X '); }
+// Wt/pc defaults to the Books item's package weight (server fills line.weightPc); user can override.
+function masterWeight(itemId) { var l = lineById(itemId); return l ? Number(l.weightPc) || 0 : 0; }
 
+function newItem() { return { itemId: '', qty: 0, weightPc: 0 }; } // blank "— item —" row; select onchange fills weightPc
+
+// One <tr> per item; the first row of each package carries the package cells
+// (number, type, size, gross, actions) with rowspan over its items.
 function renderBoxes() {
   var tb = $('boxes').querySelector('tbody');
   tb.innerHTML = '';
-  var nBox = 0, nPallet = 0;
   boxes.forEach(function (b, i) {
-    var no = b.kind === 'pallet' ? ++nPallet : ++nBox;
-    var tr = document.createElement('tr');
+    if (!b.items.length) b.items.push(newItem());
+    b.items.forEach(function (it, j) {
+      var tr = document.createElement('tr');
+      if (j === 0) {
+        tr.appendChild(span(cell(KIND_LABEL[b.kind] + ' ' + kindNo(i))));
+        var kind = document.createElement('select');
+        kind.innerHTML = Object.keys(KIND_LABEL).map(function (k) { return '<option value="' + k + '">' + KIND_LABEL[k] + '</option>'; }).join('');
+        kind.value = b.kind;
+        kind.onchange = function () { b.kind = kind.value; dirty(); renderBoxes(); };
+        tr.appendChild(span(wrap(kind)));
+      }
 
-    tr.appendChild(cell((b.kind === 'pallet' ? 'PALLET ' : 'BOX ') + no));
+      var net = cell(netOf(it).toFixed(2));
+      net.className = 'num muted';
+      var wtTd = numInput(it, 'weightPc', net);
 
-    var kind = document.createElement('select');
-    kind.innerHTML = '<option value="box">Box</option><option value="pallet">Pallet</option>';
-    kind.value = b.kind;
-    kind.onchange = function () { b.kind = kind.value; dirty(); renderBoxes(); };
-    tr.appendChild(wrap(kind));
-
-    var item = document.createElement('select');
-    item.innerHTML = '<option value="">— item —</option>' + source.lines.map(function (l) {
-      return '<option value="' + l.itemId + '">' + esc(l.name) + '</option>';
-    }).join('');
-    item.value = b.itemId;
-    item.onchange = function () { b.itemId = item.value; dirty(); renderSummary(); };
-    tr.appendChild(wrap(item));
-
-    tr.appendChild(numInput(b, 'qty'));
-    tr.appendChild(numInput(b, 'weightPc'));
-    var net = cell(netOf(b).toFixed(2));
-    net.className = 'num muted';
-    tr.appendChild(net);
-    tr.appendChild(numInput(b, 'grossWeight'));
-
-    var dims = document.createElement('input');
-    dims.value = b.dims || '';
-    dims.placeholder = '120 X 120 X 33 (Centimeter)';
-    dims.oninput = function () { b.dims = dims.value; dirty(); };
-    tr.appendChild(wrap(dims));
-
-    var act = document.createElement('td');
-    [['↑', -1], ['↓', 1]].forEach(function (m) {
-      var btn = document.createElement('button');
-      btn.className = 'rowbtn';
-      btn.textContent = m[0];
-      btn.onclick = function () {
-        var j = i + m[1];
-        if (j < 0 || j >= boxes.length) return;
-        boxes.splice(j, 0, boxes.splice(i, 1)[0]);
-        dirty(); renderBoxes();
+      var item = document.createElement('select');
+      item.innerHTML = '<option value="">— item —</option>' + source.lines.map(function (l) {
+        return '<option value="' + l.itemId + '">' + esc(l.name) + '</option>';
+      }).join('');
+      item.value = it.itemId;
+      item.onchange = function () {
+        it.itemId = item.value;
+        var mw = masterWeight(it.itemId);
+        if (mw) { it.weightPc = mw; wtTd.firstChild.value = mw; net.textContent = netOf(it).toFixed(2); }
+        dirty(); renderSummary();
       };
-      act.appendChild(btn);
-    });
-    var del = document.createElement('button');
-    del.className = 'rowbtn';
-    del.textContent = '✕';
-    del.onclick = function () { boxes.splice(i, 1); dirty(); renderBoxes(); };
-    act.appendChild(del);
-    tr.appendChild(act);
+      tr.appendChild(wrap(item));
 
-    tb.appendChild(tr);
+      tr.appendChild(numInput(it, 'qty', net));
+      tr.appendChild(wtTd);
+      tr.appendChild(net);
+      var del = document.createElement('button');
+      del.className = 'rowbtn';
+      del.textContent = '✕';
+      del.title = 'Remove this item';
+      del.onclick = function () { b.items.splice(j, 1); dirty(); renderBoxes(); }; // last one out → blank row re-added above
+      tr.appendChild(wrap(del));
+
+      if (j === 0) {
+        tr.appendChild(span(numInput(b, 'l')));
+        tr.appendChild(span(numInput(b, 'w')));
+        tr.appendChild(span(numInput(b, 'h')));
+        tr.appendChild(span(numInput(b, 'grossWeight')));
+
+        var act = document.createElement('td');
+        [['+ item', function () { b.items.push(newItem()); }],
+          ['✕', function () { boxes.splice(i, 1); }]].forEach(function (m) {
+          var btn = document.createElement('button');
+          btn.className = 'rowbtn';
+          btn.textContent = m[0];
+          btn.onclick = function () { m[1](); dirty(); renderBoxes(); };
+          act.appendChild(btn);
+        });
+        tr.appendChild(span(act));
+      }
+      tb.appendChild(tr);
+    });
+
+    function span(td) { td.rowSpan = b.items.length; return td; }
   });
   renderSummary();
 
   function cell(t) { var td = document.createElement('td'); td.textContent = t; return td; }
   function wrap(el) { var td = document.createElement('td'); td.appendChild(el); return td; }
-  function numInput(obj, key) {
+  function numInput(obj, key, netCell) {
     var inp = document.createElement('input');
     inp.type = 'number';
     inp.className = 'num';
     inp.min = '0';
     inp.step = 'any';
     inp.value = obj[key] || '';
-    inp.oninput = function () { obj[key] = Number(inp.value) || 0; dirty(); renderSummary(); refreshNets(); };
-    var td = document.createElement('td');
-    td.appendChild(inp);
-    return td;
-  }
-  function refreshNets() {
-    // cheap full re-render would drop focus; just update the net cells in place
-    var rows = tb.querySelectorAll('tr');
-    boxes.forEach(function (b, i) { rows[i].children[5].textContent = netOf(b).toFixed(2); });
+    inp.oninput = function () {
+      obj[key] = Number(inp.value) || 0;
+      dirty(); renderSummary();
+      if (netCell) netCell.textContent = netOf(obj).toFixed(2); // in place — a re-render would drop focus
+    };
+    return wrap(inp);
   }
 }
 
 $('add-box').addEventListener('click', function () {
   var prev = boxes[boxes.length - 1];
   boxes.push(prev
-    ? { kind: prev.kind, dims: prev.dims, itemId: prev.itemId, qty: prev.qty, weightPc: prev.weightPc, grossWeight: prev.grossWeight }
-    : { kind: 'box', dims: '', itemId: (source.lines[0] || {}).itemId || '', qty: 0, weightPc: 0, grossWeight: 0 });
+    ? { kind: prev.kind, l: prev.l, w: prev.w, h: prev.h, grossWeight: prev.grossWeight, items: [newItem()] } // same carton, empty item row
+    : { kind: 'wooden', l: 0, w: 0, h: 0, grossWeight: 0, items: [newItem()] });
   dirty();
   renderBoxes();
 });
+
+function packedQty(itemId) {
+  return boxes.reduce(function (s, b) {
+    return s + b.items.filter(function (it) { return it.itemId === itemId; })
+      .reduce(function (t, it) { return t + (Number(it.qty) || 0); }, 0);
+  }, 0);
+}
+
+// Lines packed beyond the ordered qty — blocks Save and both prints.
+// ponytail: client-side only; the server would need a Books round-trip per save to re-check.
+function overPacked() {
+  return source.lines.filter(function (l) { return packedQty(l.itemId) > l.qty; })
+    .map(function (l) { return l.name + ' (' + packedQty(l.itemId) + ' packed / ' + l.qty + ' ordered)'; });
+}
+function blockedByOverPack() {
+  var over = overPacked();
+  if (over.length) alert('Packed qty exceeds the ordered qty:\n' + over.join('\n'));
+  return over.length > 0;
+}
 
 function renderSummary() {
   var tb = $('summary').querySelector('tbody');
   tb.innerHTML = '';
   source.lines.forEach(function (l) {
-    var packed = boxes.filter(function (b) { return b.itemId === l.itemId; })
-      .reduce(function (s, b) { return s + (Number(b.qty) || 0); }, 0);
+    var packed = packedQty(l.itemId);
+    var color = packed === l.qty ? '#1a7f37' : packed > l.qty ? '#cf222e' : '#b35900';
     var tr = document.createElement('tr');
     tr.innerHTML = '<td>' + esc(l.name) + '</td><td>' + esc(l.hsn) + '</td>' +
       '<td class="num">' + l.qty + '</td>' +
-      '<td class="num"' + (packed === l.qty ? ' style="color:#1a7f37;font-weight:600"' : ' style="color:#b35900"') + '>' + packed + '</td>';
+      '<td class="num" style="color:' + color + ';font-weight:600">' + packed + (packed > l.qty ? ' ⚠' : '') + '</td>';
     tb.appendChild(tr);
   });
 }
@@ -497,17 +566,17 @@ function esc(s) {
 /* ---------- save ---------- */
 function dirty() { $('saved-note').classList.add('hidden'); }
 $('save-btn').addEventListener('click', function () {
+  if (blockedByOverPack()) return;
   var payload = {
     variant: variant(),
     header: header,
     boxes: boxes.map(function (b) {
-      var l = lineById(b.itemId) || {};
       return {
-        kind: b.kind, dims: b.dims,
-        items: [{
-          itemId: b.itemId, name: l.name || '', hsn: l.hsn || '', size: '',
-          qty: b.qty, weightPc: b.weightPc, netWeight: netOf(b), grossWeight: b.grossWeight,
-        }],
+        kind: b.kind, dims: dimsOf(b), grossWeight: b.grossWeight,
+        items: b.items.map(function (it) {
+          var l = lineById(it.itemId) || {};
+          return { itemId: it.itemId, name: l.name || '', hsn: l.hsn || '', size: l.size || '', qty: it.qty, weightPc: it.weightPc, netWeight: netOf(it) };
+        }),
       };
     }),
   };
@@ -527,40 +596,58 @@ $('close-btn').addEventListener('click', function () {
 });
 
 /* ---------- print ---------- */
-$('print-btn').addEventListener('click', function () {
+function printHtml(html, landscape) {
   var iframe = $('ifPrint');
   iframe.onload = function () {
+    paginateSheet(iframe.contentDocument); // no-op for stickers
     iframe.contentWindow.focus();
     iframe.contentWindow.print();
   };
-  iframe.srcdoc = '<html><head>' + $('printStyles').outerHTML + '</head><body>' + buildSheet() + '</body></html>';
-});
+  iframe.srcdoc = '<html><head><style>@page { size: A4 ' + (landscape ? 'landscape' : 'portrait') + '; margin: 8mm; }</style>' +
+    $('printStyles').outerHTML + '</head><body>' + html + '</body></html>';
+}
+$('print-btn').addEventListener('click', function () { if (!blockedByOverPack()) printHtml(buildSheet()); });
+$('stickers-btn').addEventListener('click', function () { if (!blockedByOverPack()) printHtml(buildStickers(), true); });
 
+function gross(b) { return (Number(b.grossWeight) || 0).toFixed(2); }
+function pad2(n) { return String(n).padStart(2, '0'); }
+function nl2br(s) { return esc(s).replace(/\n/g, '<br>'); }
+
+// Sheet per the MSUN reference PDF: one SR NO per package, its cells (net, gross,
+// packing details) span the package's items. Emits ONE unpaginated .measure page —
+// paginateSheet() splits it into fixed-height pages once the iframe has laid it out.
 function buildSheet() {
   var exp = variant() === 'export';
   var h = header;
-  var nBox = 0, nPallet = 0;
+  var counts = {};
   var totQty = 0, totNet = 0, totGross = 0;
 
-  var rows = boxes.map(function (b, i) {
-    var l = lineById(b.itemId) || {};
-    var no = b.kind === 'pallet' ? ('PALLET NO.:- ' + (++nPallet)) : ('BOX NO.:- ' + (++nBox));
-    var net = netOf(b);
-    totQty += Number(b.qty) || 0;
-    totNet += net;
+  var groups = boxes.map(function (b, i) {
+    counts[b.kind] = (counts[b.kind] || 0) + 1;
     totGross += Number(b.grossWeight) || 0;
-    return '<tr>' +
-      '<td class="ctr">' + (i + 1) + '</td>' +
-      '<td>' + esc(l.name || '') + (b.dims ? '<div class="boxdim">' + (b.kind === 'pallet' ? 'PALLET' : 'BOX') + ' SIZE (cm):- ' + esc(b.dims) + '</div>' : '') + '</td>' +
-      '<td class="ctr">' + esc(l.hsn || '') + '</td>' +
-      '<td class="ctr">' + esc(l.description || '') + '</td>' +
-      '<td class="num">' + (b.qty || 0) + '</td>' +
-      '<td class="num">' + (b.weightPc || 0) + '</td>' +
-      '<td class="num">' + net.toFixed(2) + '</td>' +
-      '<td class="num">' + net.toFixed(2) + '</td>' +
-      '<td class="num">' + (Number(b.grossWeight) || 0).toFixed(2) + '</td>' +
-      '<td>' + no + '</td>' +
-      '</tr>';
+    var items = b.items.length ? b.items : [{}];
+    var n = items.length;
+    var boxNet = items.reduce(function (t, it) { return t + netOf(it); }, 0);
+    totNet += boxNet;
+    return '<tbody>' + items.map(function (it, j) {
+      var l = lineById(it.itemId) || {};
+      totQty += Number(it.qty) || 0;
+      return '<tr>' +
+        (j === 0 ? '<td class="ctr" rowspan="' + n + '">' + (i + 1) + '</td>' : '') +
+        '<td>' + esc(l.name || '') + '</td>' +
+        '<td class="ctr">' + esc(l.hsn || '') + '</td>' +
+        '<td class="ctr">' + esc(l.size || '') + '</td>' +
+        '<td class="num">' + (it.qty || 0) + '</td>' +
+        '<td class="num">' + (it.weightPc || 0) + '</td>' +
+        '<td class="num">' + netOf(it).toFixed(2) + '</td>' +
+        (j === 0
+          ? '<td class="num" rowspan="' + n + '">' + boxNet.toFixed(2) + '</td>' +
+            '<td class="num" rowspan="' + n + '">' + gross(b) + '</td>' +
+            '<td rowspan="' + n + '">' + KIND_LABEL[b.kind].toUpperCase() + ' NO.:- ' + kindNo(i) +
+            (dimsOf(b) ? '<div class="boxdim">SIZE (cm):- ' + esc(dimsOf(b)) + '</div>' : '') + '</td>'
+          : '') +
+        '</tr>';
+    }).join('') + '</tbody>';
   }).join('');
 
   var refRows = exp
@@ -573,21 +660,119 @@ function buildSheet() {
     : '<tr><td class="pl-lbl">Invoice No. &amp; Date</td><td class="pl-lbl">Buyer Order No. &amp; Date</td><td class="pl-lbl" colspan="2">Workorder No. &amp; Date</td></tr>' +
       '<tr><td class="pl-val">' + esc(h.invoiceNoDate) + '</td><td class="pl-val">' + esc(h.buyerOrderNoDate) + '</td><td class="pl-val" colspan="2">' + esc(h.workorderNoDate) + '</td></tr>';
 
-  return '<div class="pl-sheet"><table>' +
+  var sumRows = Object.keys(counts).map(function (k) {
+    var L = KIND_LABEL[k].toUpperCase();
+    return '<tr><td colspan="2">TOTAL NO OF ' + L + ':- ' + counts[k] + ' ' + L + '</td></tr>';
+  }).join('') +
+    '<tr><td colspan="2">TOTAL NO. OF ARTICLE :- ' + boxes.length + ' NOS</td></tr>' +
+    '<tr><td colspan="2">TOTAL NET WEIGHT:- ' + totNet.toFixed(2) + ' KGS</td></tr>' +
+    '<tr><td colspan="2">TOTAL GROSS WEIGHT:- ' + totGross.toFixed(2) + ' KGS</td></tr>' +
+    '<tr><td class="pl-decl">' + (exp ? 'Declaration:- We Declare that this Invoice Shows the Actual Price Of the Goods described and that all particulars are true &amp; correct.' : '') + '</td>' +
+    '<td class="pl-sign">FOR, ' + esc(h.consignorName) + '<br><br><br><br>Authorised Signatory</td></tr>';
+
+  // Column widths are fixed (table-layout: fixed) so rows keep their measured height on every page.
+  var cols = [4, 20, 8, 10, 5, 7, 7, 9, 9, 21].map(function (w) { return '<col style="width:' + w + '%">'; }).join('');
+
+  return '<div id="pl-probe"></div><div id="pl-measure" class="pl-sheet pl-page measure">' +
+    '<table class="pl-head">' +
     '<tr><td colspan="4" class="pl-title">PACKING LIST' + (exp ? ' - Export' : '') + '</td></tr>' +
     '<tr><td colspan="2" class="pl-part">Consignor (Exporter)</td><td colspan="2" class="pl-part">Consignee (' + (exp ? 'Importer' : 'Buyer') + ')</td></tr>' +
-    '<tr><td colspan="2"><span class="pl-part">M/S. ' + esc(h.consignorName) + '</span><br>' + esc(h.consignorAddress).replace(/\n/g, '<br>') + '</td>' +
-    '<td colspan="2"><span class="pl-part">M/S. ' + esc(h.consigneeName) + '</span><br>' + esc(h.consigneeAddress).replace(/\n/g, '<br>') + '</td></tr>' +
+    '<tr><td colspan="2"><span class="pl-part">M/S. ' + esc(h.consignorName) + '</span><br>' + nl2br(h.consignorAddress) + '</td>' +
+    '<td colspan="2"><span class="pl-part">M/S. ' + esc(h.consigneeName) + '</span><br>' + nl2br(h.consigneeAddress) + '</td></tr>' +
     refRows +
     '</table>' +
-    '<table style="margin-top:-1.5px">' +
-    '<tr><th>SR.<br>NO.</th><th>PRODUCT DESCRIPTION</th><th>HSN CODE</th><th>SIZE</th><th>QTY.</th><th>WEIGHT / PSC. (KGS)</th><th>TOTAL WEIGHT (KGS)</th><th>TOTAL NET WEIGHT (KGS)</th><th>TOTAL GROSS WEIGHT (KGS)</th><th>PACKING DETAILS</th></tr>' +
-    rows +
-    '<tr><td colspan="4" class="pl-part ctr">TOTAL</td><td class="num pl-part">' + totQty + '</td><td></td><td></td>' +
-    '<td class="num pl-part">' + totNet.toFixed(2) + '</td><td class="num pl-part">' + totGross.toFixed(2) + '</td>' +
-    '<td class="pl-part">' + (nBox ? nBox + ' BOX' + (nBox > 1 ? 'ES' : '') : '') + (nBox && nPallet ? ', ' : '') + (nPallet ? nPallet + ' PALLET' + (nPallet > 1 ? 'S' : '') : '') + '</td></tr>' +
-    '<tr><td colspan="7" style="border-right:none"></td><td colspan="3" class="pl-sign" style="border-left:none">For ' + esc(h.consignorName) + '<br><br><br>Authorised Signatory</td></tr>' +
-    '</table></div>';
+    '<table class="pl-items"><colgroup>' + cols + '</colgroup>' +
+    '<thead><tr><th>SR.<br>NO.</th><th>PRODUCT DESCRIPTION</th><th>HSN CODE</th><th>SIZE</th><th>QTY.</th><th>WEIGHT / PSC. (KGS)</th><th>TOTAL WEIGHT (KGS)</th><th>TOTAL NET WEIGHT (KGS)</th><th>TOTAL GROSS WEIGHT (KGS)</th><th>PACKING DETAILS</th></tr></thead>' +
+    groups +
+    '<tbody><tr><td colspan="4" class="pl-part ctr">TOTAL</td><td class="num pl-part">' + totQty + '</td><td></td><td></td>' +
+    '<td class="num pl-part">' + totNet.toFixed(2) + '</td><td class="num pl-part">' + totGross.toFixed(2) + '</td><td></td></tr></tbody>' +
+    '</table>' +
+    '<table class="pl-sum">' + sumRows + '</table>' +
+    '<div class="pl-pageno"></div>' +
+    '</div>';
+}
+
+// Splits the measured sheet into fixed-height pages: header + column heads repeat, whole
+// packages (tbody) never split, the blank .pl-fill stretches each page to the bottom, the
+// summary/signatory block sits at the foot of the last page, "Page No.:- 01 of 04" closes each.
+// ponytail: a single package taller than one page overflows it; split by item if that ever happens.
+function paginateSheet(doc) {
+  var m = doc.getElementById('pl-measure');
+  if (!m) return;
+  var head = m.querySelector('.pl-head'), items = m.querySelector('.pl-items');
+  var sum = m.querySelector('.pl-sum'), pn = m.querySelector('.pl-pageno');
+  pn.textContent = 'Page No.:- 00 of 00'; // real height for the measure
+  var avail = doc.getElementById('pl-probe').offsetHeight - head.offsetHeight - items.tHead.offsetHeight - pn.offsetHeight - 4;
+  var groups = [].slice.call(items.tBodies);
+  var heights = groups.map(function (g) { return g.offsetHeight; });
+  var sumH = sum.offsetHeight;
+
+  var pages = [[]], used = 0;
+  groups.forEach(function (g, k) {
+    if (used && used + heights[k] > avail) { pages.push([]); used = 0; }
+    pages[pages.length - 1].push(g);
+    used += heights[k];
+  });
+  if (used + sumH > avail) pages.push([]); // summary alone on a closing page
+
+  var colgroup = items.querySelector('colgroup'), thead = items.tHead;
+  pages.forEach(function (pg, k) {
+    var page = doc.createElement('div');
+    page.className = 'pl-sheet pl-page';
+    page.appendChild(head.cloneNode(true));
+    var t = items.cloneNode(false);
+    t.appendChild(colgroup.cloneNode(true));
+    t.appendChild(thead.cloneNode(true));
+    pg.forEach(function (g) { t.appendChild(g); });
+    page.appendChild(t);
+    var fill = doc.createElement('div');
+    fill.className = 'pl-fill';
+    page.appendChild(fill);
+    if (k === pages.length - 1) page.appendChild(sum);
+    var no = pn.cloneNode(false);
+    no.textContent = 'Page No.:- ' + pad2(k + 1) + ' of ' + pad2(pages.length);
+    page.appendChild(no);
+    doc.body.appendChild(page);
+  });
+  m.remove();
+  doc.getElementById('pl-probe').remove();
+}
+
+// One sticker per package (A4 landscape page each, sized to fill it), per the MSUN box label:
+// shipper/consignee → items inside the box → box size + "N OF M" (M = packages of that type).
+function buildStickers() {
+  var h = header;
+  return boxes.map(function (b, i) {
+    var n = b.items.length || 1;
+    var rows = (b.items.length ? b.items : [{}]).map(function (it, j) {
+      var l = lineById(it.itemId) || {};
+      return '<tr>' +
+        '<td class="ctr">' + (j + 1) + '</td>' +
+        '<td class="ctr">' + esc(h.buyerOrderNoDate) + '</td>' +
+        '<td class="hd">' + esc(l.name || '') + '</td>' +
+        '<td class="ctr hd">' + esc(l.size || '') + '</td>' +
+        '<td class="ctr hd">' + (it.qty || 0) + '</td>' +
+        '<td class="ctr hd">' + netOf(it).toFixed(2) + '</td>' +
+        (j === 0 ? '<td class="ctr hd" rowspan="' + n + '">' + gross(b) + '</td>' : '') +
+        '</tr>';
+    }).join('');
+    return '<div class="stk">' +
+      '<table>' +
+      '<tr><td width="50%"><b>Exporter / Shipper:</b><br><span class="hd">' + esc(h.consignorName) + '</span><br>' + nl2br(h.consignorAddress) + '</td>' +
+      '<td width="50%"><b>Consignee / Buyer:</b><br><span class="hd">' + esc(h.consigneeName) + '</span><br>' + nl2br(h.consigneeAddress) + '</td></tr>' +
+      '</table>' +
+      '<table>' +
+      '<tr><td colspan="7" class="big">Product Details (Inside Box)</td></tr>' +
+      '<tr><th>SR.<br>NO.</th><th>P.O NO.</th><th>PRODUCT DETAILES</th><th>SIZE</th><th>QTY. (Nos)</th><th>NETT WEIGHT<br>(kgs)</th><th>GROSS WEIGHT<br>(kgs)</th></tr>' +
+      rows +
+      '</table>' +
+      '<table>' +
+      '<tr><td colspan="2" class="big">' + KIND_LABEL[b.kind] + ' Details</td></tr>' +
+      '<tr><th>Box Size (L X B X H) (CM)</th><th>Box No (No Out Of Total Box)</th></tr>' +
+      '<tr><td class="huge">' + esc(dimsOf(b)) + '</td><td class="huge">' + pad2(kindNo(i)) + ' OF ' + pad2(kindTotal(b.kind)) + '</td></tr>' +
+      '</table>' +
+      '</div>';
+  }).join('');
 }
 </script>
 </body>

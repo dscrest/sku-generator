@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && rm -rf ../functions/skuapi/app && cp -r dist ../functions/skuapi/app",
     "preview": "vite preview"
   },
   "devDependencies": {

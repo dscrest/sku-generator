@@ -277,6 +277,17 @@ async function getSalesOrder(catalyst, soId) {
   return data.salesorder;
 }
 
+// The org's "Work Order No and Date" SO custom field (CR-173): carries the
+// active WO on that SO. Uses the custom-fields endpoint so a confirmed/invoiced
+// SO is otherwise untouched.
+// ponytail: verify on first live call — fall back to PUT /salesorders/{id}
+// { custom_fields } if Books rejects this endpoint.
+const SO_WO_CF = "cf_work_order_no_and_date";
+async function stampSalesOrderWo(catalyst, soId, value) {
+  await apiRequest(catalyst, "PUT", `/salesorders/${soId}/customfields`,
+    { custom_fields: [{ api_name: SO_WO_CF, value: String(value ?? "") }] });
+}
+
 // Invoice detail (packing-list widget: resolves the linked SO for line items).
 async function getInvoice(catalyst, invoiceId) {
   const data = await apiRequest(catalyst, "GET", `/invoices/${invoiceId}`);
@@ -337,9 +348,9 @@ async function listVendors(catalyst) {
 }
 
 /**
- * One draft PO per vendor (BRD FR-PRQ-001). Every line is tagged with the
- * originating Sales Order and delivered into the Reserve warehouse, so received
- * stock lands already allocated to the project.
+ * One draft PO per vendor (BRD FR-PRQ-001). Required lines are tagged with the
+ * originating Sales Order; delivery goes to the Main warehouse (CR-170) so the
+ * received stock is reservable from the grid.
  *
  * lines: [{ rmItemId, name?, qty, rate?, description?, soId? }] — soId lands on the
  * line's cf_so_no item custom field so each line names its Sales Order. The
@@ -455,6 +466,8 @@ module.exports = {
   deleteItem,
   listItemCustomFields,
   getSalesOrder,
+  stampSalesOrderWo,
+  SO_WO_CF,
   getInvoice,
   listSalesOrders,
   listPurchaseOrdersForItem,

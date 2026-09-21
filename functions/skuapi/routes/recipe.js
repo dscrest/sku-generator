@@ -11,7 +11,8 @@ const express = require("express");
 const { rowList, out, idOk, zStr, orgClause, ownsRow } = require("../store");
 const { nextNumber, byOrgAll } = require("../workorder/store");
 const { optionCost, computeQuote, bomLines } = require("../recipe/calc");
-const { MATERIALS, DEMO_RECIPE, DEFAULT_COST_ELEMENTS } = require("../recipe/seedData");
+const { MATERIALS, DEMO_RECIPE, DEFAULT_COST_ELEMENTS, SIZING_MODELS, RAV_QUESTIONS } = require("../recipe/seedData");
+const { selectModels } = require("../recipe/sizing");
 const { searchItems } = require("../zoho/booksApi");
 const { listCompositeItems, createCompositeItem, updateCompositeItem } = require("../zoho/inventoryApi");
 const bom = require("../workorder/bom");
@@ -730,6 +731,96 @@ router.post("/quotations/:id/convert", wrap(async (req, res) => {
   if (rows[0].status !== "Quotation") return bad(res, 409, "Only quotations can be converted");
   await req.catalyst.datastore().table("RecipeQuotation").updateRow({ ROWID: id, status: "Order" });
   res.json({ ok: true, status: "Order" });
+}));
+
+// ---------- sizing models (Product Configurator, CR-181) ----------
+
+const SIZING_FIELDS = ["industryId", "groupValue", "series", "modelCode", "recipeCode", "status"];
+
+router.get("/sizing-models", wrap(async (req, res) => {
+  const rows = (await byOrgAll(req.catalyst, req.orgId, "SizingModel")).map(out);
+  res.json(rows.sort((a, b) => String(a.series).localeCompare(String(b.series)) || a.capacity - b.capacity));
+}));
+
+router.post("/sizing-models", wrap(async (req, res) => {
+  const b = req.body || {};
+  if (!idOk(b.industryId) || !(await ownsRow(req.catalyst, "Industry", b.industryId))) return bad(res, 400, "Valid industryId is required");
+  if (!b.modelCode || !b.series || !(Number(b.capacity) > 0)) return bad(res, 400, "series, modelCode and a capacity above zero are required");
+  const row = await req.catalyst.datastore().table("SizingModel").insertRow({
+    industryId: String(b.industryId), groupValue: b.groupValue || "", series: b.series, modelCode: b.modelCode,
+    capacity: Number(b.capacity), recipeCode: b.recipeCode || "", status: b.status || "Active", orgId: req.orgId,
+  });
+  res.status(201).json(out(row));
+}));
+
+router.put("/sizing-models/:id", wrap(async (req, res) => {
+  const id = req.params.id;
+  if (!idOk(id) || !(await ownsRow(req.catalyst, "SizingModel", id))) return bad(res, 404, "Not found");
+  const b = req.body || {};
+  if (b.industryId !== undefined && (!idOk(b.industryId) || !(await ownsRow(req.catalyst, "Industry", b.industryId)))) return bad(res, 400, "Invalid industryId");
+  if (b.capacity !== undefined && !(Number(b.capacity) > 0)) return bad(res, 400, "capacity must be above zero");
+  const data = { ROWID: id };
+  for (const f of SIZING_FIELDS) if (b[f] !== undefined) data[f] = String(b[f]);
+  if (b.capacity !== undefined) data.capacity = Number(b.capacity);
+  res.json(out(await req.catalyst.datastore().table("SizingModel").updateRow(data)));
+}));
+
+router.delete("/sizing-models/:id", wrap(async (req, res) => {
+  const id = req.params.id;
+  if (!idOk(id) || !(await ownsRow(req.catalyst, "SizingModel", id))) return bad(res, 404, "Not found");
+  await req.catalyst.datastore().table("SizingModel").deleteRow(id);
+  res.status(204).end();
+}));
+
+// Duty -> suitable models (recipe/sizing.js). Each option also carries the
+// PropertyValue ids of the industry's `model` / `series` questions so the
+// widget can fill those answers in.
+// ponytail: matched by display text; store value ids on SizingModel if renames become a problem.
+router.post("/sizing/select", wrap(async (req, res) => {
+  const { industryId, tph, bd, rpm, group } = req.body || {};
+  if (!idOk(industryId)) return bad(res, 400, "Valid industryId is required");
+  const models = (await byOrgAll(req.catalyst, req.orgId, "SizingModel", `industryId = ${zStr(industryId)}`)).map(out);
+  const result = selectModels({ tph, bd, rpm: rpm || undefined, group, models });
+  const props = (await byOrgAll(req.catalyst, req.orgId, "Property", `industryId = ${zStr(industryId)}`)).map(out);
+  const valueIds = async (role) => {
+    const prop = props.find((p) => p.sizingRole === role);
+    if (!prop) return new Map();
+    const vals = (await byOrgAll(req.catalyst, req.orgId, "PropertyValue", `propertyId = ${zStr(prop.id)}`)).map(out);
+    return new Map(vals.map((v) => [String(v.displayValue).trim().toLowerCase(), v.id]));
+  };
+  const [modelIds, seriesIds] = [await valueIds("model"), await valueIds("series")];
+  const key = (t) => String(t).trim().toLowerCase();
+  for (const o of result.options) {
+    o.seriesValueId = seriesIds.get(key(o.series)) || null;
+    for (const m of [o, o.next]) if (m) m.valueId = modelIds.get(key(m.modelCode)) || null;
+  }
+  res.json(result);
+}));
+
+// Idempotent RAV starter: industry + question bank + sizing sheet (seedData.js).
+// Bulk inserts — ~180 rows one at a time would not fit the 30 s function limit.
+router.post("/seed-rav", wrap(async (req, res) => {
+  const ds = req.catalyst.datastore();
+  if ((await byOrgAll(req.catalyst, req.orgId, "Industry", `name = 'RAV'`)).length) return res.json({ ok: true, skipped: true });
+  const industry = out(await ds.table("Industry").insertRow({ name: "RAV", skuSeparator: "-", orgId: req.orgId }));
+  const tf = (v) => (v ? "true" : "false");
+  const props = (await ds.table("Property").insertRows(RAV_QUESTIONS.map((q, i) => ({
+    name: q.caption, caption: q.caption, unit: q.unit || null, valueType: q.range ? "Range" : "List",
+    skuPosition: i + 1, industryId: String(industry.id), required: tf(q.required),
+    activeInSku: tf(q.sku !== false), includeInName: tf(q.inName), createValuesAsItems: "false",
+    showInWidget: "true", sizingRole: q.role || null, orgId: req.orgId,
+  })))).map(out);
+  const propByCaption = new Map(props.map((p) => [p.caption, p]));
+  const values = RAV_QUESTIONS.flatMap((q) => (q.values || []).map((v) => {
+    const [display, sku] = Array.isArray(v) ? v : [v, String(v).toUpperCase().replace(/[^A-Z0-9.]/g, "")];
+    return {
+      displayValue: display, name: display, sku, propertyId: String(propByCaption.get(q.caption).id),
+      createAsItem: "false", isDefault: "false", orgId: req.orgId,
+    };
+  }));
+  await ds.table("PropertyValue").insertRows(values);
+  await ds.table("SizingModel").insertRows(SIZING_MODELS.map((m) => ({ ...m, recipeCode: "", industryId: String(industry.id), orgId: req.orgId })));
+  res.status(201).json({ ok: true, industryId: industry.id, properties: props.length, values: values.length, models: SIZING_MODELS.length });
 }));
 
 // ---------- demo seed ----------

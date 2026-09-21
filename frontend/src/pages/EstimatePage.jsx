@@ -4,7 +4,7 @@ import axios from 'axios';
 import { readDealId, readParam } from '../components/CrmInfoCard';
 import { buildEstimate, computeTotals, ddmmyyyy, validUntil } from './estimateParser';
 import { TermsSheet, HeadBand, FootBand, Cols, FillTable, COMPANY } from './EstimateTerms.jsx';
-import { loadTerms, saveTerms, DEFAULT_TERMS, EXPORT_TERMS } from './estimateTerms.js';
+import { normalizeTerms, DEFAULT_TERMS, SEED_TEMPLATES } from './estimateTerms.js';
 import DateInput from '../components/DateInput.jsx';
 
 // Estimate ("Techno Commercial Proposal") print page. Two CRM entry points:
@@ -18,7 +18,7 @@ const inr = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFr
 
 // "Version of templates" dropdown. standard = grouped items, no totals page;
 // with-total = grouped items + CALCULATION FOR OFFER page; export = standard
-// items but the export T&C page (EXPORT_TERMS); trading = no same-name grouping,
+// items, preselects the Export-named T&C template; trading = no same-name grouping,
 // one row per CRM line.
 const TEMPLATE_VERSIONS = [
   { key: 'standard', label: 'Standard' },
@@ -31,7 +31,7 @@ const TEMPLATE_VERSIONS = [
 // the sheet (WoPrintSheet visibility trick — the sheet lives inside app chrome).
 // Theme (colors/typography) follows estimate-prototype/Sales_Order_Template.html:
 // Inter, teal #0F7576 primary, tints #EAF2F1/#EFF5F4, borders #D8E5E4.
-const CSS = `
+export const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800;900&display=swap');
 .est-toolbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 8px;
   padding: 10px 16px; background: var(--bg-card); border-bottom: 1px solid var(--border); }
@@ -266,6 +266,7 @@ function SheetChrome({ h, title, onLogoLoad }) {
             <td style={{ width: '42%' }}>
               <div><span className="est-hdr-lbl">Our Offer No :</span> <span className="est-offer-no">{h.offerNo}</span></div>
               <div style={{ marginTop: 4 }}><span className="est-hdr-lbl">Offer Preparation Date :</span> <b>{h.date}</b></div>
+              {h.preparedBy && <div style={{ marginTop: 4 }}><span className="est-hdr-lbl">Offer Prepared By :</span> <b>{h.preparedBy}</b></div>}
               {h.revNo && <div style={{ marginTop: 4 }}><span className="est-hdr-lbl">Revision No :</span> <b>{h.revNo}</b></div>}
               {h.revDate && <div style={{ marginTop: 4 }}><span className="est-hdr-lbl">Revision Date :</span> <b>{ddmmyyyy(h.revDate)}</b></div>}
             </td>
@@ -358,8 +359,8 @@ function EstimateSheet({ estimate, items, priced, pageNo, onLogoLoad }) {
 // Second visual design (MSUN — Estimate Template 2.pdf), selected by the
 // toolbar Design toggle. Same data layer and pagination engine as Classic;
 // only the sheet components differ. Header fields the mockup adds (currency,
-// Incoterms, prepared-by, enquiry ref) are static per CR decision — currency
-// fixed, the rest omitted until a real source exists.
+// Incoterms, enquiry ref) are static per CR decision — currency fixed, the
+// rest omitted until a real source exists. Prepared-by = Quote Created_By.
 const T2_CURRENCY = 'USD';
 
 function Foot2Band() {
@@ -399,6 +400,7 @@ function Sheet2Chrome({ h }) {
           <tbody>
             <tr><td>Offer No.</td><td>{h.offerNo}</td></tr>
             <tr><td>Offer Date</td><td>{h.date}</td></tr>
+            {h.preparedBy && <tr><td>Prepared By</td><td>{h.preparedBy}</td></tr>}
             {h.revNo && <tr><td>Revision No.</td><td>{h.revNo}</td></tr>}
             {h.revDate && <tr><td>Revision Date</td><td>{ddmmyyyy(h.revDate)}</td></tr>}
             <tr><td>Valid Until</td><td>{validUntil(h.date)}</td></tr>
@@ -808,17 +810,32 @@ export default function EstimatePage() {
   const [version, setVersion] = useState('with-total');
   const [design, setDesign] = useState('classic'); // 'classic' | 'template2'
   const [revs, setRevs] = useState({}); // quoteId → { revNo, revDate }
-  const [terms, setTermsState] = useState(() => loadTerms(false));
-  const [exportTerms, setExportTermsState] = useState(() => loadTerms(true));
+  // T&C templates are org-wide (Settings → Quote T&C); customers get different
+  // terms, so the print picks one. In-place edits are for this print only.
+  const [templates, setTemplates] = useState(SEED_TEMPLATES);
+  const [bank, setBank] = useState(DEFAULT_TERMS.bank);
+  const tplStoreKey = 'estimateTpl:' + (quoteId || dealId);
+  const [tplKey, setTplKey] = useState(() => localStorage.getItem(tplStoreKey) || '');
+  const [termsOverride, setTermsOverride] = useState(null);
   const [editTerms, setEditTerms] = useState(false);
-  // Export version prints the export T&C preset; both sets edit + persist
-  // independently so touching one never clobbers the other.
   const isExport = version === 'export';
-  const activeTerms = isExport ? exportTerms : terms;
-  const setActiveTerms = (t) => {
-    (isExport ? setExportTermsState : setTermsState)(t);
-    saveTerms(t, isExport);
-  };
+  const keyOf = (t) => t.id || t.name;
+  // Picked template, else the Export-named one for the export version, else the first.
+  const tpl = templates.find((t) => keyOf(t) === tplKey)
+    || (isExport && templates.find((t) => /export/i.test(t.name)))
+    || templates[0];
+  const tplTerms = useMemo(() => ({ terms: tpl.terms, bank, footer: '' }), [tpl, bank]);
+  const activeTerms = termsOverride || tplTerms;
+  useEffect(() => { setTermsOverride(null); }, [tplTerms]); // new template = fresh text
+
+  useEffect(() => {
+    axios.get('/api/crm/estimate-terms').then(({ data }) => {
+      if (data.templates?.length) {
+        setTemplates(data.templates.map((t) => ({ ...t, terms: normalizeTerms(t).terms })));
+      }
+      if (data.bank) setBank(normalizeTerms({ bank: data.bank }).bank);
+    }).catch(() => { /* offline/old backend — print with the built-in terms */ });
+  }, []);
 
   const setRev = (quoteId, v) => {
     setRevs((m) => ({ ...m, [quoteId]: v }));
@@ -835,6 +852,8 @@ export default function EstimatePage() {
     [rawQuotes, version, revs],
   );
 
+  // The T&C sheet is the last page — scroll to it when editing starts so the
+  // in-place editor is actually visible.
   // The T&C sheet is the last page — scroll to it when editing starts so the
   // in-place editor is actually visible.
   function toggleEditTerms() {
@@ -934,8 +953,8 @@ export default function EstimatePage() {
         {design === 'template2' ? (
           estimates.length > 0 && <ClosingSheet2 estimates={estimates} priced={priced} terms={activeTerms} />
         ) : (
-          <TermsSheet terms={activeTerms} defaults={isExport ? EXPORT_TERMS : DEFAULT_TERMS}
-            editing={editTerms} onChange={setActiveTerms} />
+          <TermsSheet terms={activeTerms} defaults={tplTerms} editing={editTerms} onChange={setTermsOverride}
+            hint="this print only — permanent changes: Settings → Quote T&C" />
         )}
       </div>
     </>
@@ -955,6 +974,10 @@ export default function EstimatePage() {
           <span className="est-lbl">Version</span>
           <select value={version} onChange={(e) => setVersion(e.target.value)}>
             {TEMPLATE_VERSIONS.map((v) => <option key={v.key} value={v.key}>{v.label}</option>)}
+          </select>
+          <span className="est-lbl">T&amp;C</span>
+          <select value={keyOf(tpl)} onChange={(e) => { setTplKey(e.target.value); localStorage.setItem(tplStoreKey, e.target.value); }}>
+            {templates.map((t) => <option key={keyOf(t)} value={keyOf(t)}>{t.name}</option>)}
           </select>
           <span className="est-lbl">Design</span>
           <button className={design === 'classic' ? 'est-active' : ''} onClick={() => setDesign('classic')}>Classic</button>

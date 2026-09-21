@@ -80,25 +80,43 @@ app.use((req, _res, next) => {
 app.get("/", (_req, res) => res.json({ status: "ok", service: "skuapi" }));
 app.get("/cors-debug", (_req, res) => res.json(seenOrigins)); // ponytail: temp, remove with seenOrigins
 
-// CRM widget page (Setup → Widgets → hosting "External" → this URL). Served
-// from a function (not the web client) because Catalyst stamps
-// X-Frame-Options: DENY on static hosting with no way to change it; a
-// frame-ancestors CSP set here overrides XFO in modern browsers, letting only
-// Zoho CRM iframe it.
+// Frameable pages. Catalyst stamps X-Frame-Options: DENY on static hosting
+// with no way to change it, so anything Zoho must iframe is served from this
+// function: a frame-ancestors CSP overrides XFO in modern browsers, letting
+// only Zoho (CRM widget, Books widget, Books web tab) frame it.
+const path = require("path");
+function frameable(_req, res, next) {
+  res.set(
+    "Content-Security-Policy",
+    "frame-ancestors 'self' https://*.zoho.com https://*.zoho.in https://*.zoho.eu " +
+      "https://*.zoho.com.au https://*.zoho.jp https://*.zoho.sa https://*.zoho.com.cn"
+  );
+  next();
+}
+// CRM widget page (Setup → Widgets → hosting "External" → this URL).
 function serveWidget(file) {
-  return (_req, res) => {
-    res.set(
-      "Content-Security-Policy",
-      "frame-ancestors 'self' https://*.zoho.com https://*.zoho.in https://*.zoho.eu " +
-        "https://*.zoho.com.au https://*.zoho.jp https://*.zoho.sa https://*.zoho.com.cn"
-    );
+  return [frameable, (_req, res) => {
     res.set("Cache-Control", "no-cache"); // widget updates land on next reload after deploy
-    res.sendFile(require("path").join(__dirname, file));
-  };
+    res.sendFile(path.join(__dirname, file));
+  }];
 }
 app.get("/widget", serveWidget("widget.html"));
+// Product Configurator CRM widget (CR-181) — separate page so the Quote Maker above stays untouched.
+app.get("/configurator", serveWidget("configurator.html"));
 // Books packing-list widget (Invoice + Sales Order detail pages).
 app.get("/packing", serveWidget("packing.html"));
+// The SPA build, served frameable for a Zoho Books Web Tab (CR-152):
+// `npm run build` in frontend/ copies dist → functions/skuapi/app/ (gitignored).
+// The Catalyst gateway forwards both /app and /app/ as "/app" (verified via
+// /cors-debug), so the index is an explicit route — express.static's directory
+// handling would 404 or redirect-loop. The browser keeps its own trailing
+// slash, which the bundle's relative asset URLs need: register the tab URL
+// WITH the slash.
+app.get("/app", frameable, (_req, res) => {
+  res.set("Cache-Control", "no-cache"); // deploys land on the next tab open
+  res.sendFile(path.join(__dirname, "app", "index.html"));
+});
+app.use("/app", frameable, express.static(path.join(__dirname, "app"), { redirect: false }));
 
 // Auth: custom email/password login + Zoho OAuth (both set the session cookie).
 app.use("/auth", require("./routes/auth"));

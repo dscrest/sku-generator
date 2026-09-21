@@ -43,6 +43,44 @@ Catalyst API Gateway ──► Advanced I/O Function "skuapi" (Express)
    └─ OAuth redirect ─► Zoho Accounts ──► Zoho Books API (item sync)
 ```
 
+### SPA inside a Zoho Books Web Tab (CR-152)
+
+Catalyst static hosting (`/app/`) stamps `X-Frame-Options: DENY`, so the same
+build is *also* served from the function at `/server/skuapi/app/`
+(`npm run build` in `frontend/` copies `dist/` → `functions/skuapi/app/`,
+gitignored) behind the shared `frameable` CSP middleware in `index.js`
+(`frame-ancestors` = Zoho DCs). Works unchanged because Vite `base: './'`,
+HashRouter and an absolute axios base URL make the bundle location-agnostic.
+Session cookie is `SameSite=None; Secure; Partitioned` (CHIPS) so it exists
+inside the frame without being sendable cross-site. Inside a frame the login
+page opens Zoho OAuth in the `sku-auth` popup (accounts.zoho refuses to render
+framed); App.jsx in the popup hands the session token back over the
+origin-checked postMessage handshake and `POST /auth/adopt?t=` sets the cookie
+in the frame's partition. The Web Tab URL must carry the trailing slash: the
+bundle's asset URLs are relative and resolve against the browser's address
+bar. The gateway itself forwards `/app` and `/app/` identically (as `/app`),
+so `index.html` is an explicit `GET /app` route — express.static's directory
+index never fires and a slash redirect would loop.
+
+### CRM Product Configurator widget (CR-181)
+
+`functions/skuapi/configurator.html`, served at `GET /configurator` (same
+`serveWidget` / `frame-ancestors` path as `/widget`; CRM hosting **External**,
+detail-page button on Quotes + Deals). Guided flow: Product (= Industry) →
+Feed data → `POST /api/recipe/sizing/select` → pick a model (fills the
+`series` / `model` questions) → remaining questions → `/api/sku/generate` →
+existing item (duplicate SKU, loaded via `/api/sku-items/search`) or new item
+(`/api/sku/create-item` + `/api/sku-items/:id/push-zoho`) → cart → Quote.
+Generic by data: questions are the industry's Properties, sizing inputs/outputs
+are found by `Property.sizingRole`; an industry without roles renders as a plain
+question list. Needs both `sku-generator` and `recipe-engine` add-ons.
+A new SKU is always saved to the SKU master; the per-line **Push to Books**
+switch (default from `OrgSetting cfgNoAutoPush`, CR-184) decides whether it is
+pushed at once or later from the SKU Items page. Same switch in `widget.html`.
+Boot/auth, cart and quote write-back are a **verbatim copy** of `widget.html`
+(kept separate so the live Quote Maker is never at risk) — a fix to that shared
+logic must be applied to both files until they are extracted.
+
 ### CRM quote widget (CR-108/109)
 
 One real widget file: `functions/skuapi/widget.html`, served at `GET /widget`
@@ -57,7 +95,11 @@ cookie-free (`?t=` session token via postMessage handoff). Widget item-create
 routes through the generator engine
 (`/api/sku/generate` → `/api/sku/create-item` → `/api/sku-items/:id/push-zoho`)
 so property values persist and the item lands in Books; the CRM Product is
-created at push-to-quote time via the JS SDK.
+created at push-to-quote time via the JS SDK. The Product also gets
+`Item_Source` = the org's label for the item type (SKU Settings `typeLabels`,
+CR-180: `Trading` → Direct Purchase, `Manufacturing` → In-House Manufacturing)
+whenever the org's Products module has that field; cart lines show the same
+label as a badge.
 
 ### Books packing-list widget (CR-131)
 
@@ -75,7 +117,11 @@ re-copy + re-zip + re-upload (recipe in TASKS.md CR-131). Uses the Books
 ZFAPPS SDK only for record context (invoice → salesorder fallback), resize and
 close; data + persistence go through skuapi (`/api/packing`, no addon gate)
 with the same `?t=` token dance. Plans persist in `PackingList`/`PackingBox`;
-print is an A4 sheet in an iframe srcdoc, Export/Domestic variants.
+print goes through an off-screen iframe srcdoc: the Export/Domestic sheet is A4
+portrait, split by `paginateSheet()` into fixed-height pages (repeated header,
+stretch-to-bottom fill, page numbers, closing block on the last page — CR-188);
+stickers are one A4-landscape page per package. Packages number per type
+(`kindNo`/`kindTotal`, CR-187).
 
 Standalone mode (CR-134): `?woId=`/`?soId=`/`?invoiceId=` query params skip
 ZFAPPS entirely — the Work Order page's "Print Packing List" ⋯ action opens
@@ -168,7 +214,7 @@ roles resolve to `["*"]` (lockout backstops). Managed at `/api/access`
 |--------|------|---------|
 | GET | `/api/properties/:id/values` | Values of a property (ordered by `displayValue`) |
 | GET | `/api/property-values/linked` | Values with a `zohoItemId`, plus property/industry names — the "Books items" tracking grid (CR-026) |
-| POST | `/api/property-values` | Create. Requires `displayValue, name, sku, propertyId`. `createAsItem:true` best-effort creates a name-only Books item + stores `zohoItemId` (CR-026) |
+| POST | `/api/property-values` | Create. Requires `displayValue, name, sku, propertyId`. `createAsItem:true` best-effort creates a Books item (SKU = uppercased name, CR-163 — Books orgs with "SKU mandatory" reject SKU-less items with code 2112) + stores `zohoItemId` (CR-026) |
 | PUT | `/api/property-values/:id` | Partial update; toggling `createAsItem` true best-effort creates the Books item |
 | DELETE | `/api/property-values/:id` | Delete |
 
@@ -199,7 +245,7 @@ ROWID (List props) or a raw number string (Range props).
 | POST | `/api/sku-items/:id/push-zoho` | Manual (re)push a single item to Zoho Books |
 | POST | `/api/sku-items/backfill-values` | One-shot, idempotent backfill of SKUItemValue for legacy items by reverse-matching SKU tokens |
 | POST | `/api/sku-items/import-zoho` | Import new items from Zoho Books into an industry. Body `{ industryId }`. Create-only — items already linked (by `zohoItemId`, then `sku`) are skipped. Reverse-maps Books custom fields → SKUItemValue via `zohoCfApiName`. Returns `{ total, imported, skipped, valuesMapped, errors }` |
-| POST | `/api/sku-items/import` | Bulk sheet import (CR-092/127). Body `{ industryId, rows, format? }` — rows parsed client-side. Default format = app template (property captions, `importItems.js`); `format: "books"` = Zoho Books item sheet (`booksImport.js`: fixed columns → `SKUItem.booksData` JSON, `"<caption> (Custom Field)"` → properties; provided SKU kept, blank SKU generated via assemble+series). When the org's `skuAutoPushImport` setting is on, each created row is pushed sequentially; results carry `pushed`/`pushError` |
+| POST | `/api/sku-items/import` | Bulk sheet import (CR-092/127). Body `{ industryId, rows, format? }` — rows parsed client-side. Default format = app template (property captions, `importItems.js`); `format: "books"` = Zoho Books item sheet (`booksImport.js`: fixed columns → `SKUItem.booksData` JSON, `"<caption> (Custom Field)"` → properties; provided SKU kept, blank SKU generated via assemble+series; CR-189: unknown List-property cells find-or-create a `PropertyValue` with an auto code, `Item ID` → `zohoItemId` with link-first dedupe, result carries `valuesCreated`). When the org's `skuAutoPushImport` setting is on, each created row is pushed sequentially; results carry `pushed`/`pushError` |
 | GET/PUT | `/api/sku-items/settings` | SKU-module org settings (`OrgSetting` via the generic workorder/store helpers). Keys: `skuAutoPushImport` → `{ autoPushImport }` (CR-127); `skuSeriesMode` (`off`/`continuous`/`params`) + `skuSeriesPad` → `{ seriesMode, seriesPad }` (CR-136 — org-wide numerical series; GET resolves the legacy per-industry `seriesStart` fallback when mode unset). UI: SkuSettingsPage (Settings hub → SKU Settings → SKU Series, CR-137) |
 
 ### CRM — `routes/crm.js` (mounted `/api/crm`, not add-on gated)
@@ -208,6 +254,7 @@ ROWID (List props) or a raw number string (Range props).
 | GET | `/api/crm/deal/:id` | Read-only Zoho CRM Deal (v6 `GET /Deals/{id}` via `zoho/crmApi.js`) for the "CRM Info" card on the generator page. Needs the `ZohoCRM.modules.READ` scope → `409 reauth_required` if the grant predates it; `404 not_found` if the deal is gone. Opened from a CRM custom link button: `/#/sku/generator?dealId=<id>` (CR-024) |
 | GET | `/api/crm/deal/:id/quotes` | Quotes related to a deal (v6 related-records, explicit `fields` list) for the estimate page's picker. Always 200 + array — empty means the deal has no quotes (CR-032) |
 | GET | `/api/crm/quote/:id` | Full quote incl. `Quoted_Items` subform for the estimate sheet (`/#/estimate?dealId=…`, `EstimatePage.jsx` + `estimateParser.js`). Same reauth/404 semantics as `/deal/:id` (CR-032) |
+| GET, POST/PUT/DELETE | `/api/crm/estimate-terms`, `…/templates[/:id]`, `…/bank` | Org-wide quote T&C (CR-192). GET → `{ templates:[{id,name,terms}], bank }` (empty = never saved, client uses built-in seeds). Template CRUD + shared bank table need the `estimate` perm; JSON in `OrgSetting.settingText` (`estimateTpl` rows, `estimateBank`) |
 
 ### Admin — `routes/admin.js` (mounted `/admin`, requireAuth + requireAdmin via `ADMIN_EMAILS`)
 | Method | Path | Purpose |
@@ -231,9 +278,10 @@ ROWID (List props) or a raw number string (Range props).
 | POST | `/api/wo/composites/import` | Bulk import of a Books composite-items export — update matched composites, create unknown ones |
 | GET/POST | `/api/wo` | List work orders / create from an SO (seeds each FG's BOM from its composite item) |
 | GET/PUT | `/api/wo/:id` | Work order with FGs, purchase requests, transactions, approvals. GET also re-syncs the SO-derived header fields (`soFields.js`, CR-110) from Books into the row — one Books call, stored values serve if it fails |
-| POST | `/api/wo/:id/status` | Status transition, incl. the QC gate (Rejected → back to In Progress). On `Completed` it first auto-returns leftover material to Main via `txn.autoReturnOnComplete` — a Zoho failure aborts the transition (CR-031) |
+| POST | `/api/wo/:id/status` | Status transition, incl. the QC gate (Rejected → back to In Progress). Entering Ready for Machining / Fitting in Progress needs the machining / fitting date — `400 {code:"needDate", fields}` until the client resends them (CR-170). `Completed` is refused (409) while any line has reserved qty > 0 — issue or de-reserve first (CR-151); it then auto-returns over-issued material to Main via `txn.autoReturnOnComplete` — a Zoho failure aborts the transition (CR-031) |
 | POST | `/api/wo/:id/lines` | Single-op item edit during production (CR-031): `add`/`setQty`/`remove`/`replace` + reason. Internal only — never writes to the composite item or SO; committed lines are kept at qty 0 for the completion sweep; locked at Completed/Closed/Cancelled |
 | GET | `/api/wo/:id/bom` | Frozen BOM lines + revision history |
+| POST | `/api/wo/:id/fg/:fgId/assemble` | `{ qty, prefix, components?: [{ itemId, tracking }] }` (CR-176 picks) → Zoho Inventory bundle at any shop-floor stage once the FG is fully issued (`wo.action.assemble`, CR-126/150/172; 409 otherwise); driven from Details → Assembly; returns `bundleNumber`, `serials[]`, `serialRange`, `assembledQty` |
 | POST | `/api/wo/:id/bom/preview` | Diff vs the composite item or an uploaded sheet — writes nothing |
 | POST | `/api/wo/:id/bom/apply` | Apply the diff, record a `BomRevision`, push back to the composite item |
 | GET | `/api/wo/:id/grid?fgId=` | The A–I grid — **read entirely from our tables, zero Zoho calls** |
@@ -243,7 +291,7 @@ ROWID (List props) or a raw number string (Range props).
 | GET | `/api/wo/:id/shortfall` | Shortfall rows pre-filled as purchase-request lines |
 | GET/POST | `/api/wo/:id/purchase-request(s)` | List / raise a purchase request |
 | PUT | `/api/wo/pr-line/:lineId` | Set vendor + quantity on a line |
-| POST | `/api/wo/pr/:prId/confirm` | One **draft PO per vendor**, delivery = Reserve warehouse, SO referenced |
+| POST | `/api/wo/pr/:prId/confirm` | One **draft PO per vendor**, delivery = Main warehouse (CR-170), required qty SO-referenced, over-ordered excess as a separate SO-less extra line |
 | GET | `/api/wo/purchase/shortfall-by-item` | Shortfall of **every open WO** aggregated per raw material, with per-WO breakdown (CR-023) |
 | POST | `/api/wo/purchase/raise` | Item-wise raise: selected items + one vendor → **consolidated cross-WO PR + one grouped draft PO** (CR-023) |
 | GET | `/api/wo/purchase-orders` | Orders grid: every Books PO, app-created ones stamped with PR/WO, `locked` when received/billed |
@@ -269,7 +317,7 @@ guarded. Setup procedure: [WORKORDER.md](WORKORDER.md).
 
 Old-scope tokens (pre-Inventory) make reserve endpoints return `409 {error:"reauth_required"}` — the UI offers a Zoho reconnect; SKU flows keep working.
 
-### Recipe Engine — `routes/recipe.js` (mounted `/api/recipe`, gated by `requireAddon("recipe-engine")`, CR-104)
+### Product Configurator (was Recipe Engine) — `routes/recipe.js` (mounted `/api/recipe`, gated by `requireAddon("recipe-engine")`, CR-104)
 Reusable recipe/configuration engine — recipes (versioned, Draft-only writable)
 compose a main ERP product from components with selectable materials and
 configurable cost elements; quotations freeze an immutable JSON snapshot.
@@ -287,6 +335,9 @@ Costing math lives in `recipe/calc.js` (pure, `--selftest`); demo data in
 | POST | `/api/recipe/recipes/:id/calculate` | Cost/price for a selection (wizard review + builder Test tab; nothing saved) |
 | GET/POST | `/api/recipe/quotations(/:id)` · POST `/:id/convert` | Create = recompute + freeze snapshot + `QTN-` number; convert → `Order` |
 | POST | `/api/recipe/seed-demo` | Idempotent RAVS150 demo (12 materials + published recipe) |
+| GET/POST/PUT/DELETE | `/api/recipe/sizing-models(/:id)` | Product Configurator sizing master (`SizingModel`, CR-181); perm `recipe.sizing` |
+| POST | `/api/recipe/sizing/select` | `{industryId, tph, bd, rpm, group}` → `recipe/sizing.js` `selectModels`: `reqCap`, per-series best fit (+ one size up, ties, `tooBig`); options carry the `model`/`series` question value ids. Perm `recipe.configure` |
+| POST | `/api/recipe/seed-rav` | Idempotent RAV starter: Industry + 26 questions + values + 43 sizing models (`recipe/seedData.js`), bulk inserts |
 | GET | `/api/recipe/books-items?q=` \| `/books-composites` | Books lookups (CR-143): material-link typeahead; composite picker for first push |
 | POST | `/api/recipe/recipes/:id/push-books` | Create/overwrite the linked Books composite's `mapped_items` from the recipe's default BOM (`bomLines` in `recipe/calc.js`); link stored on `RecipeTemplate.booksCompositeItemId`, works on Published recipes (no `assertDraft`) |
 
@@ -319,21 +370,25 @@ wizard), `quotations` (+ `/:id` snapshot, `/:id/mfg` manufacturing requirement),
 | `itemValues.js` | SKUItemValue persistence, required-field gating, property search, legacy backfill, Books custom-field building |
 | `routes/*.js` | The route handlers above (`auth`, `zohoAuth`, `industries`, `properties`, `propertyValues`, `sku`, `skuItems`, `reserve`, `admin`) |
 | `zoho/auth.js` | OAuth config, multi-DC host resolution (`dcHosts`), token load/exchange/refresh, org selection |
-| `zoho/booksApi.js` | Zoho Books v3 / Inventory v1 client (`createItem`, `updateItem`, `getOrganizations`, `listItems`, `getItem`, `listItemCustomFields`, SO/PO reads) |
+| `zoho/booksApi.js` | Zoho Books v3 / Inventory v1 client (`createItem`, `updateItem`, `getOrganizations`, `listItems`, `getItem`, `listItemCustomFields`, SO/PO reads, `stampSalesOrderWo` — the SO's `cf_work_order_no_and_date` custom field, CR-173) |
 | `zoho/inventoryApi.js` | `getCompositeItem`/`updateCompositeItem`/`updateCompositeItemFields`/`listCompositeItems`/`createCompositeItem` (BOM + CR-029 full payload), `listWarehouses`, `getItemStock` + write stubs |
 | `zoho/push.js` | `pushToZoho` — best-effort create-or-update, no-op until configured, branching on `SKUItem.type` (CR-029): Trading → plain Books item, Manufacturing → composite/assembly item with associated items from `createValuesAsItems` properties (`buildAssociatedItems`, resolves each value via `pushValueToZoho`; unselected flagged properties are skipped — CR-030 — only a selected value that can't resolve fails). A Manufacturing re-push also swaps the composite's property-derived BOM lines (`mergeMappedLines`/`syncMappedItems` — manual lines and quantities untouched, write only on change). Type locks after first push, so `type` also says which Books API `zohoItemId` belongs to. Invoked by the manual `POST /sku-items/:id/push-zoho` route and by `POST /sku/update-item` for already-linked items (CR-030's exception to CR-021's no-auto-push rule) |
 | `zoho/import.js` | `importFromBooks` — create-only import of Books items, mapping custom fields to SKUItemValue (find-or-create PropertyValue) |
 | `reserve/sync.js` | Legacy per-item stock sync (superseded by `workorder/sync.js`'s bulk reconcile) |
 | `reserve/zohoDocs.js` | Legacy seam — the real document mapping now lives in `workorder/formulas.js` `ROUTES` |
 | `workorder/formulas.js` | **Columns A–I, the four warehouse routes, per-action caps, balance transitions.** Self-checked |
+| `workorder/status.js` | WO lifecycle table (CR-160): FLOW, `BACK` (one step back on the shop floor, CR-171), done/edit-locked/holdable sets, material + assembly + stage-date gates, `nextStatuses(wo)` / `prevStatuses(wo)`. Self-checked |
 | `workorder/store.js` | `OrgSetting` KV + defaults, warehouse map, `routeFor`, document numbering, `ActivityLog`. Self-checked |
 | `workorder/bom.js` | Composite-item cache, requirement freeze, upload matching, three-way diff, committed-material guard. Self-checked |
 | `workorder/grid.js` | Assembles the A–I grid from our own tables (BOM ⋈ snapshot ⋈ balances ⋈ PR lines) |
 | `workorder/txn.js` | The material ledger: draft → confirm → one Transfer Order, write-through snapshots, `recompute`. Self-checked |
+| `workorder/assembly.js` | `assembleFg` (CR-126/150/172/175/176): any shop-floor stage, FG fully issued (`formulas.fullyIssued`); validates the modal's per-component batch/serial picks (`componentQtys` + `applyPicks`, explicit picks win over FIFO) before any Zoho call; pushes the WO BOM to the composite, then one Zoho Inventory bundle (`POST /inventory/v1/bundles`) **at the Issue location** (assemblies are single-location), one serial per unit, then a best-effort Transfer Order Issue → Main for the finished good (`transferOrderNumber` / `transferWarning`); records `WoAssembly` and FG progress |
+| `workorder/serial.js` | Finished-good serial series (CR-150): `<ValveTypeCode><YYYY><NNN>`, one counter per year across prefixes in `OrgSetting serialSeq`; prefix from the FG item's `cf_valve_type` code before the dash (CR-177), else the SKU item's Valve Type value, else typed. Self-checked (`serial.test.js`) |
 | `workorder/purchase.js` | Shortfall → purchase request → one draft PO per vendor; item-wise cross-WO raise (`raiseItemPO`, consolidated PR) and derived per-WO procurement status (CR-023); refreshes only the POs we created. Self-checked |
 | `workorder/sync.js` | Bounded nightly reconcile + the Books webhook dispatcher + `tokenForOrg` |
 | `workorder/alerts.js` | Shortfall + cost-threshold evaluation, email delivery, `AlertLog` dedupe. Self-checked |
 | `workorder/reports.js` | SO-BOM + shortfall roll-ups, ZCQL only. Self-checked |
+| `recipe/sizing.js` | Product Configurator sizing (CR-181): `selectModels` — Req. Cap from TPH/BD/RPM, next-size-up per series, ties, `tooBig`, required speed. Pure. Self-checked (`node recipe/sizing.js --selftest`) |
 
 ### `store.js` helpers
 - `rowList(zcqlRows)` — ZCQL returns each row keyed by table name; flattens to plain objects.
@@ -377,13 +432,13 @@ addon/perm rules as the main nav). Old paths (`/sku/industries*`,
 | `/settings/sku/properties` | `PropertiesPage` | All org properties in one grid, filterable by industry/type/required |
 | `/sku/books-items` | `BooksLinkedValuesPage` | The "Books items" tab: read-only grid of property values also created as standalone Zoho Books items (CR-026), filterable by industry |
 | `/wo` | `WorkOrderListPage` | Work order grid + "new from sales order" flow (tick the FG lines, BOMs seed from Zoho) |
-| `/wo/:id` | `WorkOrderPage` | Zoho-Books-style split view (CR-018): left rail of all work orders, right detail with toolbar (Edit modal · Approve ▾ two-level dropdown · status actions · ⋯ Print PDF / Delete) and sub-tabs **Details** (the A–I Materials grid), Approvals, History |
+| `/wo/:id` | `WorkOrderPage` | Zoho-Books-style split view (CR-018): left rail of all work orders, right detail with toolbar (Edit modal · Approve ▾ two-level dropdown · status actions · ⋯ Print PDF / Print Material Issue Copy — CR-190, `woIssueCopy.js` rolls all confirmed issues up per material and reuses `IssueSlip` / Delete) and sub-tabs **Details** (the A–I Materials grid), Approvals, History |
 | `/wo/bom` | `CompositeBomPage` | Global BOM page (CR-028): grid of Books composite items (no work orders) → row drills into upload/paste + coloured diff, apply straight to Books (optionally creating missing component items); "New composite item" builds one in Books from a sheet |
 | `/wo/purchase` | `WorkOrderPurchasePage` | Global Purchase page ("Purchasing"): By Item (per-RM shortfall raise; PR-number links + "Associated WO ▾" breakdown toggle per row, CR-144) + Requests/Orders grids (Orders = all Books POs via `/api/wo/purchase-orders`, 🔒 when received/billed) → row drills into `PurchaseTab` (per WO), `PrCard` editor (per PR, incl. consolidated cross-WO ones) or `PoSplit` (per PO) |
 | `/wo/reports` | `WorkOrderReportsPage` | SO–BOM status + shortfall/pending + item pipeline (WO/vendor filters), CSV export |
 | `/settings/wo` | `WorkOrderSettingsPage` | Warehouse map, alert recipients, thresholds, number prefixes (`wo.settings`) |
 | `/reserve` | `ReservePage` | Superseded by `/wo` — kept one release for the Books custom button |
-| `/estimate` | `EstimatePage` | Print estimates from CRM Quotes (CR-032, no sidebar entry). Deal button (`?dealId=`) → checkbox list of the deal's quotes → one sheet per ticked quote (page-break between); Quote button (`?quoteId=`) → that sheet directly. Sheet ported from `estimate-prototype/` (specs/design/size rows parsed from line descriptions via `estimateParser.js`, flat fallback), A–F priced / A–D technical toggle, native print. Editable "General Terms & Conditions" last page (`estimateTerms.js` + `EstimateTerms.jsx`, per-browser localStorage). Logged-out deep links auto-login via Zoho OAuth (sessionStorage returnTo) |
+| `/estimate` | `EstimatePage` | Print estimates from CRM Quotes (CR-032, no sidebar entry). Deal button (`?dealId=`) → checkbox list of the deal's quotes → one sheet per ticked quote (page-break between); Quote button (`?quoteId=`) → that sheet directly. Sheet ported from `estimate-prototype/` (specs/design/size rows parsed from line descriptions via `estimateParser.js`, flat fallback), A–F priced / A–D technical toggle, native print. Editable "General Terms & Conditions" last page (`estimateTerms.js` + `EstimateTerms.jsx`): template picked from the org's Settings → Quote T&C list (`/settings/quote-terms`, CR-192), in-place edits apply to that print only. Logged-out deep links auto-login via Zoho OAuth (sessionStorage returnTo) |
 | (in `/settings/org`) | `AddonAdminPage` | Super-admin: per-org add-on entitlements + org delete (embedded card, no own route) |
 | (login) | `LoginPage` | Email+password or Zoho login |
 | `/connect` | `ZohoConnectPage` | Shown until Zoho is connected (app gate) |

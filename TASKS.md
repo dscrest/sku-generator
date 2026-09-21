@@ -10,11 +10,397 @@ Related docs: [CHANGES.md](CHANGES.md) (change requests + shipped log),
 [SCHEMA.md](SCHEMA.md) (DB), [ARCHITECTURE.md](ARCHITECTURE.md) (system),
 [ZOHO_AUTH.md](ZOHO_AUTH.md) (OAuth setup).
 
-Last updated: 2026-09-12 (CR-146).
+Last updated: 2026-09-21 (CR-192).
 
 ---
 
 ## In progress
+
+### CR-192 — Quote T&C templates as an org setting (branch `feat/zoho-field-mapping`)
+- [x] `OrgSetting.settingText` text column added (Dev, via MCP)
+- [x] `routes/crm.js`: `/api/crm/estimate-terms` GET + template CRUD + shared bank (writes need `estimate` perm)
+- [x] Settings → Quote T&C page (`EstimateTermsSettingsPage.jsx`): named templates, copy/rename/delete, Save; seeds Domestic/Export on first open
+- [x] `EstimatePage.jsx`: T&C template dropdown (remembered per quote/deal); Edit T&C = this print only
+- [x] `estimateTerms.js`: `sanitizeHtml` on all loaded terms; localStorage + `TERMS_VERSION` removed
+- [ ] Deploy to Dev
+- [ ] User verify: Settings → Quote T&C shows Domestic + Export; edit + Save → visible on a quote print in another browser; new customer template selectable on the print; in-place edit gone after reload
+- [ ] Production: add `settingText` column before promoting
+- [ ] Deferred: auto-pick a template per CRM Account (needs an Account→template mapping) — add when picking by hand gets tedious
+
+### CR-191 — Quote print: Offer Prepared By + contact block (branch `feat/zoho-field-mapping`)
+- [x] `estimateParser.js`: `header.preparedBy` from Quote `Created_By.name`; self-test extended
+- [x] `EstimatePage.jsx`: "Offer Prepared By" (Classic) / "Prepared By" (Template 2), hidden when blank
+- [x] `estimateTerms.js`: Kamal row removed, Dipan → Sales Head, MARUTI OFFICE → (+91) 7574857881 / Office; `TERMS_VERSION` bumped (resets saved T&C edits)
+- [ ] Deploy to Dev
+- [ ] User verify: quote print shows the creator's name in both designs; last sheet has 2 contact rows with the new values; print geometry unchanged
+
+### CR-190 — WO print: Material Issue Copy (branch `feat/zoho-field-mapping`)
+- [x] `woIssueCopy.js` `combineIssued()` — one row per material across all confirmed issues/FGs, returns tracked separately; self-test
+- [x] `WorkOrderPage.jsx`: ⋯ → Print Material Issue Copy; `IssueSlip` title + conditional Issued/Returned/Net columns
+- [ ] Deploy to Dev
+- [ ] User verify: WO with the same material issued on ≥2 FGs → one row, summed qty; WO with nothing issued → toast; History single slip unchanged
+
+### CR-189 — Books-sheet import: category → property value, auto-create values, Item ID link (branch `feat/zoho-field-mapping`)
+- [x] `booksMapping.js`: `ALIASES` — `Category Name` auto-maps to the `Category` property; self-test extended
+- [x] `booksImport.js`: `ensureValues()` find-or-create `PropertyValue` (reuses `autoCode` from `zoho/import.js`); `valuesCreated` on the result
+- [x] `Item ID` → `SKUItem.zohoItemId`; `Already imported` dedupe before the SKU check; digits-only guard; self-test extended
+- [ ] Deploy to Dev
+- [ ] User verify: import `sample_items.xlsx` into an industry with a `Category` List property → `Category Name` pre-selected, new values appear in Property Manager with auto codes, blank-SKU rows get generated SKUs; re-import → every row "Already imported"; with auto-push on, Books item is updated not duplicated
+
+### CR-188 — Packing list sheet per MSUN reference PDF: pages stretch to the bottom (branch `feat/zoho-field-mapping`)
+- [x] `packing.html`: `buildSheet()` + `paginateSheet()` — fixed-height A4 portrait pages, repeated header, `.pl-fill` stretch, `Page No.:- NN of NN`, closing totals/declaration/signatory block on the last page
+- [x] Rows per PDF: SR NO per package, TOTAL NET per package, fixed column widths; title font fix
+- [x] Headless-Chrome render of 39 sample packages → 3 full pages, no overflow page
+- [x] Widget zip rebuilt
+- [x] Deployed to Dev (2026-09-18); live `/packing` carries `paginateSheet`
+- [ ] **Manual:** re-upload the zip in Books (covers CR-186/187/188)
+- [ ] User verify on a real SO: Export + Domestic print; a package with more items than fit one page is not split (known ceiling, marked `ponytail:` in `paginateSheet`)
+
+### CR-187 — Packing list: packages numbered per type (branch `feat/zoho-field-mapping`)
+- [x] `packing.html`: `kindNo` / `kindTotal` — grid, sheet PACKING DETAILS and sticker `N OF M` all count per type; single running series removed
+- [x] `packing.html`: blank consignee name/address/PO in a saved plan refill from the live SO/invoice (same fallback the consignor already had)
+- [x] Widget zip rebuilt (`books-widget/dist/packinglist.zip`)
+- [x] Deployed to Dev (2026-09-18)
+- [ ] User verify: Pallet, Wooden Box, Pallet → Pallet 1, Wooden Box 1, Pallet 2; pallet sticker `01 OF 02`
+
+### CR-186 — Packing list: portrait sheet, Type in column 2, per-item ✕, no ↑↓ (branch `feat/zoho-field-mapping`)
+- [x] `packing.html`: `printHtml(html, landscape)` injects `@page` — sheet portrait, stickers landscape
+- [x] `packing.html`: Type select moved to column 2; per-item ✕; ↑/↓ + `move()` removed
+- [x] Widget zip rebuilt (`books-widget/dist/packinglist.zip`), `app/widget.html` identical to `packing.html`
+- [x] Deployed to Dev (2026-09-18)
+- [ ] **Manual:** re-upload `books-widget/dist/packinglist.zip` in Books → Settings → Developer Space → Widgets
+- [ ] User verify: Print = A4 portrait (10 columns fit), Print Stickers = A4 landscape; ✕ removes one item only
+
+### CR-184 — Widgets always save to SKU master; switch = Books push; composite BOM = configured RM (branch `feat/zoho-field-mapping`)
+- [x] `routes/skuItems.js` — `widgetAutoPush` / `OrgSetting cfgNoAutoPush` (old `cfgNoAutoCreate` ignored)
+- [x] `widget.html` + `configurator.html` — **Push to Books** box; item always created; unticked → *NEW — NOT PUSHED*
+- [x] `zoho/push.js` — RM1/RM2 padding removed, `requireBomLines` (<2 lines → error), legacy placeholders dropped on re-push; `push.test.js` updated
+- [x] `SkuSettingsPage.jsx` — "CRM widgets: push new items to Zoho Books immediately"
+- [x] Checked in the local preview: both widgets with the box off → item row exists, `zohoItemId` empty, no push call; setting round-trip
+- [x] Deployed to Dev (2026-09-18); live `/widget` and `/configurator` carry the Push to Books box
+- [ ] User: recreate `GV-032-S4-HO-2` (Quote Maker no-match → Create & add to lines, or SKU Generator page) and push it
+- [ ] User verify (MSUN): flag the properties whose values are Books items → push a Manufacturing SKU → composite BOM = those values, no RM1/RM2; a config with <2 flagged values → clear error, item stays unsynced in SKU Items
+- [ ] Studio Sairish / Fabric (CR-165 case): one flagged property → push now errors — needs a second flagged property or a manual Books line
+
+### CR-183 — Quote Maker widget: same item auto-creation switch (branch `feat/zoho-field-mapping`)
+- [x] `widget.html` — **Create item** checkbox in the create card (default from `configuratorAutoCreate`), quote-only branch, *QUOTE ONLY* cart badge, button/title wording follows the switch
+- [x] `SkuSettingsPage.jsx` — setting relabelled "CRM widgets: auto-create new items"
+- [x] Checked in the local preview (fake CRM SDK): switch off → line added, 0 items created
+- [x] Deployed to Dev with CR-182 (2026-09-18); both widget pages serve the new switch
+- [ ] User verify (MSUN): default unchanged — no-match search → Create & add to lines still creates + pushes; untick → quote-only line, nothing in SKU Items / Books
+
+### CR-182 — Product Configurator: item auto-creation setting (branch `feat/zoho-field-mapping`)
+- [x] `routes/skuItems.js` — `configuratorAutoCreate` in GET/PUT `/settings` (`OrgSetting cfgNoAutoCreate`, blank = on; absent field = unchanged)
+- [x] `SkuSettingsPage.jsx` — "Product Configurator: auto-create new items" checkbox
+- [x] `configurator.html` — per-line **Create item** switch (new SKUs only), default from the setting; off → *QUOTE ONLY* line, no SKUItem, no Books push
+- [x] Checked in the local preview: setting round-trip, switch off → line added, 0 items created
+- [x] Deployed to Dev (2026-09-18)
+- [ ] User verify: SKU Settings → untick → Save → CRM widget opens with Create item unticked; tick it for one line → that item is created
+
+### CR-181 — Product Configurator: CRM widget step 1 — questions + RAV sizing + SKU/item on demand (branch `feat/zoho-field-mapping`)
+- [x] `recipe/sizing.js` — `selectModels` (Req. Cap, next size up per series, ties, `tooBig`, required speed) + `--selftest`
+- [x] Schema via Catalyst MCP (Dev): `SizingModel` table, `Property.sizingRole`
+- [x] `routes/recipe.js` — `/sizing-models` CRUD, `POST /sizing/select`, idempotent `POST /seed-rav`; `perms.js` `recipe.sizing`; `routes/properties.js` `sizingRole`
+- [x] `configurator.html` at `GET /configurator` — feed data → suitable models → questions → SKU → existing/new item → Quote (auth/cart/write-back copied from `widget.html`, which is untouched)
+- [x] App: nav *Product Configurator* / *Product Designs* / **Sizing Models** grid (`/recipe/sizing`), *Sizing role* dropdown in the property editor, `recipe.sizing` in Users & Roles
+- [x] Checked: `sizing.js` / `calc.js` / `perms.js` self-tests, new routes in-process against a Data Store stub, `npm run build`
+- [x] Deployed to Dev (functions + client, 2026-09-17); `/configurator` and `/widget` both serve 200
+- [ ] Ricon org: enable `sku-generator` + `recipe-engine`, connect Zoho, **Sizing Models → Load RAV defaults**, grant `recipe.sizing` / `recipe.configure` roles
+- [ ] Ricon CRM: Setup → Widgets → External hosting `…/server/skuapi/configurator` → detail-page button on Quotes and Deals
+- [ ] User review of seeded guesses: value SKU codes + SKU positions, Motor HP ladder, Rotor Strip 4th value (sheet cut off), CB model names (`RAVH CB <capacity>`), sanitary 3.80 = `RAVS 150`?, `RAVH 900.70` under CB
+- [ ] User verify in CRM: 5 TPH / 0.60 / 20 RPM / Drop through → Req. Cap 6.94, four series at 7.35 (Round Old shows RAVH 200 + RAVH 250D), runs at 18.9 RPM; IC → "Above the largest" note
+- [ ] User verify: answer all → NEW ITEM → Add → item in SKU Items + Books, quote line carries answers + Req. Cap + Required Speed; same answers again → EXISTING ITEM, no duplicate
+- [ ] **Next step (needs rules from user):** MOC → cast-grade map per component (SS304→CF8? 304L→CF3? 316→CF8M? 316L→CF3M? IC grades); then `SizingModel.recipeCode` → widget Rate from `computeQuote` + Books composite BOM from `bomLines` (replaces RM1/RM2 placeholders); cost elements `FAB` + `BLD_CHAMFER`; Motor HP / Gear Model defaults per model; Y/N accessories + flange qty as optional components; RM create-missing in Books; fold the SKU Generator nav into Product Configurator
+- [x] Costing sheet: CI casing 55 kg shows 4400 but 55×70 = 3850 (4400 is FG260's rate; WCB 6600 is SGI's) — **user confirmed 2026-09-17: mistake in the sheet**; the engine's rate × cast weight (3850 / 5500) is correct, nothing to change
+
+### CR-180 — Item type labels + CRM `Item_Source` in the quote widget (branch `feat/zoho-field-mapping`)
+- [x] `routes/skuItems.js` — `typeLabels` in GET/PUT `/settings` (OrgSetting `skuTypeLabelTrading` / `skuTypeLabelManufacturing`, blank = Direct Purchase / In-House Manufacturing)
+- [x] `SkuSettingsPage.jsx` — label text box beside each type radio, stored value in brackets
+- [x] `SKUItemsPage.jsx`, `SKUGeneratorPage.jsx` — labels in pill / filter / edit drawer / type toggle
+- [x] `widget.html` — type badge on cart lines; `Item_Source` written on the CRM Product (create + refresh) when the field exists; "Item Source"/"Item Type" plain subform columns filled via `paramVals`
+- [x] Deployed to Dev (functions + client, 2026-09-16)
+- [ ] User verify: SKU Settings → labels default to Direct Purchase / In-House Manufacturing, edit + Save + reload persists, clear → default returns
+- [ ] User verify: SKU Items grid → pill, Type filter and edit drawer show the labels; filtering by Direct Purchase returns Trading items
+- [ ] User verify: CRM Quote → widget → add a line → grey type badge on the line → Add item to Quote → open the Product in CRM → Item Source = Direct Purchase (Trading item) / In-House Manufacturing (Manufacturing item); repeat with an already-existing Product (refresh path)
+- [ ] User verify: set a label to a value not in the CRM picklist → push shows "product fields not updated" warning, line still lands
+
+### CR-179 — Zoho sign-in `Platform not allowed` on the IN DC (branch `feat/zoho-field-mapping`)
+- [x] `zoho/auth.js` `getAuthUrl(forceConsent, dc)` + `routes/zohoAuth.js` `GET /auth/zoho?dc=` — consent leg can start on the user's DC
+- [x] `session.js` `setDcCookie`/`readDcCookie` — `zdc` cookie set on successful exchange, read by `GET /auth/zoho`
+- [x] `LoginPage.jsx` — "Zoho India account?" link → `/auth/zoho?dc=in` (popup-aware)
+- [x] Deployed to Dev (functions + client, 2026-09-16)
+- [ ] User verify (Studio Sairish / IN account): login page → "Zoho India account?" link → lands on `/app/` signed in; second sign-in from the plain Zoho button also works (cookie)
+- [ ] If it fails the same way: api-console.zoho.com → client `1000.HHGW…` → type Server-based, Settings → Multi-DC IN on + "same OAuth credentials" on, redirect URI `/app/` present; else raise with Zoho support (first failure 16 Sep 13:17 IST, last success 15 Sep 16:39 IST)
+
+### CR-177 — Serial prefix from the item's `cf_valve_type` (branch `feat/zoho-field-mapping`)
+- [x] `serial.js` — pure `prefixFromItem` (api_name / label fallback, `value_formatted ?? value`, code before the dash); `serialPrefix` tries it first via `booksApi.getItem`
+- [x] `serial.test.js` extended
+- [x] Deployed to Dev (functions + client, 2026-09-16)
+- [ ] Verify: WO-0024 → Assembly → Proceed → prefix prefilled from the FG's *Items* value (e.g. `KGV`) without typing; an FG without the CF still falls back as before
+
+### CR-176 — Batch/serial picks for assembly components (branch `feat/zoho-field-mapping`)
+- [x] `assembly.js` — `componentQtys` (4-dp rounding) + `applyPicks` (`trackingProblem` per line, 400 `details[]`) before any Zoho call; preview returns `components` + `fromWarehouseId`; `--selftest`
+- [x] `inventoryApi.js` `createBundle` — explicit `tracking` wins, FIFO fallback; `txn.js` exports `trackingProblem`
+- [x] Routes — `/tracking-options` accepts `fromWarehouseId` without `type`; `POST …/assemble` body `components`
+- [x] `AssembleModal.jsx` — Proceed fetches pools sequentially, `TrackingPicker` (exported from `MaterialsGrid.jsx`) replaces the modal for tracked lines, Confirm posts picks
+- [x] Deployed to Dev (functions + client, 2026-09-16)
+- [ ] Verify: WO-0024 → Proceed Assembly → picker lists each batch-tracked RM with Issue-warehouse batches, FIFO prefilled; change a batch split, Confirm → Zoho bundle lines carry the chosen batch ids; FG still moved to Main; serial range in the toast
+- [ ] Verify: picker Cancel returns to the modal with qty/prefix intact; mismatched pick (sum ≠ qty) → red toast per line, no bundle, no serial burned
+- [ ] Regression: Materials tab Issue/Return picker unchanged
+
+### CR-175 — Assembly single-location fix: bundle at Issue + FG Transfer Order to Main (branch `feat/zoho-field-mapping`)
+- [x] `zoho/inventoryApi.js` — bundle header location = Issue warehouse; selftest passes
+- [x] `assembly.js` — FG Transfer Order Issue → Main after the bundle (best effort, `transferOrderNumber` / `transferWarning`)
+- [x] `AssembleModal.jsx` — toast shows the TO number or the warning
+- [x] Probed Zoho directly: payload validates end to end; 900001 transient. `createBundle` trimmed to header `location_id` only + one retry on 900001 (body logged)
+- [x] Deployed to Dev (functions + client, 2026-09-16)
+- [ ] Verify: WO-0024 → Assembly → Proceed → bundle created (batch 888 + Dummy consumed from Issue), toast "moved to Main by TO-xxxxx"; Zoho: composite stock +1 in Head Office, 0 in Issue; serials on the FG
+- [ ] Verify: if the TO fails (e.g. location permission), the assembly still records, red toast names the cause, FG stock sits in Issue
+
+### CR-174 — Assembly tab: Ready / Pending sections + partial qty (branch `feat/zoho-field-mapping`)
+- [x] `MaterialsGrid.jsx` — `readyFgs` / `pendingFgs` split; `AssemblyPanel` two sections, Assemble-now input + MAX, Proceed carries qty
+- [x] `AssembleModal.jsx` — `fg.initialQty` seeds the quantity field
+- [x] Frontend build passes; deployed to Dev (client + functions, 2026-09-16)
+- [ ] Verify: WO-0024 → Details → Assembly → "Ready for assembly · 1" row with Assemble now = Remaining; type a smaller qty → Proceed Assembly → modal opens with that qty → confirm → Assembled bumps, row stays with the new Remaining
+- [ ] Verify: type 0 or more than Remaining → input red, Proceed disabled; MAX restores Remaining
+- [ ] Verify: WO with an unissued FG → listed under "Pending for assembly" with "N line(s) not fully issued", no button
+
+### CR-173 — SO `cf_work_order_no_and_date` stamp + next-stage hint (branch `feat/zoho-field-mapping`)
+- [x] `booksApi.js` — `stampSalesOrderWo` (`PUT /salesorders/{id}/customfields`), `SO_WO_CF`
+- [x] `soFields.js` — `soWoStamp(wo)`; test extended, passes
+- [x] `routes/workorder.js` — stamp on create (failure → `problems`), clear on Cancel + Draft delete, self-heal on `GET /wo/:id`; picker ignores Cancelled WOs
+- [x] `woCommon.jsx` — `StatusChip ghost`, `NextStage`; `WorkOrderPage.jsx` header hint
+- [x] Frontend build passes (2026-09-16)
+- [x] Deployed to Dev (functions + client, 2026-09-16)
+- [ ] Verify: create WO on a confirmed SO → Books SO shows `WO-xxxx / dd/mm/yyyy` in the CF. If Books rejects `/customfields`, switch the helper to `PUT /salesorders/{id}` `{ custom_fields }`
+- [ ] Verify: cancel that WO → CF blank; new-WO picker lists the SO again; create again → CF shows the new number
+- [ ] Verify: edit WO date → reopen the WO → CF date follows (self-heal)
+- [ ] Verify: header shows `DRF ─▶ Ready For Machining` on a Draft, updates per stage, nothing on Closed/Cancelled, resume target on Hold
+
+### CR-172 — Details → Assembly action tab (branch `feat/zoho-field-mapping`)
+- [x] `status.js` — `ASSEMBLABLE = MATERIAL_OK`; selftest passes
+- [x] `formulas.js` — `fullyIssued(rows)`; selftest passes
+- [x] `assembly.js` — `assembleFg` builds the grid and 409s unless fully issued
+- [x] `AssembleModal.jsx` — moved out of `WoItemsTab.jsx`; button reads Proceed Assembly
+- [x] `MaterialsGrid.jsx` — `assembly` action + `AssemblyPanel`; `WorkOrderPage.jsx` passes `status`
+- [x] Frontend build passes (2026-09-16)
+- [ ] Deploy to Dev (functions + client)
+- [ ] Verify: WO-0024 → Details → action group shows Assembly (user with `wo.action.assemble`); the fully-issued FG is listed with Ordered / Assembled / Remaining; Proceed Assembly → modal prefilled to remaining + serial preview → confirm → toast with bundle no, Assembled bumps, FG drops off once Closed
+- [ ] Verify: FG with an unissued line → not listed, empty-state text; POST `/wo/:id/fg/:fgId/assemble` for it via API → 409 "issue all material first"
+- [ ] Verify: WO on Hold → row listed, no Proceed button; WO at Ready for Machining with everything issued → assembly allowed
+- [ ] Verify: Item List tab has no ⚙ Assemble button, still shows "Assembled x/y"
+
+### CR-171 — WO rail without customer + one-step-back status moves (branch `feat/zoho-field-mapping`)
+- [x] `status.js` — `BACK` map + `prevStatuses(wo)`, folded into `nextStatuses`; selftest passes
+- [x] `routes/workorder.js` — GET `/wo/:id` returns `prevStatuses`
+- [x] `WorkOrderPage.jsx` — rail line 2 = Due date · Due Days (no customer); ⋯ menu shows `← Stage`
+- [x] Build + deploy to Dev (2026-09-16, functions + client)
+- [ ] Verify: rail items show WO no + status chip, then "Due <date> · <days>", no customer
+- [ ] Verify: WO in Fitting in Progress → ⋯ has `→ Ready For Dispatch` and `← Ready For Fitting`; pick ← → chip updates, Activity logs from/to; Ready for Machining has no ←; Completed shows only → Dispatched
+
+### CR-170 — WO review: PO extra split + Head Office delivery, reserve-all cap, picker MFG date, Received chip, stage dates (branch `feat/zoho-field-mapping`)
+- [x] `purchase.js` — `splitExtra` (required keeps SO, excess is extra without); both PO paths deliver to `wh.main`; selftest passes
+- [x] `status.js` + `routes/workorder.js` — `DATE_GATE` on entry (RFM: machining required + fitting optional; FIP: fitting required); `needDate` returns `fields[]`; selftest passes
+- [x] `MaterialsGrid.jsx` — joint stock cap in `fillAvailable` (reserve only); MFG date column hidden for Reserve; `ReceiptChip` hidden once `needed === 0`
+- [x] `WorkOrderPage.jsx` — multi-field `DateModal`; header labels Machining Date / Fitting Date
+- [x] Build + deploy to Dev (2026-09-16, functions + client)
+- [ ] Verify: WO → Purchase → PR line required 2, set 4, Confirm → Books PO has qty 2 (SO in cf_so_no) + qty 2 "Extra" (no SO); both lines' location = Head Office
+- [ ] Verify: Purchase page → By item → raise → PO lines land in Head Office
+- [ ] Verify: Details → Reserve on a batch-tracked item → picker has no MFG date; Issue → column back
+- [ ] Verify: WO with 2 FGs sharing an item, stock < both needs → Reserve everything available fills FG1 fully, FG2 the remainder / nothing; Proceed Reserve → no error toast
+- [ ] Verify: line fully received + fully reserved → no Received chip; not yet reserved → chip shows
+- [ ] Verify: → Ready for Machining asks Machining Date (required) + Fitting Date (optional); left blank → Ready for Fitting → Fitting in Progress asks Fitting Date; filled on the first modal → no second prompt; Machining in Progress → Ready for Fitting no longer prompts
+
+### CR-168 — Packing List: grid cleanup + portrait stickers (branch `feat/zoho-field-mapping`)
+- [x] `packing.html`: select arrow gone, number spinners gone, L/W/H 48px, per-item ✕ removed, stickers A4 landscape scaled to fill the page (flex column, 22/32/64px type)
+- [x] Widget zip rebuilt; Dev deploy 2026-09-16 (functions)
+- [ ] Verify: `/server/skuapi/packing?soId=<id>` — Type box reads "Wooden Box" cleanly, L/W/H have no arrows, Print Stickers is landscape, one page per box, box size + "01 OF N" fill the bottom of the page
+- [ ] **Manual:** re-upload `books-widget/dist/packinglist.zip` in Books → Settings → Developer Space → Widgets
+
+### CR-166 — Push-to-Zoho dialog defaults in SKU Settings (branch `feat/zoho-field-mapping`)
+- [x] `routes/skuItems.js` — `skuPushTracking` / `skuPushAccountId` settings; push route falls back to them
+- [x] `SkuSettingsPage.jsx` — "Push to Zoho Books defaults" section; `SKUItemsPage.jsx` — dialog opens on the defaults
+- [x] Build + deploy to Dev (2026-09-16, functions + client)
+- [ ] User to verify: Settings → SKU Settings → pick None + an account → Save; SKU Generator → Push to Zoho → dialog preselects them; change them in the dialog → that push uses the changed values, the setting stays
+
+### CR-165 — Manufacturing push: pad a short BOM with RM1/RM2 (Zoho code 2056) (branch `feat/zoho-field-mapping`)
+- [x] `zoho/push.js` — `padMappedItems`; composite create pads < 2 lines with RM1/RM2 (by name, created once if missing); self-check passes
+- [x] Deploy to Dev (2026-09-16, functions only)
+- [ ] User to verify (Studio Sairish): Push to Zoho on `FC-HM-CN-FD-PN-20-001` → composite in Books with Handloom + RM1 + RM2; re-push keeps RM1/RM2
+- [ ] Optional: Property Manager → Loom Type → untick "Create values as items" if the composite should carry RM1/RM2 only
+
+### CR-167 — Packing List: L/W/H fields + Wt/pc from item master (branch `feat/zoho-field-mapping`)
+- [x] `routes/packing.js`: `weightKg()` + `fillWeights()` → `line.weightPc` from Books `package_details`; selftest passes
+- [x] `packing.html`: L/W/H numeric inputs (`dimsOf(b)` → `dims` string, legacy split on load), Wt/pc auto-fill on item pick / new item, in-place Net recalc
+- [x] Widget zip rebuilt (`books-widget/dist/packinglist.zip`)
+- [x] Dev deploy 2026-09-16 (`catalyst deploy`, also carried CR-160–166 WIP)
+- [ ] Verify: open `/server/skuapi/packing?soId=<id>` — pick an item → Wt/pc = Books "Weight" CF (205 kg on the WCB Knife Edge Gate Valve), Net updates; L/W/H print as `SIZE (cm):- L X W X H`; old saved plan reopens with the three fields filled
+- [ ] **Manual:** re-upload `books-widget/dist/packinglist.zip` in Books → Settings → Developer Space → Widgets; make sure items carry a Package weight in Books (Item → Package details) or Wt/pc stays 0
+
+### CR-164 — Packing List: qty cap, multi-item packages, 4 package types, stickers, consignor defaults (branch `feat/zoho-field-mapping`)
+- [x] Schema: `PackingBox.grossWeight` double via Catalyst MCP; `kind` → wooden/corrugated/pallet/loose (legacy `box` = wooden); `OrgSetting.companyEmail` key
+- [x] `routes/packing.js`: `KINDS`/`kindOf`, per-package `grossWeight`, `toLine().size` from the item "Size" CF, `source.reference` from SO/invoice `reference_number`, consignor fallback to Books `GET /organizations/{orgId}`; selftest extended
+- [x] `packing.html`: multi-item package grid (rowspan package cells, `+ item`), `packedQty`/`overPacked` block Save + Print + Print Stickers, red ⚠ summary, single package numbering, per-kind footer tally, `buildStickers()` + `.stk` print CSS, P.O NO / consignor email prefill
+- [x] Widget zip rebuilt (`cp functions/skuapi/packing.html books-widget/app/widget.html && cd books-widget && zip -rD dist/packinglist.zip plugin-manifest.json app -x "*.DS_Store"`)
+- [ ] Dev deploy (`catalyst deploy`) + verify: open `/server/skuapi/packing?soId=<MSUN SO>` — consignor block prefilled from the Books org profile, two-item box saves/reloads, over-pack blocks, Print Stickers gives one landscape page per package with "01 OF N"
+- [ ] **Manual:** re-upload `books-widget/dist/packinglist.zip` in Books → Settings → Developer Space → Widgets (delete old widget first); optionally set Company details (name/address/email) in WO Settings to override the Books profile
+
+### CR-163 — Manufacturing push: value items need a SKU (Books code 2112) (branch `feat/zoho-field-mapping`)
+- [x] `zoho/push.js` — `valueItemSku(name)`; `pushValueToZoho` create sends it; self-check passes
+- [x] Deploy to Dev (2026-09-16, functions only)
+- [ ] User to verify (Studio Sairish): SKU Generator → `FC-HM-CN-FD-PN-20-001` → Push to Zoho → composite created in Books with "Handloom" (SKU `HANDLOOM`) as its associated item; Property Manager → Loom Type re-save backfills `Powerloom` too
+- [ ] If Books still says 2112 after this, the org rejects the SKU *format* — pull the exact body from the Network tab and compare with a hand-made item in Books
+
+### CR-161 — WO header: QC Not Applicable, TC Required, SO logistics fields, Special Instruction (branch `feat/zoho-field-mapping`)
+- [x] Schema: `WorkOrder.freightCharge` / `delivery` / `booking` / `transporter` / `tcRequired` varchar(255) via Catalyst MCP
+- [x] `workorder/soFields.js` — 4 logistics labels in `CF_MAP`; `soFields.test.js` extended
+- [x] `routes/workorder.js` — create stores `tcRequired`, PUT whitelist, detail serves the five, status accepts `NotApplicable`
+- [x] Client — header tuples, QC modal *Not Applicable*, Edit TC select + Special Instruction label, create page TC select + label
+- [x] `npm run build` + deploy to Dev (2026-09-15)
+- [ ] User to verify: WO whose SO carries the four CFs shows them in the header; blank CF → "—"
+- [ ] User to verify: Edit → TC Required Yes + Special Instruction text persists after reload; print sheet says "Special Instruction"
+- [ ] User to verify: → Completed shows Not Applicable / Rejected / Passed; Not Applicable completes and header shows *QC Status: Not Applicable*
+
+### CR-160 — WO status lifecycle: machining / fitting / dispatch stages + Hold (branch `feat/zoho-field-mapping`)
+- [x] Schema: `WorkOrder.heldFrom` varchar(50) via Catalyst MCP (69851000000277763); Dev remap 7 MAP → ReadyForMachining, 2 InProgress → MachiningInProgress
+- [x] `workorder/status.js` — FLOW / DONE / HOLDABLE / MATERIAL_OK / DATE_GATE / ASSEMBLABLE / `nextStatuses`; selftest passes
+- [x] `routes/workorder.js` — status route: Hold/resume with reason, approval-off Draft exit, completion-date gate (`needDate`), assembly gate, cancel de-reserve sweep, QC Rejected records only; reopen → Dispatched; detail returns `heldFrom` + stage dates
+- [x] `workorder/txn.js` — auto-bump removed, reserve/issue gated on MATERIAL_OK, Hold blocks moves, `autoReturnOnComplete({ types })`; `assembly.js` at ReadyForDispatch; `alerts.js` skips Dispatched
+- [x] Client — chips, ⋯ Put on Hold / Resume, `ReasonModal`, `DateModal`, Close WO at Dispatched, stage dates on header card, Assemble at RFD, History labels
+- [x] `npm run build` passes
+- [x] Deploy to Dev (2026-09-15)
+- [ ] User to verify: Draft WO → ⋯ shows *→ Ready For Machining* (only if approvals off), *⏸ Put on Hold*, *Cancel*; Reserve on a Draft → red toast "move it to Ready for Machining…"
+- [ ] User to verify: Ready For Machining → Reserve/Issue work and the chip stays RFM; *→ Machining In Progress* → *→ Ready For Fitting* opens the date modal → save → status moves, header shows *Machining Completed*
+- [ ] User to verify: Hold from any stage → reason → chip HLD, material actions 409, ⋯ shows only *▶ Resume (…)* → back to the prior status; History has *Put on hold* / *Resumed from hold*
+- [ ] User to verify: Ready For Dispatch → ⚙ Assemble visible (not earlier); *→ Completed* before assembling → 409 "not assembled yet"; after assembly → QC Passed → Completed; QC Rejected → chip stays RFD
+- [ ] User to verify: Completed → Dispatched → Close WO; Reopen (admin) → Dispatched; Cancel a WO with reserved lines → de-reserve TO toast, issued qty untouched
+- [ ] User to verify: existing WOs show RFM (was MAP) / MIP (was IP) in the list
+
+### CR-159 — WO header trim, due date = SO Expected Shipment, FG Size, single-item BOM fallback (branch `feat/zoho-field-mapping`)
+- [x] Schema: `WorkOrderFG.fgSize` varchar(100) via Catalyst MCP (69851000000277727)
+- [x] `workorder/soFields.js` — due date = Expected Shipment; machining/fitting/"WO Due Date" CFs retired; `USER_OWNED` = priority; test rewritten, passes
+- [x] `workorder/bom.js` — `itemSize`, `selfLine`, `requirementLines` (empty composite → the item itself); selftest passes
+- [x] `routes/workorder.js` — create fetches Size per FG, no project/costs; `GET /:id` lazy Size backfill + `fgs[].size`; PUT whitelist trimmed; `bom/preview` uses `requirementLines`
+- [x] `workorder/grid.js` — `fgSize` on each grid, `shortCount` removed
+- [x] Client — New WO Schedule = read-only due date; header card / Edit modal / print / issue slip / list drop project, machining, fitting, costs; `fgLabel()` in both FG selects; Details group header shows Size
+- [x] `npm run build` passes
+- [x] Deploy to Dev (2026-09-15)
+- [ ] User to verify: WO-0022 → ⋯ Refresh BOM → preview shows one line (the valve itself × 15) → Apply → Item List and Details show it; Reserve works on it
+- [ ] User to verify: New work order → pick an SO → Schedule shows only *Due date* = the SO's Expected Shipment; created WO's *WO Due Date* equals *Expected Shipment*
+- [ ] User to verify: WO header has no Project / Machining / Fitting; ✎ Edit shows Date, Priority, Notes only; Print / PDF has no cost line
+- [ ] User to verify: an FG whose Books item has a *Size* custom field → both FG dropdowns read "Name · Size × Qty"; Details group header shows *Size …* instead of "N lines not in stock"
+
+### CR-158 — MFG batch filter in the batch/serial picker (branch `feat/zoho-field-mapping`)
+- [x] `MaterialsGrid.jsx` — `TrackingPicker`: MFG batch text filter above the item cards; non-matching batch rows hidden, hidden rows keep their typed qty
+- [x] `npm run build` passes
+- [x] Deploy to Dev (2026-09-15)
+- [ ] User to verify: WO → Details → Reserve → Proceed Reserve → type part of an MFG batch in the picker: only matching rows remain, `n/qty selected` still counts hidden rows, Proceed submits them; clear the box → all rows return
+
+### CR-157 — WO Refresh stock scoped to the work order + per-row item refresh (branch `feat/zoho-field-mapping`)
+- [x] `sync.js` — `workingSet(…, woId)` / `reconcileOrg({ woId })`; `routes/workorder.js` — `POST /refresh?woId=`
+- [x] `MaterialsGrid.jsx` — Refresh stock passes `woId`; ⟳ in the In stock cell → `POST /items/:itemId/sync-stock`; both reloads keep typed quantities
+- [x] Data: WO-0017 five Labour service lines removed via the line-remove API (revisions 4–8)
+- [x] `npm run build` passes
+- [x] Deploy to Dev (2026-09-15)
+- [ ] User to verify: WO-0017 → Details → *Refresh stock* only touches this WO's items (Network tab: `/api/wo/refresh?woId=…`); a row's ⟳ next to In stock fires one `sync-stock` call and the In stock figure updates; Item List no longer shows the five Labour lines
+
+### CR-156 — WO page: one header row, one Details toolbar row, no Proceed Purchase (branch `feat/zoho-field-mapping`)
+- [x] `WorkOrderPage.jsx` — ✕ and ⋯ (+ Close/Reopen/Approve) on the WO-number row; header, info card and tab paddings trimmed
+- [x] `MaterialsGrid.jsx` — chips / From→To / search / "everything available" folded into the action row; Proceed Purchase + `requestPurchase()` removed; toolbar and confirm-bar padding 8px
+- [x] `npm run build` passes
+- [x] Left rail row: second line = Customer · Due date (WO date dropped)
+- [x] Header info card: 7-column grid on wide screens (14 fields = two full rows), wraps below ~1200px
+- [x] Details toolbar: chips before the FG select so they sit on the selector's line
+- [x] Toolbar split: row 1 selector · chips · Refresh · ≡; row 2 FG · warehouses · search; bulk-fill button beside Proceed in the confirm bar
+- [x] Confirm bar idle text + sync line removed; move label ("Main → Reserve warehouse") shown there instead of in the toolbar
+- [x] Deploy to Dev (2026-09-15, six passes)
+- [ ] User to verify: WO-0018 — one header line, no gap before Details, chips beside Refresh stock, more grid rows visible; Raise PR → footer *Proceed Raise PR* still raises the PR
+
+### CR-155 — Assemble modal: editable serial prefix + serial preview (branch `feat/zoho-field-mapping`)
+- [x] `workorder/serial.js` — `normalizePrefix`; `serialPrefix` returns `""` instead of throwing; `serial.test.js` extended, passes
+- [x] `workorder/assembly.js` — `checkAssemblable`, `resolvePrefix`, `previewAssembly` (no commit), `assembleFg(…, prefix)`
+- [x] `routes/workorder.js` — `GET /:id/fg/:fgId/assemble/preview`; POST body `prefix`
+- [x] `WoItemsTab.jsx` AssembleModal — prefix field (prefilled), "Will assign …" line, Create gated on a clean preview
+- [x] Deploy to Dev (functions + client, 2026-09-15)
+- [ ] User to verify: WO-0015 → ⚙ Assemble → Prefix `DCOMPO`, line `Will assign DCOMPO2026001`; type `KGV` → `KGV2026001`; type `K-G` → red error, Create disabled; create → toast serials `KGV2026001`, Zoho composite's serial list shows it, `OrgSetting serialSeq = "2026:1"`
+- [ ] User to verify: Zoho-native FG (SKU `D.I - Knife Edge Gate Valve`) → modal opens with Prefix `D`; correct to `KGV`
+
+### CR-154 — Assembly bundle: Zoho auto-numbers Reference# (branch `feat/zoho-field-mapping`)
+- [x] `zoho/inventoryApi.js` `createBundle` — `POST /bundles?ignore_auto_number_generation=true`; on a second 4097 retry without `reference_number`; selftest passes
+- [x] Deploy to Dev (2026-09-15, functions only)
+- [x] WO-0015 (org 743418751) reopened Closed → Completed from the back end for the live assembly run (ActivityLog `wo.reopen` written)
+- [ ] User to verify: ⚙ Assemble on WO-0015 → bundle created, toast `DCOMPO2026001`; Zoho bundle shows Reference# `WO-0015-A1` (flag accepted) or Zoho's own number (fallback path)
+- [ ] Then the CR-150 KGV/BV serial checks
+
+### CR-153 — CRM widget: record writes fire workflow / blueprint / approval (branch `feat/zoho-field-mapping`)
+- [x] `functions/skuapi/widget.html` — `CRM_TRIGGER` const; four `Trigger: []` → `Trigger: CRM_TRIGGER` (Products insert/update, Quotes/Deals subform update, Deal → Create Quote insert)
+- [x] Memory: every Zoho CRM write carries the trigger list (widget `Trigger` / REST body `trigger`)
+- [x] Deploy to Dev (2026-09-15, functions only)
+- [ ] User to verify: add a line to a Quote via the widget and Deal → Create Quote → the quote-time workflow/approval that was failing now fires
+
+### CR-152 — Reserve pass: WO-0019 M.S Yoke, picker MFG columns, sticky header, Books Web Tab, non-composite SO lines (branch `feat/zoho-field-mapping`)
+- [x] `workorder/formulas.js` — H no longer subtracts G (billed PO qty lands in Main = B); selftest updated, passes
+- [x] `routes/workorder.js` — `POST /:id/txn` cancels its draft when `confirm` throws (no more orphan Drafts); WO create seeds a `self` line for non-composite SO items
+- [x] `zoho/inventoryApi.js` — `mfgBatch`/`mfgDate`/`expiry` on the pool, oldest MFG date first; picker pool = source stock only + pool-level `elsewhere`; selftest passes
+- [x] `MaterialsGrid.jsx` — picker columns Batch · MFG batch · MFG date · Available · Take; sticky `th`; `index.css` `.grid-table` clip-path
+- [x] Books Web Tab: `frontend` build copies dist → `functions/skuapi/app/`; `index.js` `frameable` + `express.static('/app')`; cookie `SameSite=None; Partitioned`; `POST /auth/adopt`; LoginPage popup handshake when framed; App.jsx deep-link redirect top-level only
+- [x] `npm run build` passes; deploy to Dev (2026-09-14)
+- [ ] **Manual (Dhiraj):** Zoho Inventory → give the connected user permission on the **Reserve** location (the six failed WO-0020 confirms were Zoho's "no permission for Reserve location")
+- [ ] **Manual (Dhiraj):** Books → Settings → Web Tabs → URL `https://sku-gen-octfis-925638796.development.catalystserverless.com/server/skuapi/app/` (keep the trailing slash)
+- [ ] User to verify: WO-0019 M.S Yoke shows 0 in Head Office because WO-0020 holds 4 (TO-00021) — receive stock or de-reserve on WO-0020, then Reserve works; an item with a billed PO + stock on hand reserves the full needed qty
+- [ ] User to verify: Reserve CF8 KGV Body 50mm → picker shows MFG batch / MFG date, oldest first, no 0-available rows; first open: if MFG columns are all "—", read the raw `/items/batches` keys from the Network tab and fix the spelling in `batchRecordsToPool`
+- [ ] User to verify: long BOM → Details header stays while scrolling; other grids keep rounded corners
+- [ ] User to verify: Web Tab renders the app; "Sign in with Zoho" opens a popup, popup closes, app signed in inside the tab, survives reload; top-level `/app/` login unchanged
+- [ ] User to verify: new WO from an SO with a plain (non-composite) goods line → Details shows that item as its own line (qty = SO qty) → Reserve moves it Main→Reserve
+- [ ] Later: Refresh BOM on a `self`-seeded FG errors "not a composite" — hide the button for `source: self` FGs if it bothers anyone
+
+### CR-151 — Block Completed while material is reserved + "… Completion Date" labels (branch `feat/zoho-field-mapping`)
+- [x] `workorder/reports.js` — `reservedRows` (C > 0); selftest passes
+- [x] `routes/workorder.js` — `POST /:id/status` → `Completed` 409s while any row has reserved > 0; grids loaded once for Complete + Close gates
+- [x] `WorkOrderPage.jsx`, `WorkOrderNewPage.jsx` — labels `Machining Completion Date` / `Fitting Completion Date`; `WoItemsTab.jsx` banner wording
+- [ ] Deploy to Dev (functions + frontend)
+- [ ] User to verify: WO with one line reserved, not issued → `→ Completed` → QC Passed → red toast "1 item is still reserved (…) — issue or de-reserve before completing", status unchanged, no Transfer Order; issue the line → Completed goes through
+- [ ] User to verify: QC Rejected on the same WO → back to InProgress with no reserved error; labels read "… Completion Date" on detail, edit and New WO
+
+### CR-150 — Assembly at Completed + FG serial series `PREFIX+YYYY+NNN` (branch `feat/zoho-field-mapping`)
+- [x] `workorder/serial.js` — `formatSerials`, `advanceSeq`, `serialPrefix` (Valve Type value code), `nextSerials` (OrgSetting `serialSeq`, commit after Zoho); `serial.test.js` passes
+- [x] `workorder/assembly.js` — assemble only at `Completed`, QC bump removed, serials → bundle + `WoAssembly.serialNumbers`, `serialRange` in response/list
+- [x] `zoho/inventoryApi.js` — `finishedProductFields` (explicit serials), composite-endpoint fallback for tracking flags; selftest passes
+- [x] `WoAssembly.serialNumbers` (text 10000, 69851000000277358) added via Catalyst MCP
+- [x] `WoItemsTab.jsx` — Assemble only at Completed; serial range in toast + previous assemblies
+- [x] Deploy to Dev (functions + frontend, 2026-09-14)
+- [ ] User to verify: WO with a KGV composite FG → QC Passed → Completed → ⚙ Assemble appears only now → assemble 2 → toast `KGV2026001–KGV2026002`; Zoho Inventory bundle carries those serials on the finished item; `OrgSetting serialSeq = "2026:2"`
+- [ ] User to verify: second WO with a BV FG → assemble 1 → `BV2026003` (shared counter); assemble on an InProgress WO → 409 "complete the work order before assembling"
+- [ ] Live check (carried from CR-126): Zoho accepts `finished_product_serial_numbers` on the serial+batch-tracked composite; `account_id` not demanded
+
+### CR-149 — Service items never reach a work order (branch `feat/zoho-field-mapping`)
+- [x] `zoho/inventoryApi.js` — `isService()`; `updateCompositeItem` carries the live composite's service rows over on every push (PUT replaces `mapped_items`)
+- [x] `workorder/bom.js` — `linesFromComposite` drops services; selftest passes
+- [x] `routes/workorder.js` — `/so/:soId` sends `productType`; `POST /` skips service SO lines into `problems`; `/items` typeahead hides services
+- [x] `WorkOrderNewPage.jsx` — service SO lines hidden from the FG pick list
+- [x] Deploy to Dev (functions + frontend, 2026-09-14)
+- [ ] User to verify: new WO from the SO whose composite carries "Body Labour 50mm" → Details grid / Item List show goods only; Refresh BOM → Apply (push on) → composite in Zoho still lists the labour row; Items tab search "Labour" → no hit
+- [ ] Existing WOs that already carry the labour line: Refresh BOM → Apply removes it (nothing reserved, so not blocked)
+
+### CR-148 — Batch picker lists every batch with where the stock sits (branch `feat/zoho-field-mapping`)
+- [x] `zoho/inventoryApi.js` — pure `batchRecordsToPool` keeps per-location balances; `listSerialsBatches` keeps zero-at-source batches + `elsewhere`; `createTransferOrder` returns internal picks so txn notes print `111 × 2` again (was `undefined × undefined`); selftest extended, passes
+- [x] `MaterialsGrid.jsx` — picker renders every batch, `N in <warehouse>` under a 0, disabled Take when nothing at source, red header hint; no-batches text only when the item has no batch records at all
+- [x] Deploy to Dev (2026-09-14)
+- [x] Second pass after "same error": live Zoho probe → detail batches use `balance_quantity` (unread → 0 → dropped) and gated off the live call; alias added, batch items always read live records; functions redeployed 2026-09-14
+- [ ] User to verify: WO with CF8 KGV Body 50mm → Reserve → Proceed → popup lists 12 (2), 13 (3) and 11121221 (2) available at Head Office, 111 greyed with "2 in Reserve"; pick 2 → TO created, MaterialTxn note shows the batch × qty
+
+### CR-147 — CRM widget: newline description, Size on the line, Create Quote only + on top (branch `feat/zoho-field-mapping`)
+- [x] `functions/skuapi/widget.html` — `lineDesc()` newline-joins `Caption: Value`; `colVal()` API-name fallback for column ↔ property matching (both `customRow` and `applyParamCols`); Deals hides Push-to-Deal, `Create Quote` is primary; action block moved above the lines list
+- [x] Size root cause (live-verified): `Quoted_Items.Size` mirrors `Products.Size`; line-level writes ignored. `findOrCreateProduct` now writes parameter fields + newline Description onto the Product (create + refresh existing). Deployed to Dev 2026-09-14
+- [x] Quotes button relabelled "Add item to Quote" (static; dynamic "Push N lines" label removed)
+- [ ] Manual (Dhiraj): popup title bar "sku-generator" → rename the widget in CRM console (Setup → Developer Space → Widgets → sku-generator → "Quote Maker"; then Quotes/Deals → Links & Buttons → button label) — same open item as CR-115; not removable from code
+- [x] Deploy to Dev (2026-09-14, functions only)
+- [ ] User to verify: Quote → button reads "Add item to Quote"; push a sized item → Description one line per parameter, SIZE (INCH) subform column filled; Deal → only Create Quote visible, stays on screen with 15+ lines; `/#/estimate?quoteId=…` shows specs as lines + size in SIZE (INCH)
+- [x] Retest (quotes …2218109 / …2218132): Product fields written (Size `1/2" | DN15`, Design, Connection, description verified via API); line `Size` still empty — it is an **associated** subform field (auto-filled from `Products.Size` in the UI only); `applyParamCols` now skips associated columns; estimate parser confirmed the line prints `1/2" DN15` from the description
+- [x] Third retest (quote …2189047): line Size still null with Product Size set → CRM never auto-fills associated subform columns via API. Product-write failures now surfaced as warnings (popup stays open), bare-product fallback on insert
+- [ ] Manual (Dhiraj): CRM Setup → Customization → Modules → Quotes → Quoted Items subform → **Size** → edit → remove the "associate with Products.Size" mapping (plain single-line text). Then push once more: the widget's line write lands and SIZE fills
+- [ ] After that push, read the status line: any "product fields not updated — INVALID_DATA {api_name}" warning names the Products picklist whose options need the catalog value added (Ball Valve item failed silently on 2026-09-14)
+- [ ] Later: delete the unreachable Deals branch of `pushLines()`/`discoverSubforms()` (`ponytail:` note) if the Deal push never returns
 
 ### CR-146 — CRM widget: compact filter rows + value popover (branch `feat/zoho-field-mapping`)
 - [x] `functions/skuapi/widget.html` — filter panel cards (label + inline select) replaced by slim clickable rows (number badge, name, selected value, ✕ to clear); clicking a row opens one shared anchored popover: value list ("— Any —" + options, filter input when >9 options) for List params, free-text input (applied on Enter/close) for Range/Manual params; Esc/outside click closes. State contract unchanged (detached select/input per param, `syncChipsFromPanel` untouched downstream)
@@ -124,10 +510,10 @@ Last updated: 2026-09-12 (CR-146).
 - [x] `PackingList` + `PackingBox` tables via Catalyst MCP (ids in SCHEMA.md ledger)
 - [x] `getInvoice()` in booksApi.js; `routes/packing.js` (`GET /api/packing/doc`, `POST /api/packing/:docKey` — PUT preflights die at the gateway, selftest); index.js `serveWidget()` helper + `GET /packing` + ungated `/api/packing` mount
 - [x] `packing.html` widget: ZFAPPS boot (invoice → salesorder fallback), widget.html auth dance, manual box/pallet rows, packed-vs-ordered summary, Export/Domestic toggle, iframe-srcdoc print
-- [ ] Deploy to Dev
+- [x] Deploy to Dev (2026-09-14)
 - [x] Books has no External-hosting option (unlike CRM) → `books-widget/` zip package: manifest `service: FINANCE`, locations `invoice.details.button` + `salesorder.details.button`, `widget_type: modal` (per zoho/zoho-finance-ai-widget-rules); button name "Print Export" (renamed "Print Packing List" in CR-134)
 - [x] Loader-stub zip failed (dark modal, zero hits on /packing in access logs — Books modal widgets stay hidden until the zip-hosted page itself completes `ZFAPPS.extension.init()`, so a redirect stub never reveals) → zip is now **self-contained**: `app/widget.html` is a build-time copy of `functions/skuapi/packing.html`, which got absolute Catalyst URLs (`CATALYST` const), `APP_ORIGIN` pinned to the Catalyst origin for the auth handshake (App.jsx TRUSTED already allows `.zappsusercontent.*`), and text/plain JSON bodies (CORS-simple, no preflight). Rebuild after widget edits: `cp functions/skuapi/packing.html books-widget/app/widget.html && cd books-widget && zip -rD dist/packinglist.zip plugin-manifest.json app -x "*.DS_Store"`
-- [ ] **Manual:** in Books → Settings → Developer Space → Widgets: delete the old widget, upload `books-widget/dist/packinglist.zip`, hard-reload Books; the packing-list button (now "Print Packing List", CR-134) appears on Invoice + SO detail pages (check the ⋯/More menu)
+- [ ] **Manual:** in Books → Settings → Developer Space → Widgets: delete the old widget, upload `books-widget/dist/packinglist.zip`, hard-reload Books; the packing-list button (now "Print Packing List", CR-134) appears on Invoice + SO detail pages (check the ⋯/More menu) — zip rebuilt again for CR-169 (Add package → empty item row), re-upload needed
 - [ ] Verify live: invoice with linked SO loads lines; save → reopen restores; same plan from the SO page; Export + Domestic prints match the MSUN reference; invoice without SO falls back to `inv:` key
 
 ### CR-130 — Purchasing: "Extra" pill removed + By Item sheet editing (branch `feat/zoho-field-mapping`)
@@ -162,7 +548,7 @@ Last updated: 2026-09-12 (CR-146).
 
 ### CR-126 — Auto assembly from the WO (branch `feat/zoho-field-mapping`)
 - [x] `WoAssembly` table + `WorkOrderFG.assembledQty`/`status` via Catalyst MCP (ids in SCHEMA.md ledger)
-- [x] `zoho/inventoryApi.js` `createBundle` (POST /bundles, doc-verified shape; FIFO serial/batch for components; generated finished-product numbers for tracked composites)
+- [x] `zoho/inventoryApi.js` `createBundle` (POST /bundles, doc-verified shape; FIFO serial/batch for components — explicit picks since CR-176; generated finished-product numbers for tracked composites)
 - [x] `workorder/assembly.js` `assembleFg` (BOM push → bundle → WoAssembly row → FG progress → all-FGs-done ⇒ WO → QualityCheck) + `listAssemblies`
 - [x] `POST /api/wo/:id/fg/:fgId/assemble` behind `wo.action.assemble`; FG payload carries progress + assemblies
 - [x] WoItemsTab: Assembled x/y + Closed chip + ⚙ Assemble modal
@@ -226,7 +612,7 @@ Last updated: 2026-09-12 (CR-146).
 ### CR-117 — WO create: full page at /wo/new (branch `feat/zoho-field-mapping`)
 - [x] `WorkOrderNewPage.jsx` — header + number pill, Sales order / Schedule / Details cards; route `new` in `App.jsx`; list "+ New Work Order" navigates there; CreateModal deleted from `WorkOrderListPage.jsx`
 - [x] Backend: `GET /wo/next-number` preview; `POST /wo` persists `notes`
-- [ ] Deploy to Dev
+- [x] Deploy to Dev (2026-09-14)
 - [ ] Live verify: pill number, SO pick + FG prefill, Days counters, priority segments, notes saved
 
 ### CR-116 — WO create: single-form flow, SO combobox, no project name (branch `feat/zoho-field-mapping`)
@@ -597,7 +983,7 @@ Realizes the Quotes half of CR-012. Full detail in [CHANGES.md](CHANGES.md).
 - [x] T&C last page: `estimateTerms.js` (defaults + localStorage + normalize, self-check `estimateTerms.test.js`) + `EstimateTerms.jsx` (`TermsSheet` printed last, `TermsEditor` behind toolbar "✎ Edit T&C" toggle)
 - [ ] CRM console: Deal button `/app/#/estimate?dealId=${Deal.Id}`, Quote button `/app/#/estimate?quoteId=${Quotes.Quote Id}`
 - [ ] Verify on deploy: deal link → checkbox list → tick 2 → two sheets, page break, no trailing blank page; quote link → direct sheet; template toggle flips all sheets; discount row present/absent; flat fallback on plain-text line; logged-out deep link auto-logs-in and returns to the estimate; cancelled OAuth → login page (no loop); pre-CRM-scope token → Connect CRM prompt
-- [ ] Pin the quote-line description convention with real quotes, then tighten the parser
+- [x] Pin the quote-line description convention — the widget writes one `Caption: Value` per line (CR-147); tighten the parser once real quotes confirm it
 - [x] CR-039: Version pick list functional — Standard / With Total / Export / All Item - Trading; CalcSheet only on With Total; Trading skips grouping (`buildEstimate({ merge: false })`)
 - [x] CR-039: Export-version T&C — export preset shipped (`EXPORT_TERMS`)
 - [x] CR-040: Duties & Taxes added to Export (B); one-time cache reset (`TERMS_VERSION`) so all types show A/B; amount columns centered (`.est-num`)

@@ -4,7 +4,7 @@ import { DEFAULT_TERMS } from './estimateTerms.js';
 // Terms & Conditions last page for the estimate. Editing happens in place on
 // the sheet: when `editing`, cells become contentEditable (uncontrolled, saved
 // on blur) and row add/remove controls appear. Data model, defaults, and
-// localStorage load/save live in estimateTerms.js.
+// normalize live in estimateTerms.js; the org-wide copy is saved server-side.
 
 const letter = (i) => String.fromCharCode(65 + i); // A, B, C…
 
@@ -96,8 +96,8 @@ function termStyle(label) {
 
 // Uncontrolled editable region: state updates only on blur, so React never
 // re-renders mid-typing and the caret stays put. Values are HTML fragments so
-// bold/color survive; ponytail: worst case is self-XSS — terms only round-trip
-// through this browser's localStorage, never the server.
+// bold/color survive. Saved templates are shared org-wide, so everything loaded
+// from the server passes sanitizeHtml (estimateTerms.js) before it gets here.
 function Ed({ editing, value, onSave, ...rest }) {
   return (
     <span {...rest} contentEditable={editing || undefined}
@@ -126,7 +126,7 @@ function FormatBar() {
   );
 }
 
-export function TermsSheet({ terms, editing, onChange, defaults = DEFAULT_TERMS }) {
+export function TermsSheet({ terms, editing, onChange, defaults = DEFAULT_TERMS, hint }) {
   const patch = (p) => onChange({ ...terms, ...p });
   const setTerm = (i, k, v) => patch({ terms: terms.terms.map((t, j) => (j === i ? { ...t, [k]: v } : t)) });
   const setBank = (i, j, v) => patch({ bank: terms.bank.map((r, x) => (x === i ? r.map((c, y) => (y === j ? v : c)) : r)) });
@@ -135,10 +135,10 @@ export function TermsSheet({ terms, editing, onChange, defaults = DEFAULT_TERMS 
     <div className={`est-sheet${editing ? ' est-editing' : ''}`} id="est-terms-sheet">
       {editing && (
         <div className="est-noprint est-edit-bar">
-          <span className="est-lbl">Editing Terms &amp; Conditions (this browser only) — select text, then:</span>
+          <span className="est-lbl">Editing Terms &amp; Conditions{hint ? ` (${hint})` : ''} — select text, then:</span>
           <FormatBar />
           <span className="est-spacer" />
-          <button onClick={() => onChange(defaults)}>Reset to default</button>
+          <button onClick={() => onChange(defaults)}>Reset</button>
         </div>
       )}
       <HeadBand />

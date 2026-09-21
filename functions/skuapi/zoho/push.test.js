@@ -12,9 +12,10 @@ booksApi.apiRequest = async (catalyst, method, path, body, service) => {
   return { composite_item: { composite_item_id: "77" } };
 };
 booksApi.getStockAccountId = async () => "acc-fg";
+booksApi.findItemByName = async () => null; // no legacy RM1/RM2 in this fake org
 
 const { createCompositeItem } = require("./inventoryApi");
-const { buildAssociatedItems, mergeMappedLines } = require("./push");
+const { buildAssociatedItems, mergeMappedLines, valueItemSku, requireBomLines } = require("./push");
 
 // Stub catalyst: __orgId for orgClause, canned ZCQL rows keyed by table name.
 const catalystWith = (rowsByTable) => ({
@@ -110,5 +111,23 @@ const catalystWith = (rowsByTable) => ({
   assert.strictEqual(same.changed, false);
   assert.deepStrictEqual(same.lines.find((l) => l.rmItemId === "100").perUnitQty, 3);
 
-  console.log("push CR-029/CR-030 composite payload + associated-items + merge: ok");
+  // --- CR-163: value items carry a name-derived SKU (Books "SKU mandatory" orgs, code 2112) ---
+  assert.strictEqual(valueItemSku("Handloom"), "HANDLOOM");
+  assert.strictEqual(valueItemSku(" Cotton : Silk "), "COTTON-SILK");
+
+  // --- CR-184: no more RM1/RM2 padding — a short BOM fails loudly (Zoho 2056); ≥2 lines pass through ---
+  const two = [{ rmItemId: "a", perUnitQty: 1 }, { rmItemId: "b", perUnitQty: 1 }];
+  assert.strictEqual(requireBomLines(two), two);
+  assert.throws(() => requireBomLines([{ rmItemId: "h", perUnitQty: 1 }]), /at least 2 raw-material lines \(has 1\)/);
+  assert.throws(() => requireBomLines([]), /has 0/);
+  // A legacy placeholder line is dropped on re-push once it is in the pool (syncMappedItems adds it).
+  const legacy = mergeMappedLines(
+    [{ item_id: "r1", quantity: 1 }, { item_id: "r2", quantity: 1 }, { item_id: "900", quantity: 2 }],
+    [{ rmItemId: "101", perUnitQty: 1 }, { rmItemId: "102", perUnitQty: 1 }],
+    new Set(["101", "102", "r1", "r2"]),
+  );
+  assert.deepStrictEqual(legacy.lines.map((l) => l.rmItemId).sort(), ["101", "102", "900"], "placeholders out, manual line 900 kept");
+  assert.strictEqual(legacy.changed, true);
+
+  console.log("push CR-029/CR-030 composite payload + associated-items + merge + CR-163 value SKU + CR-184 BOM guard: ok");
 })();

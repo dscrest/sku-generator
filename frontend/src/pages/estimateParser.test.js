@@ -162,6 +162,10 @@ assert.strictEqual(est.header.to.contact, "Thulaseedharan T K");
 assert.strictEqual(est.header.to.address, "");
 assert.strictEqual(est.header.to.gstin, "");
 
+// 7b. "Offer Prepared By" = Quote Created_By user name; blank when absent.
+assert.strictEqual(buildEstimate({ ...quote, Created_By: { name: "Ankush Solanki", id: "1" } }).header.preparedBy, "Ankush Solanki");
+assert.strictEqual(buildEstimate({ ...quote, Created_By: null }).header.preparedBy, "");
+
 // 8. Empty / null description → flat, not a crash.
 assert.strictEqual(parseLineDescription(""), null);
 assert.strictEqual(parseLineDescription(null), null);

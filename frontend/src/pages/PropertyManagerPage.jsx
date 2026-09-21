@@ -22,7 +22,7 @@ const selectStyle = {
   backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center', paddingRight: 30,
 };
 
-const emptyProp = { name: '', caption: '', unit: '', valueType: 'Manual', rangeMin: '', rangeMax: '', required: false, includeInName: false, zohoCfApiName: '', clubKey: '', createValuesAsItems: false, showInWidget: false };
+const emptyProp = { name: '', caption: '', unit: '', valueType: 'Manual', rangeMin: '', rangeMax: '', required: false, includeInName: false, zohoCfApiName: '', clubKey: '', createValuesAsItems: false, showInWidget: false, sizingRole: '' };
 const emptyVal = { displayValue: '', name: '', sku: '', description: '', createAsItem: false, isDefault: false };
 
 // Single-club combobox: shows the current club as a removable chip, filters
@@ -108,6 +108,18 @@ function PropForm({ form, setForm, onSubmit, onCancel, label, clubKeys = [] }) {
         <label style={labelStyle}>Zoho Books custom field (api_name)</label>
         <input style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} value={form.zohoCfApiName} onChange={e => setForm(f => ({ ...f, zohoCfApiName: e.target.value }))} placeholder="cf_brand — leave blank to skip sync" onFocus={fi} onBlur={fo} />
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>This property's value syncs into the matching Books item custom field, and is read back on import.</div>
+      </div>
+      <div>
+        <label style={labelStyle}>Sizing role (Product Configurator)</label>
+        <select style={{ ...inputStyle, background: 'var(--bg-card)' }} value={form.sizingRole || ''} onChange={e => setForm(f => ({ ...f, sizingRole: e.target.value }))}>
+          <option value="">None — ordinary question</option>
+          <option value="capacity">Capacity (TPH) — sizing input</option>
+          <option value="density">Bulk density (kg/ltr) — sizing input</option>
+          <option value="speed">Speed (RPM) — sizing input</option>
+          <option value="group">Type / group — filters the sizing models</option>
+          <option value="series">Series — filled by the picked model</option>
+          <option value="model">Model — filled by the picked model</option>
+        </select>
       </div>
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
         <input type="checkbox" checked={!!form.required} onChange={e => setForm(f => ({ ...f, required: e.target.checked }))} />
@@ -221,7 +233,7 @@ export default function PropertyManagerPage() {
 
   function openEditProp(prop) {
     setSelectedProp(prop);
-    setPropForm({ name: prop.name, caption: prop.caption, unit: prop.unit || '', valueType: prop.valueType, rangeMin: prop.rangeMin ?? '', rangeMax: prop.rangeMax ?? '', required: !!prop.required, includeInName: !!prop.includeInName, zohoCfApiName: prop.zohoCfApiName || '', clubKey: prop.clubKey || '', createValuesAsItems: !!prop.createValuesAsItems, showInWidget: !!prop.showInWidget });
+    setPropForm({ name: prop.name, caption: prop.caption, unit: prop.unit || '', valueType: prop.valueType, rangeMin: prop.rangeMin ?? '', rangeMax: prop.rangeMax ?? '', required: !!prop.required, includeInName: !!prop.includeInName, zohoCfApiName: prop.zohoCfApiName || '', clubKey: prop.clubKey || '', createValuesAsItems: !!prop.createValuesAsItems, showInWidget: !!prop.showInWidget, sizingRole: prop.sizingRole || '' });
     setShowEditProp(true);
   }
 

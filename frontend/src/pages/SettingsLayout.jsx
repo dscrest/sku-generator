@@ -9,6 +9,7 @@ import IndustriesPage from './IndustriesPage.jsx';
 import PropertiesPage from './PropertiesPage.jsx';
 import PropertyManagerPage from './PropertyManagerPage.jsx';
 import WorkOrderSettingsPage from './WorkOrderSettingsPage.jsx';
+import EstimateTermsSettingsPage from './EstimateTermsSettingsPage.jsx';
 
 // Settings hub (Zoho-style): left sidebar of sections + content pane.
 // Sections filter by the same addon/perm rules as the main Sidebar; card
@@ -34,6 +35,11 @@ const SECTIONS = [
   {
     to: '/settings/wo', label: 'Work Order', addon: 'work-order', perm: 'wo.settings',
     icon: <><path d="M20 7h-3V4a1 1 0 00-1-1H8a1 1 0 00-1 1v3H4a1 1 0 00-1 1v11a1 1 0 001 1h16a1 1 0 001-1V8a1 1 0 00-1-1z" /><path d="M9 7V5h6v2" /><path d="M8 13h8M8 17h5" /></>,
+  },
+  {
+    // Quote-print T&C templates (CR-192). No addon: the estimate page has none either.
+    to: '/settings/quote-terms', label: 'Quote T&C', perm: 'estimate',
+    icon: <><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><path d="M14 2v6h6M8 13h8M8 17h6" /></>,
   },
 ];
 
@@ -153,6 +159,7 @@ export default function SettingsLayout({ user, addons, hasPerm, onSwitchOrg }) {
           <Route path="sku/industries/:id/properties" element={gate('/settings/sku', <PropertyManagerPage />)} />
           <Route path="sku/properties" element={gate('/settings/sku', <PropertiesPage />)} />
           <Route path="wo" element={gate('/settings/wo', <WorkOrderSettingsPage />)} />
+          <Route path="quote-terms" element={gate('/settings/quote-terms', <EstimateTermsSettingsPage />)} />
           <Route path="*" element={<Navigate to="." replace />} />
         </Routes>
       </div>

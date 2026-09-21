@@ -13,6 +13,7 @@ const NUM_COLS = new Set([
   // Recipe Engine (CR-104)
   "qty", "sequence", "rate", "castWeight", "version", "recipeVersion",
   "marginPct", "discountPct", "gstPct", "unitCost", "unitPrice", "orderValue",
+  "capacity", // SizingModel (CR-181)
 ]);
 // Columns that must surface as JS booleans (Data Store may hand them back as "true"/"false").
 const BOOL_COLS = new Set([

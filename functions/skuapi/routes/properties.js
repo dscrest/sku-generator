@@ -48,7 +48,7 @@ router.get("/properties", async (req, res) => {
 });
 
 router.post("/properties", async (req, res) => {
-  const { name, caption, unit, valueType, skuPosition, industryId, rangeMin, rangeMax, required, zohoCfApiName, activeInSku, includeInName, clubKey, createValuesAsItems, showInWidget } = req.body;
+  const { name, caption, unit, valueType, skuPosition, industryId, rangeMin, rangeMax, required, zohoCfApiName, activeInSku, includeInName, clubKey, createValuesAsItems, showInWidget, sizingRole } = req.body;
   if (!name || !caption || !valueType || skuPosition === undefined || !industryId) {
     return res.status(400).json({ error: "name, caption, valueType, skuPosition, industryId are required" });
   }
@@ -72,6 +72,7 @@ router.post("/properties", async (req, res) => {
       clubKey: clubKey || null, // props sharing this club concatenate codes with no separator
       createValuesAsItems: createValuesAsItems ? "true" : "false", // gate: this property's values sync to Books as items
       showInWidget: showInWidget ? "true" : "false", // gate: shows as a filter in the CRM quote widget
+      sizingRole: sizingRole || null, // configurator sizing input/output: capacity|density|speed|group|series|model (CR-181)
       orgId: req.orgId,
     });
     res.status(201).json(out(row));
@@ -84,7 +85,7 @@ router.put("/properties/:id", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
   if (!(await ownsRow(req.catalyst, TABLE, id))) return res.status(404).json({ error: "Not found" });
-  const { name, caption, unit, valueType, skuPosition, rangeMin, rangeMax, required, zohoCfApiName, activeInSku, includeInName, clubKey, createValuesAsItems, showInWidget } = req.body;
+  const { name, caption, unit, valueType, skuPosition, rangeMin, rangeMax, required, zohoCfApiName, activeInSku, includeInName, clubKey, createValuesAsItems, showInWidget, sizingRole } = req.body;
   const data = { ROWID: id };
   if (name) data.name = name;
   if (caption) data.caption = caption;
@@ -100,6 +101,7 @@ router.put("/properties/:id", async (req, res) => {
   if (clubKey !== undefined) data.clubKey = clubKey || null; // empty string clears the club (un-club)
   if (createValuesAsItems !== undefined) data.createValuesAsItems = createValuesAsItems ? "true" : "false";
   if (showInWidget !== undefined) data.showInWidget = showInWidget ? "true" : "false";
+  if (sizingRole !== undefined) data.sizingRole = sizingRole || null;
   try {
     const row = await req.catalyst.datastore().table(TABLE).updateRow(data);
     // Turning the gate ON backfills existing values into Books (best-effort,

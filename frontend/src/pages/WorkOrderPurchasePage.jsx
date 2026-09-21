@@ -260,6 +260,7 @@ export default function WorkOrderPurchasePage() {
           onChange={e => setQuery(e.target.value)}
           placeholder={view === 'By Item' ? 'Search item, WO, vendor…' : view === 'Requests' ? 'Search PR, WO, customer…' : 'Search PO, vendor, WO…'}
         />
+        <button onClick={() => { loadWos(); loadLists(); }} title="Refresh from Zoho Books" style={btn}>⟳</button>
         <ColumnChooser chooser={chooser} />
       </div>
 

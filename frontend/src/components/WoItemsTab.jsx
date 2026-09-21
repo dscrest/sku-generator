@@ -5,7 +5,7 @@ import Modal, { ModalFooter, ModalBtn } from './Modal.jsx';
 import RowMenu from './RowMenu.jsx';
 import GridFooter, { usePager } from './GridFooter.jsx';
 import { Empty, Banner } from './MaterialsGrid.jsx';
-import { select, btn, can, StatusChip } from './woCommon.jsx';
+import { select, btn, StatusChip, fgLabel } from './woCommon.jsx';
 import DataTable, { useGridColumns, ColumnChooser } from './DataTable.jsx';
 
 /**
@@ -17,7 +17,7 @@ import DataTable, { useGridColumns, ColumnChooser } from './DataTable.jsx';
  * read-only and leftover stock is returned automatically.
  */
 
-const LOCKED = ['Completed', 'Closed', 'Cancelled'];
+const LOCKED = ['Completed', 'Dispatched', 'Closed', 'Cancelled'];
 
 // Columns need the locked flag and the modal opener, so a builder, not a const.
 const buildColumns = (locked, setModal) => [
@@ -46,11 +46,10 @@ const buildColumns = (locked, setModal) => [
   },
 ];
 
-export default function WoItemsTab({ workOrderId, fgs, status, onChanged, user }) {
+export default function WoItemsTab({ workOrderId, fgs, status, onChanged }) {
   const [fgId, setFgId] = useState(fgs[0]?.id || null);
   const [data, setData] = useState(null);
   const [modal, setModal] = useState(null); // { mode: 'add' | 'replace' | 'remove', line? }
-  const [assembling, setAssembling] = useState(null); // fg awaiting a quantity (CR-126)
   const locked = LOCKED.includes(status);
   const fg = fgs.find(f => String(f.id) === String(fgId)) || fgs[0];
 
@@ -81,14 +80,14 @@ export default function WoItemsTab({ workOrderId, fgs, status, onChanged, user }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       {locked && (
-        <Banner tone="info">Items are locked once the work order is completed — leftover material was returned to the Main warehouse.</Banner>
+        <Banner tone="info">Items are locked once the work order is completed — any over-issued material was returned to the Main warehouse.</Banner>
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', flexWrap: 'wrap' }}>
         <select value={fgId || ''} onChange={e => setFgId(e.target.value)} style={select}>
-          {fgs.map(f => <option key={f.id} value={f.id}>{f.name} × {f.qty}</option>)}
+          {fgs.map(f => <option key={f.id} value={f.id}>{fgLabel(f)}</option>)}
         </select>
         <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>BOM revision {data?.revision ?? '…'}</span>
-        {/* Assembly progress (CR-126) */}
+        {/* Assembly progress (CR-126); assembling itself lives on Details → Assembly (CR-172) */}
         {fg && (
           <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             · Assembled {fg.assembledQty || 0}/{fg.qty}
@@ -96,9 +95,6 @@ export default function WoItemsTab({ workOrderId, fgs, status, onChanged, user }
           </span>
         )}
         <div style={{ flex: 1 }} />
-        {fg && fg.status !== 'Closed' && status !== 'Cancelled' && can(user, 'wo.action.assemble') && (
-          <button onClick={() => setAssembling(fg)} style={btn}>⚙ Assemble</button>
-        )}
         <ColumnChooser chooser={chooser} />
         {!locked && <button onClick={() => setModal({ mode: 'add' })} style={btn}>＋ Add item</button>}
       </div>
@@ -135,83 +131,7 @@ export default function WoItemsTab({ workOrderId, fgs, status, onChanged, user }
           onDone={done}
         />
       )}
-      {assembling && (
-        <AssembleModal
-          workOrderId={workOrderId}
-          fg={assembling}
-          onClose={() => setAssembling(null)}
-          onDone={msg => { setAssembling(null); toast.success(msg, { duration: 7000 }); onChanged?.(); }}
-        />
-      )}
     </div>
-  );
-}
-
-// ---- assembly (CR-126) ------------------------------------------------------
-// One Zoho bundle per confirm: raw materials leave the Issue warehouse, the
-// finished good's stock lands in Main. Fully assembled FG → Closed; all FGs
-// assembled → the WO moves to QualityCheck for the manual QC + Close.
-function AssembleModal({ workOrderId, fg, onClose, onDone }) {
-  const remaining = (fg.qty || 0) - (fg.assembledQty || 0);
-  const [qty, setQty] = useState(String(remaining));
-  const [busy, setBusy] = useState(false);
-  const ok = Number(qty) > 0 && Number(qty) <= remaining;
-
-  async function submit() {
-    if (!ok || busy) return;
-    setBusy(true);
-    try {
-      const { data } = await axios.post(`/api/wo/${workOrderId}/fg/${fg.id}/assemble`, { qty: Number(qty) });
-      onDone(
-        `Assembly ${data.bundleNumber} created — ${data.assembledQty}/${fg.qty} assembled`
-        + (data.woStatus === 'QualityCheck' ? ' · work order moved to Quality Check' : ''),
-      );
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Could not create the assembly', { duration: 8000 });
-    } finally { setBusy(false); }
-  }
-
-  return (
-    <Modal title={`Assemble ${fg.name}`} onClose={onClose} onSubmit={submit} width={460}>
-      <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-        Raw materials are consumed from the <b>Issue warehouse</b> and {fg.name} stock is created in the
-        <b> Main warehouse</b> via a Zoho Inventory assembly. {fg.assembledQty || 0} of {fg.qty} already assembled.
-      </div>
-      <div>
-        <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 4, display: 'block' }}>
-          Quantity to assemble (up to {remaining})
-        </label>
-        <input
-          type="number" min="1" max={remaining} step="1" autoFocus
-          value={qty} onChange={e => setQty(e.target.value)}
-          style={{
-            width: 120, padding: '7px 10px', fontSize: 14, textAlign: 'right', fontFamily: 'var(--font-mono)',
-            border: `1px solid ${ok || qty === '' ? 'var(--border)' : '#dc2626'}`, borderRadius: 'var(--radius-md)',
-            background: 'var(--bg-card)',
-          }}
-        />
-      </div>
-      {(fg.assemblies || []).length > 0 && (
-        <div style={{ fontSize: 12 }}>
-          <b style={{ color: 'var(--text-secondary)' }}>Previous assemblies</b>
-          <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {fg.assemblies.map(a => (
-              <div key={a.id} style={{ display: 'flex', gap: 10, color: 'var(--text-muted)' }}>
-                <span style={{ fontFamily: 'var(--font-mono)' }}>{a.bundleNumber || '—'}</span>
-                <span>× {a.qty}</span>
-                <span>{a.createdAt}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      <ModalFooter>
-        <ModalBtn onClick={onClose}>Cancel</ModalBtn>
-        <ModalBtn variant="primary" disabled={!ok || busy} onClick={submit}>
-          {busy ? 'Assembling…' : 'Create assembly'}
-        </ModalBtn>
-      </ModalFooter>
-    </Modal>
   );
 }
 

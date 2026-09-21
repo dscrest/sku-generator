@@ -10,6 +10,10 @@ const CF_PREFIX = /^cf\./i;
 export const normHeader = (h) =>
   String(h || '').replace(CF_SUFFIX, '').replace(CF_PREFIX, '').trim().toLowerCase();
 
+// Books exports name some columns differently from the field they feed:
+// the item's category arrives as "Category Name", not a "Category" custom field.
+const ALIASES = { category: ['category name'] };
+
 // booksFields → matching CSV header (case/CF-suffix-insensitive), '' when none.
 export function autoMap(booksFields, csvHeaders) {
   const byNorm = new Map();
@@ -18,7 +22,10 @@ export function autoMap(booksFields, csvHeaders) {
     if (n && !byNorm.has(n)) byNorm.set(n, h);
   }
   const mapping = {};
-  for (const f of booksFields) mapping[f] = byNorm.get(normHeader(f)) || '';
+  for (const f of booksFields) {
+    const n = normHeader(f);
+    mapping[f] = [n, ...(ALIASES[n] || [])].map((k) => byNorm.get(k)).find(Boolean) || '';
+  }
   return mapping;
 }
 

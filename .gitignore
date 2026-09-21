@@ -31,6 +31,8 @@ backend/node_modules/.prisma/client/query_engine-windows.dll.node.tmp*
 
 # Catalyst build artifacts
 .build/
+# SPA build copied into the function so it can be served frameable (Books web tab)
+functions/skuapi/app/
 catalyst-debug.log
 
 # Catalyst function config holds secrets (ZOHO_CLIENT_SECRET) — keep local only.

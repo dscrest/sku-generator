@@ -134,4 +134,4 @@ async function importFromBooks(catalyst, industryId) {
   return report;
 }
 
-module.exports = { importFromBooks };
+module.exports = { importFromBooks, autoCode };
