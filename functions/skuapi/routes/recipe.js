@@ -13,6 +13,7 @@ const { nextNumber, byOrgAll } = require("../workorder/store");
 const { optionCost, computeQuote, bomLines } = require("../recipe/calc");
 const { MATERIALS, DEMO_RECIPE, DEFAULT_COST_ELEMENTS, SIZING_MODELS, RAV_QUESTIONS } = require("../recipe/seedData");
 const { selectModels } = require("../recipe/sizing");
+const { matchComponents } = require("../recipe/componentMap");
 const { searchItems } = require("../zoho/booksApi");
 const { listCompositeItems, createCompositeItem, updateCompositeItem } = require("../zoho/inventoryApi");
 const bom = require("../workorder/bom");
@@ -770,6 +771,102 @@ router.delete("/sizing-models/:id", wrap(async (req, res) => {
   if (!idOk(id) || !(await ownsRow(req.catalyst, "SizingModel", id))) return bad(res, 404, "Not found");
   await req.catalyst.datastore().table("SizingModel").deleteRow(id);
   res.status(204).end();
+}));
+
+// ---------- component map (Product Configurator: answers -> component items) ----------
+
+// conditions: [{propertyId, valueId}], AND-ed. Returns the JSON string, or null when invalid.
+function conditionsJson(conditions) {
+  if (conditions === undefined) return "[]";
+  if (!Array.isArray(conditions) || !conditions.every((c) => c && idOk(c.propertyId) && idOk(c.valueId))) return null;
+  const json = JSON.stringify(conditions.map((c) => ({ propertyId: String(c.propertyId), valueId: String(c.valueId) })));
+  return json.length > 9500 ? null : json; // text column silently caps at 10000
+}
+
+// Shared by POST and PUT: validates the fields present in `b`, returns the row data or an error string.
+async function componentMapData(req, b, partial) {
+  const data = {};
+  if (!partial || b.industryId !== undefined) {
+    if (!idOk(b.industryId) || !(await ownsRow(req.catalyst, "Industry", b.industryId))) return "Valid industryId is required";
+    data.industryId = String(b.industryId);
+  }
+  if (!partial || b.skuItemId !== undefined) {
+    if (!idOk(b.skuItemId) || !(await ownsRow(req.catalyst, "SKUItem", b.skuItemId))) return "Valid skuItemId is required";
+    data.skuItemId = String(b.skuItemId);
+  }
+  if (!partial || b.component !== undefined) {
+    if (!String(b.component || "").trim()) return "component is required";
+    data.component = String(b.component).trim().slice(0, 255);
+  }
+  if (!partial || b.conditions !== undefined) {
+    const json = conditionsJson(b.conditions);
+    if (json === null) return "conditions must be a list of {propertyId, valueId}";
+    data.conditionsJson = json;
+  }
+  if (b.qtyPropertyId !== undefined) {
+    if (b.qtyPropertyId && !idOk(b.qtyPropertyId)) return "Invalid qtyPropertyId";
+    data.qtyPropertyId = b.qtyPropertyId ? String(b.qtyPropertyId) : "";
+  }
+  if (!partial || b.qty !== undefined) {
+    const qty = b.qty === undefined || b.qty === "" ? 1 : Number(b.qty);
+    if (!(qty > 0)) return "qty must be above zero";
+    data.qty = qty;
+  }
+  if (b.required !== undefined) data.required = b.required === true || b.required === "true" ? "true" : "false";
+  if (!partial || b.status !== undefined) data.status = b.status || "Active";
+  return data;
+}
+
+const mapOut = (r) => { const o = out(r); return { ...o, conditions: safeList(o.conditionsJson) }; };
+function safeList(s) {
+  try { const v = JSON.parse(s || "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+
+router.get("/component-map", wrap(async (req, res) => {
+  const rows = (await byOrgAll(req.catalyst, req.orgId, "ComponentMap")).map(mapOut);
+  res.json(rows.sort((a, b) => String(a.component).localeCompare(String(b.component)) || a.conditions.length - b.conditions.length));
+}));
+
+router.post("/component-map", wrap(async (req, res) => {
+  const data = await componentMapData(req, req.body || {}, false);
+  if (typeof data === "string") return bad(res, 400, data);
+  res.status(201).json(mapOut(await req.catalyst.datastore().table("ComponentMap").insertRow({ ...data, orgId: req.orgId })));
+}));
+
+router.put("/component-map/:id", wrap(async (req, res) => {
+  const id = req.params.id;
+  if (!idOk(id) || !(await ownsRow(req.catalyst, "ComponentMap", id))) return bad(res, 404, "Not found");
+  const data = await componentMapData(req, req.body || {}, true);
+  if (typeof data === "string") return bad(res, 400, data);
+  res.json(mapOut(await req.catalyst.datastore().table("ComponentMap").updateRow({ ROWID: id, ...data })));
+}));
+
+router.delete("/component-map/:id", wrap(async (req, res) => {
+  const id = req.params.id;
+  if (!idOk(id) || !(await ownsRow(req.catalyst, "ComponentMap", id))) return bad(res, 404, "Not found");
+  await req.catalyst.datastore().table("ComponentMap").deleteRow(id);
+  res.status(204).end();
+}));
+
+// Answers -> component items for the widget. One request, one SKUItem read.
+router.post("/component-map/resolve", wrap(async (req, res) => {
+  const { industryId, selectedValues } = req.body || {};
+  if (!idOk(industryId)) return bad(res, 400, "Valid industryId is required");
+  const rows = (await byOrgAll(req.catalyst, req.orgId, "ComponentMap", `industryId = ${zStr(industryId)}`)).map(out);
+  const { lines, missing } = matchComponents(rows, selectedValues || {});
+  const ids = [...new Set(lines.map((l) => l.skuItemId))].filter(idOk);
+  const items = ids.length
+    ? rowList(await req.catalyst.zcql().executeZCQLQuery(
+      `SELECT ROWID, sku, name, zohoItemId FROM SKUItem WHERE ROWID IN (${ids.join(",")}) AND ${orgClause(req.catalyst)}`)).map(out)
+    : [];
+  const byId = new Map(items.map((it) => [String(it.id), it]));
+  res.json({
+    lines: lines.map((l) => {
+      const it = byId.get(l.skuItemId);
+      return { ...l, sku: it ? it.sku : null, name: it ? it.name : null, inBooks: Boolean(it && it.zohoItemId) };
+    }),
+    missing,
+  });
 }));
 
 // Duty -> suitable models (recipe/sizing.js). Each option also carries the

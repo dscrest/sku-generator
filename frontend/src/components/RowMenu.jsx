@@ -5,7 +5,7 @@ import { useState, useEffect, useRef } from 'react';
 // action is optional. Replaces RowEditButton + RowDeleteButton on record grids.
 // Menu is position:fixed so it never clips inside the grid's scroll container;
 // it closes on any outside mousedown or scroll.
-export default function RowMenu({ onEdit, onDelete, editLabel = 'Edit', deleteLabel = 'Delete' }) {
+export default function RowMenu({ onEdit, onDuplicate, onDelete, editLabel = 'Edit', deleteLabel = 'Delete' }) {
   const [pos, setPos] = useState(null); // null = closed
   const ref = useRef(null);
 
@@ -66,6 +66,18 @@ export default function RowMenu({ onEdit, onDelete, editLabel = 'Edit', deleteLa
                 <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
               </svg>
               {editLabel}
+            </button>
+          )}
+          {onDuplicate && (
+            <button style={itemStyle}
+              onClick={e => { e.stopPropagation(); setPos(null); onDuplicate(); }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+              </svg>
+              Duplicate
             </button>
           )}
           {onDelete && (

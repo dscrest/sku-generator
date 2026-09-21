@@ -28,6 +28,7 @@ const RecipeBuilderPage = lazy(() => import('./pages/RecipeBuilderPage.jsx'));
 const RecipeMaterialsPage = lazy(() => import('./pages/RecipeMaterialsPage.jsx'));
 const RecipeCostMasterPage = lazy(() => import('./pages/RecipeCostMasterPage.jsx'));
 const RecipeSizingModelsPage = lazy(() => import('./pages/RecipeSizingModelsPage.jsx'));
+const RecipeComponentMapPage = lazy(() => import('./pages/RecipeComponentMapPage.jsx'));
 // Settings hub: one chunk holding all settings pages (see SettingsLayout.jsx).
 const SettingsLayout = lazy(() => import('./pages/SettingsLayout.jsx'));
 
@@ -250,6 +251,7 @@ const NAV_LINKS = [
       { to: '/recipe/materials', label: 'Materials', perm: 'recipe.materials' },
       { to: '/recipe/costs', label: 'Cost Master', perm: 'recipe.costs' },
       { to: '/recipe/sizing', label: 'Sizing Models', perm: 'recipe.sizing' },
+      { to: '/recipe/component-map', label: 'Component Map', perm: 'recipe.sizing' },
       { to: '/recipe/configure', label: 'Configure & Quote', perm: 'recipe.configure' },
       { to: '/recipe/quotations', label: 'Quotations', perm: 'recipe.quotations' },
     ] },
@@ -325,6 +327,7 @@ function RecipeLayout({ hasPerm }) {
         <Route path="materials" element={g('recipe.materials', <RecipeMaterialsPage />)} />
         <Route path="costs" element={g('recipe.costs', <RecipeCostMasterPage />)} />
         <Route path="sizing" element={g('recipe.sizing', <RecipeSizingModelsPage />)} />
+        <Route path="component-map" element={g('recipe.sizing', <RecipeComponentMapPage />)} />
         <Route path="*" element={<Navigate to="recipes" replace />} />
       </Routes>
     </div>

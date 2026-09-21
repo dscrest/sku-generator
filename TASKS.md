@@ -97,6 +97,21 @@ Last updated: 2026-09-21 (CR-192).
 - [x] Deployed to Dev (2026-09-18)
 - [ ] User verify: SKU Settings → untick → Save → CRM widget opens with Create item unticked; tick it for one line → that item is created
 
+### CR-194 — Product Configurator: component items from the answers (Component Map) (branch `feat/zoho-field-mapping`)
+- [x] Schema via Catalyst MCP (Dev): `ComponentMap` table
+- [x] `recipe/componentMap.js` — `matchComponents` (most-specific row wins, qty from answer, `missing`) + `--selftest`
+- [x] `routes/recipe.js` — `/component-map` CRUD + `POST /component-map/resolve`; `perms.js` route map
+- [x] `zoho/push.js` — component lines in the composite BOM, fail loudly on missing / not-in-Books, mapped items in the re-push pool
+- [x] App: **Component Map** grid (`/recipe/component-map`), `RowMenu` Duplicate
+- [x] `configurator.html` — component list under the SKU (show only; `widget.html` untouched)
+- [x] Checked: `componentMap.js` / `sizing.js` / `calc.js` / `perms.js` self-tests, `push.test.js`, `npm run build`
+- [ ] Deploy to Dev (`catalyst deploy`)
+- [ ] API check on Dev: generic + specific row → specific wins; flange row with qty-from-answer; required component with no row → `missing`
+- [ ] Ricon: import component items from Books into SKU Items, fill the Component Map (body casting / rotor / motor / gearbox / accessories / flanges)
+- [ ] User verify in CRM: answer all → component list under the SKU, changes when MOC flips CI → WCB; Add → quote has one valve line
+- [ ] User verify: Push ON for a new valve → Books composite BOM = mapped components with qty; a manual BOM line survives a re-push; component not in Books → clear error, quote line still added
+- [ ] Later, if the map runs to hundreds of rows: Excel import of map rows
+
 ### CR-181 — Product Configurator: CRM widget step 1 — questions + RAV sizing + SKU/item on demand (branch `feat/zoho-field-mapping`)
 - [x] `recipe/sizing.js` — `selectModels` (Req. Cap, next size up per series, ties, `tooBig`, required speed) + `--selftest`
 - [x] Schema via Catalyst MCP (Dev): `SizingModel` table, `Property.sizingRole`

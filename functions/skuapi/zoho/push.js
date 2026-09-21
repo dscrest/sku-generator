@@ -4,6 +4,7 @@ const { createItem, updateItem, findItemByName, getItem, deleteItem, getGstTaxId
 const { pushableBooksFields } = require("../booksImport");
 const { createCompositeItem, updateCompositeItemFields, getCompositeItem, updateCompositeItem } = require("./inventoryApi");
 const { rowList, out, orgClause, zStr, isActive, idOk } = require("../store");
+const { matchComponents } = require("../recipe/componentMap");
 
 // Books says the linked item no longer exists (deleted in Books):
 // GET → code 1002 (HTTP 404), PUT → code 2006 (HTTP 400). Composite endpoints
@@ -27,11 +28,12 @@ async function buildAssociatedItems(catalyst, item) {
   const flagged = rowList(
     await zcql.executeZCQLQuery(`SELECT * FROM Property WHERE industryId = ${item.industryId} AND ${orgClause(catalyst)}`),
   ).map(out).filter(isActive).filter((p) => p.createValuesAsItems === true);
-  if (!flagged.length) return [];
 
   const vals = rowList(
     await zcql.executeZCQLQuery(`SELECT * FROM SKUItemValue WHERE skuItemId = ${item.id} AND ${orgClause(catalyst)}`),
   ).map(out);
+  const components = await componentLines(catalyst, item, vals);
+  if (!flagged.length) return components;
   const valByProp = Object.fromEntries(vals.map((v) => [String(v.propertyId), v]));
 
   // Only list-value selections can be Books items (a Range number can't).
@@ -50,7 +52,61 @@ async function buildAssociatedItems(catalyst, item) {
     }
     mapped.push({ rmItemId: String(resolved.item_id), perUnitQty: 1 });
   }
-  return mapped;
+  // A Books BOM can't list one item twice — a component line wins over a flagged value.
+  const compIds = new Set(components.map((c) => c.rmItemId));
+  return [...mapped.filter((m) => !compIds.has(m.rmItemId)), ...components];
+}
+
+// ComponentMap rows of the item's industry (Product Configurator). Paged like
+// byOrgAll — a map can run to hundreds of rows and ZCQL caps a page at 300.
+async function componentMapRows(catalyst, industryId) {
+  const rows = [];
+  let last = "0";
+  for (;;) {
+    const page = rowList(await catalyst.zcql().executeZCQLQuery(
+      `SELECT * FROM ComponentMap WHERE industryId = ${zStr(String(industryId))} AND ${orgClause(catalyst)} AND ROWID > ${last} ORDER BY ROWID LIMIT 290`,
+    ));
+    rows.push(...page.map(out));
+    if (page.length < 290) return rows;
+    last = String(page[page.length - 1].ROWID);
+  }
+}
+
+// Chunked: the sync pool reads every mapped item, and ZCQL returns 300 rows at most.
+async function componentItems(catalyst, ids) {
+  const items = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    items.push(...rowList(await catalyst.zcql().executeZCQLQuery(
+      `SELECT ROWID, sku, name, zohoItemId FROM SKUItem WHERE ROWID IN (${ids.slice(i, i + 200).join(",")}) AND ${orgClause(catalyst)}`,
+    )).map(out));
+  }
+  return items;
+}
+
+/**
+ * BOM lines from the Component Map: the item's stored answers matched against
+ * the industry's map rows (recipe/componentMap.js), each component resolved to
+ * its SKUItem's Books id. Fails loudly — a required component with no matching
+ * row, or a component item never pushed to Books, must not produce a composite
+ * that silently lacks it. Duty answers (activeInSku=false) are not stored on the
+ * item, so map conditions can only use SKU-active questions.
+ */
+async function componentLines(catalyst, item, vals) {
+  const rows = await componentMapRows(catalyst, item.industryId);
+  if (!rows.length) return [];
+  const selected = Object.fromEntries(vals.map((v) => [String(v.propertyId), idOk(v.valueId) ? String(v.valueId) : v.valueText]));
+  const { lines, missing } = matchComponents(rows, selected);
+  if (missing.length) throw new Error(`Component Map has no matching row for: ${missing.join(", ")}`);
+  const byId = new Map((await componentItems(catalyst, [...new Set(lines.map((l) => l.skuItemId))].filter(idOk))).map((it) => [String(it.id), it]));
+  const merged = new Map(); // two components may share one Books item → one line, summed qty
+  for (const l of lines) {
+    const it = byId.get(l.skuItemId);
+    if (!it) throw new Error(`${l.component}: the mapped item no longer exists`);
+    if (!it.zohoItemId) throw new Error(`${l.component}: item ${it.sku || it.name} is not in Zoho Books yet — push it first`);
+    const id = String(it.zohoItemId);
+    merged.set(id, (merged.get(id) || 0) + l.qty);
+  }
+  return [...merged].map(([rmItemId, perUnitQty]) => ({ rmItemId, perUnitQty }));
 }
 
 // Outbound half of the Property.zohoCfApiName mapping: every selected value
@@ -104,12 +160,15 @@ async function syncMappedItems(catalyst, item, desired) {
   const flaggedProps = rowList(
     await zcql.executeZCQLQuery(`SELECT ROWID, createValuesAsItems FROM Property WHERE industryId = ${item.industryId} AND ${orgClause(catalyst)}`),
   ).map(out).filter((p) => p.createValuesAsItems === true).map((p) => String(p.id));
-  if (!flaggedProps.length) return;
-  const pool = new Set(rowList(
+  // Component Map items are generator-owned too, so a changed answer swaps them.
+  const mapItemIds = [...new Set((await componentMapRows(catalyst, item.industryId)).map((r) => String(r.skuItemId)))].filter(idOk);
+  if (!flaggedProps.length && !mapItemIds.length) return;
+  const pool = new Set(flaggedProps.length ? rowList(
     await zcql.executeZCQLQuery(
       `SELECT zohoItemId FROM PropertyValue WHERE propertyId IN (${flaggedProps.join(",")}) AND zohoItemId IS NOT NULL AND ${orgClause(catalyst)}`,
     ),
-  ).map((r) => String(r.zohoItemId)));
+  ).map((r) => String(r.zohoItemId)) : []);
+  for (const it of await componentItems(catalyst, mapItemIds)) if (it.zohoItemId) pool.add(String(it.zohoItemId));
   const comp = await getCompositeItem(catalyst, item.zohoItemId);
   // Legacy RM1/RM2 placeholder lines are ours to remove: put them in the pool.
   const onComp = new Set((comp.mapped_items || []).map((l) => String(l.item_id)));

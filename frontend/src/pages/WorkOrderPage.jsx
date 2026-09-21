@@ -630,8 +630,12 @@ function WoPrintSheet({ wo, lines, company }) {
 // wo-print-sheet mechanics as WoPrintSheet, plain black-on-white like the
 // estimate prints. Batch numbers ride in txn.notes.
 function IssueSlip({ wo, txn, company, whNames }) {
-  const th = { textAlign: 'left', borderBottom: '1px solid #000', padding: '4px 8px', fontSize: 11 };
-  const td = { borderBottom: '1px solid #ccc', padding: '4px 8px', fontSize: 12 };
+  const isCopy = txn.type === 'issueCopy';
+  // Issue copy is a fully ruled sheet (paper WO look); the movement slips stay light.
+  const th = { textAlign: 'left', padding: '4px 8px', fontSize: 11, ...(isCopy ? { border: '1px solid #000' } : { borderBottom: '1px solid #000' }) };
+  const td = { padding: '4px 8px', fontSize: 12, ...(isCopy ? { border: '1px solid #000' } : { borderBottom: '1px solid #ccc' }) };
+  const gl = { border: '1px solid #000', padding: '4px 8px', fontSize: 11 };
+  const gv = { ...gl, fontSize: 12, fontWeight: 700 };
   const title = { issue: 'Material Issue Slip', return: 'Material Return Slip', reserve: 'Material Reservation Slip', issueCopy: 'Material Issue Copy', dereserve: 'Material De-reservation Slip' }[txn.type] || 'Material Movement Slip';
   const whName = id => (id && (whNames?.[String(id)] || id)) || null;
   // Per-line explicit picks (CR-121); old txns fall back to the notes blob below.
@@ -644,16 +648,47 @@ function IssueSlip({ wo, txn, company, whNames }) {
   return (
     <div className="wo-print-sheet">
       <PrintHeader company={company} />
-      <h1 style={{ fontSize: 20, margin: '0 0 2px' }}>{title}</h1>
-      <div style={{ fontSize: 12, marginBottom: 14 }}>
-        {txn.txnNumber} · {fmtDate(txn.confirmedAt || txn.createdAt)}
-        {txn.transferOrderNumber ? ` · Transfer Order ${txn.transferOrderNumber}` : ''}
-        {whName(txn.fromWarehouseId) && whName(txn.toWarehouseId)
-          ? ` · ${whName(txn.fromWarehouseId)} → ${whName(txn.toWarehouseId)}` : ''}
-      </div>
-      <div style={{ fontSize: 12, marginBottom: 14 }}>
-        Work Order {wo.woNumber} · SO {wo.salesOrderNumber} · {wo.customerName}
-      </div>
+      {isCopy ? (
+        <>
+          {/* CR-193 — header laid out like the shop's paper WO sheet */}
+          <div style={{ fontSize: 34, fontWeight: 800, textAlign: 'center', textDecoration: 'underline', margin: '0 0 8px' }}>
+            WORK ORDER #{wo.woNumber}
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 14 }}>
+            <tbody>
+              <tr>
+                <td rowSpan={3} style={{ ...gv, width: '30%', fontSize: 16, textAlign: 'center' }}>MATERIAL ISSUE COPY</td>
+                <td style={gl}>SO NO.</td><td style={gv}>{wo.salesOrderNumber || '—'}</td>
+                <td style={gl}>P.O NO.</td><td style={gv}>{wo.buyerOrderNo || '—'}</td>
+              </tr>
+              <tr>
+                <td style={gl}>W.O DATE</td><td style={gv}>{fmtDate(wo.woDate)}</td>
+                <td style={gl}>P.O DATE</td><td style={gv}>{fmtDate(wo.buyerOrderDate)}</td>
+              </tr>
+              <tr>
+                <td style={gl}>SO DATE</td><td style={gv}>{fmtDate(wo.soDate)}</td>
+                <td style={gl}>DUE DATE</td><td style={{ ...gv, fontSize: 16 }}>{fmtDate(wo.dueDate)}</td>
+              </tr>
+              <tr>
+                <td style={gl}>LAST ISSUE</td><td colSpan={4} style={gv}>{fmtDate(txn.confirmedAt)} ({txn.txnNumber})</td>
+              </tr>
+            </tbody>
+          </table>
+        </>
+      ) : (
+        <>
+          <h1 style={{ fontSize: 20, margin: '0 0 2px' }}>{title}</h1>
+          <div style={{ fontSize: 12, marginBottom: 14 }}>
+            {txn.txnNumber} · {fmtDate(txn.confirmedAt || txn.createdAt)}
+            {txn.transferOrderNumber ? ` · Transfer Order ${txn.transferOrderNumber}` : ''}
+            {whName(txn.fromWarehouseId) && whName(txn.toWarehouseId)
+              ? ` · ${whName(txn.fromWarehouseId)} → ${whName(txn.toWarehouseId)}` : ''}
+          </div>
+          <div style={{ fontSize: 12, marginBottom: 14 }}>
+            Work Order {wo.woNumber} · SO {wo.salesOrderNumber} · {wo.customerName}
+          </div>
+        </>
+      )}
 
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>

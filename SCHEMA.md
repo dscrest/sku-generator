@@ -591,6 +591,25 @@ smallest Active model whose `capacity` covers the duty (`recipe/sizing.js`).
 | `recipeCode` | string(50) | `RecipeTemplate.code` lineage (survives versions). Stored hook for design-driven BOM/price — not read yet |
 | `status` | string(20) | `Active` \| `Inactive` |
 
+### ComponentMap — table id `69851000000291466` (CR-194)
+Product Configurator component map: "when these answers hold, component X is
+item Y × qty". Matched by `recipe/componentMap.js` — per `component` the Active
+row with the most conditions wins. Read by the configurator widget
+(`POST /api/recipe/component-map/resolve`) and by `zoho/push.js` for the Books
+composite BOM of a Manufacturing item.
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `orgId` | string(255) | Tenant key |
+| `industryId` | string(255) | Industry ROWID — the product |
+| `component` | string(255) | Free-text component name (`Body casting`, `Motor`); groups competing rows |
+| `conditionsJson` | text | `[{propertyId, valueId}]`, AND-ed; `[]` = always. SKU-active List questions only. Guarded to ≤ 9500 chars |
+| `skuItemId` | string(255) | Component `SKUItem` ROWID |
+| `qty` | double(15,4) | Per-unit qty (default 1) |
+| `qtyPropertyId` | string(255)? | When set, qty = the numeric answer of this Range question (companion flanges); answer ≤ 0 drops the line |
+| `required` | boolean | Component with a required row and no match → `missing` (widget shows it red, Books push fails) |
+| `status` | string(255) | `Active` \| `Inactive` |
+
 ### RecipeQuotation — table id `69851000000258813`
 Self-contained quotation with the **immutable configuration snapshot**.
 Recipe/rate edits never touch existing rows; the snapshot is recomputed and
@@ -650,6 +669,7 @@ Newest first. One row per applied schema change; link the CR that requested it.
 
 | Date | CR | Change | Applied |
 |------|----|--------|---------|
+| 2026-09-21 | [CR-194](CHANGES.md) | New table `ComponentMap` (69851000000291466: `orgId`, `industryId`, `component`, `conditionsJson` text, `skuItemId`, `qty` double 4dp, `qtyPropertyId`, `required` boolean default false, `status`). Added via Catalyst MCP (Development) | ✅ live (Dev) |
 | 2026-09-21 | [CR-192](CHANGES.md) | `OrgSetting.settingText` text(10000) — quote T&C templates JSON (keys `estimateTpl` ×N, `estimateBank`) | ✅ live (Dev, via MCP) |
 | 2026-09-18 | [CR-184](CHANGES.md) | No schema change — `OrgSetting` key `cfgNoAutoPush` (`true` = CRM widgets save new items to the SKU master without pushing to Books; blank = push at once) replaces `cfgNoAutoCreate`, which is now ignored | ✅ n/a |
 | 2026-09-17 | [CR-182](CHANGES.md) | No schema change — new `OrgSetting` key `cfgNoAutoCreate` (`true` = the Product Configurator widget does NOT create new items by default; blank = auto-create on) | ✅ n/a |

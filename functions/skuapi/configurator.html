@@ -61,6 +61,11 @@
     #res-sku { font: 500 14px 'IBM Plex Mono', monospace; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     #res-name { font-size: 12.5px; color: #64748b; margin-top: 2px; }
     #res-msg { font-size: 12.5px; margin-top: 2px; }
+    #res-comps { font-size: 12px; margin-top: 6px; max-height: 132px; overflow-y: auto; }
+    #res-comps div { display: flex; gap: 8px; padding: 2px 0; border-top: 1px solid #eef2f6; }
+    #res-comps .c-name { flex: 0 0 120px; color: #64748b; }
+    #res-comps .c-item { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #res-comps .c-qty { font-family: 'IBM Plex Mono', monospace; }
     .badge.exists { color: #15803d; background: #dcfce7; }
     .badge.fresh { color: #b45309; background: #fef3c7; }
     #result label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; color: #64748b; font-weight: 500; }
@@ -129,6 +134,7 @@
             <div id="res-sku"><span class="muted">Answer the questions to generate the SKU.</span></div>
             <div id="res-name"></div>
             <div id="res-msg"></div>
+            <div id="res-comps"></div>
           </div>
           <label id="res-push-lab" class="hidden" title="Push the new item to Zoho Books now. Off = saved to the SKU master only; push it later from the SKU Items page.">Push to Books<input id="res-push" type="checkbox" checked /></label>
           <label>Qty<input id="res-qty" type="number" min="1" value="1" /></label>
@@ -613,6 +619,7 @@ function renderResult(msg, isError) {
   $('res-msg').className = isError ? 'error' : 'muted';
   var ready = Boolean(gen && gen.sku && !(gen.missingRequired || []).length);
   $('res-add').disabled = !ready;
+  refreshComponents(ready);
   if (!gen || !gen.sku) {
     var hint = document.createElement('span');
     hint.className = 'muted';
@@ -630,6 +637,42 @@ function renderResult(msg, isError) {
   $('res-push-lab').classList.toggle('hidden', !ready || Boolean(existing && existing.zohoItemId));
   syncBadge();
   $('res-name').textContent = (existing && existing.name) || gen.name || '';
+}
+
+/* ---------- component items (Component Map) ---------- */
+// The items this set of answers leads to — shown only; the quote still gets the
+// one valve line, and the same map builds the Books BOM when the item is pushed.
+var compKey = null;
+function refreshComponents(ready) {
+  var box = $('res-comps');
+  if (!ready) { compKey = null; box.innerHTML = ''; return; }
+  var key = industryId + '|' + JSON.stringify(sel);
+  if (key === compKey) return;
+  compKey = key;
+  box.innerHTML = '';
+  api('/api/recipe/component-map/resolve', { method: 'POST', body: JSON.stringify({ industryId: industryId, selectedValues: sel }) })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (key !== compKey || !d) return; // stale, or no access — the list is optional
+      (d.lines || []).forEach(function (l) {
+        var row = document.createElement('div');
+        [['c-name', l.component], ['c-item', l.sku ? l.sku + ' · ' + (l.name || '') : 'item deleted'], ['c-qty', '× ' + l.qty]].forEach(function (c) {
+          var sp = document.createElement('span');
+          sp.className = c[0];
+          sp.textContent = c[1];
+          row.appendChild(sp);
+        });
+        if (!l.sku || !l.inBooks) { row.className = 'error'; row.title = l.sku ? 'Not in Zoho Books yet — the Books push will fail until it is.' : ''; }
+        box.appendChild(row);
+      });
+      (d.missing || []).forEach(function (c) {
+        var row = document.createElement('div');
+        row.className = 'error';
+        row.textContent = c + ' — no item mapped for these answers';
+        box.appendChild(row);
+      });
+    })
+    .catch(function () {});
 }
 
 function syncBadge() {

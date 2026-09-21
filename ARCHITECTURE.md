@@ -77,6 +77,17 @@ question list. Needs both `sku-generator` and `recipe-engine` add-ons.
 A new SKU is always saved to the SKU master; the per-line **Push to Books**
 switch (default from `OrgSetting cfgNoAutoPush`, CR-184) decides whether it is
 pushed at once or later from the SKU Items page. Same switch in `widget.html`.
+**Component items (CR-194).** Once the SKU is ready the widget posts every
+answer to `POST /api/recipe/component-map/resolve` and lists the matched
+component items under the SKU — display only, the quote still gets one valve
+line. The rule is data, not code: `ComponentMap` rows ("when these answers hold,
+component X is item Y × qty", most conditions wins — `recipe/componentMap.js`),
+maintained in **Product Configurator → Component Map**. The same matcher feeds
+`zoho/push.js` `buildAssociatedItems`, so a pushed Manufacturing item's Books
+composite BOM = flagged-value items + mapped components; mapped items join the
+generator-owned pool, so a re-push swaps them and leaves manual lines alone.
+Map conditions use SKU-active questions only — duty answers are not stored on
+the item. `SizingModel.recipeCode` is still unread.
 Boot/auth, cart and quote write-back are a **verbatim copy** of `widget.html`
 (kept separate so the live Quote Maker is never at risk) — a fix to that shared
 logic must be applied to both files until they are extracted.

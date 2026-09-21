@@ -139,11 +139,16 @@ const WO_MAP = [
 const RECIPE_MAP = [
   [/^\/materials/, ["recipe.materials"]],
   [/^\/(sizing-models|seed-rav)/, ["recipe.sizing"]],
+  [/^\/component-map\/resolve/, ["recipe.configure"]],
+  // the widget never reads the grid, only /resolve — the master stays with recipe.sizing
+  [/^\/component-map/, ["recipe.sizing"]],
   [/^\/sizing\//, ["recipe.configure"]],
   [/^\/cost-elements/, ["recipe.costs", "recipe.recipes"]],
   [/^\/quotations/, ["recipe.quotations", "recipe.configure"]],
   [/^\/books-items/, ["recipe.materials", "recipe.recipes"]],
   [/^\/books-composites/, ["recipe.recipes", "recipe.configure"]],
+  // the Component Map grid (recipe.sizing) picks its items from /products
+  [/^\/products/, ["recipe.recipes", "recipe.configure", "recipe.sizing"]],
   [/^\/(recipes|components|options|products|properties|property-values)/, ["recipe.recipes", "recipe.configure"]],
 ];
 
