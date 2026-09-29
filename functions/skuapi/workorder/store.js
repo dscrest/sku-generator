@@ -27,6 +27,15 @@ const SETTING_KEYS = [
   { key: "reserveWarehouseId", label: "Reserve warehouse", type: "warehouse", group: "Warehouses" },
   { key: "issueWarehouseId", label: "Issue warehouse", type: "warehouse", group: "Warehouses" },
   {
+    // CR-260: an org with several factories picks the Main on each work order.
+    key: "pickMainPerWo", label: "Pick Main warehouse on every work order", type: "select", group: "Warehouses",
+    hint: "For more than one factory — a new work order starts without a Main warehouse and needs one picked",
+    options: [
+      { value: "", label: "Off — the Main warehouse above is preselected" },
+      { value: "true", label: "On" },
+    ],
+  },
+  {
     key: "allowWarehouseSelect", label: "Allow warehouse selection", type: "select", group: "Warehouses",
     hint: "Let store users pick the source and target warehouse on Reserve / Issue / Return",
     options: [
@@ -35,6 +44,7 @@ const SETTING_KEYS = [
     ],
   },
   { key: "purchaseTeamEmail", label: "Purchase team email", type: "email", hint: "Receives material shortfall alerts", group: "Alerts" },
+  { key: "storeIssueEmail", label: "Store issue email", type: "email", hint: "Receives defective-material alerts (Store issues page)", group: "Alerts" },
   { key: "approverL1Email", label: "Approver — level 1", type: "email", group: "Approvals" },
   { key: "approverL2Email", label: "Approver — level 2", type: "email", group: "Approvals" },
   {
@@ -94,8 +104,11 @@ async function setSetting(catalyst, orgId, key, value) {
 /**
  * The three warehouse ids. Nothing in the module can move material until an
  * admin has picked them, so this fails loudly and says exactly what to do.
+ * CR-249 (Ricon, two factories): a work order may carry its own Main
+ * warehouse — pass the WO row and `main` becomes that one; Reserve / Issue
+ * stay org-wide.
  */
-async function warehouses(catalyst, orgId) {
+async function warehouses(catalyst, orgId, wo) {
   const s = await settings(catalyst, orgId);
   const map = {};
   const missing = [];
@@ -103,6 +116,7 @@ async function warehouses(catalyst, orgId) {
     if (s[key]) map[role] = String(s[key]);
     else missing.push(role);
   }
+  if (wo && wo.mainWarehouseId) { map.main = String(wo.mainWarehouseId); const i = missing.indexOf("main"); if (i >= 0) missing.splice(i, 1); }
   if (missing.length) {
     const err = new Error(
       `Warehouses not configured: ${missing.join(", ")}. Set them in Work Order → Settings before reserving material.`,
@@ -113,15 +127,23 @@ async function warehouses(catalyst, orgId) {
   return map;
 }
 
-// { fromWarehouseId, toWarehouseId } for a transaction type.
-async function routeFor(catalyst, orgId, type) {
+// Does `incoming` move this WO to another Main? Blank on either side means the
+// org Main, so an edit form that pre-fills the org Main is not a change (CR-259).
+const mainChanged = (wo, incoming, orgMain) =>
+  String(incoming || orgMain || "") !== String(wo.mainWarehouseId || orgMain || "");
+
+// A new work order must carry its own Main when the org picks it per WO (CR-260).
+const needsMainPick = (s, mainWarehouseId) => s.pickMainPerWo === "true" && !String(mainWarehouseId || "").trim();
+
+// { fromWarehouseId, toWarehouseId } for a transaction type (Main = the WO's when set, CR-249).
+async function routeFor(catalyst, orgId, type, wo) {
   const route = ROUTES[type];
   if (!route) {
     const err = new Error(`Unknown transaction type "${type}"`);
     err.status = 400;
     throw err;
   }
-  const wh = await warehouses(catalyst, orgId);
+  const wh = await warehouses(catalyst, orgId, wo);
   return { fromWarehouseId: wh[route.from], toWarehouseId: wh[route.to] };
 }
 
@@ -236,7 +258,7 @@ function requiredLevelsMet(approvedLevels, levelCount) {
 }
 
 module.exports = {
-  DEFAULTS, WAREHOUSE_KEYS, SETTING_KEYS, settings, setSetting, warehouses, routeFor,
+  DEFAULTS, WAREHOUSE_KEYS, SETTING_KEYS, settings, setSetting, warehouses, routeFor, mainChanged, needsMainPick,
   nextNumber, logActivity, byOrg, byOrgAll, inList, creatableSalesOrders, requiredLevelsMet, approvalLevelCount,
 };
 
@@ -285,6 +307,21 @@ if (require.main === module && process.argv.includes("--selftest")) {
     ];
     assert.deepStrictEqual(await warehouses(fake(whRows), "org1"), { main: "W1", reserve: "W2", issue: "W3" });
     assert.deepStrictEqual(
+      await warehouses(fake(whRows), "org1", { mainWarehouseId: "W9" }),
+      { main: "W9", reserve: "W2", issue: "W3" },
+      "CR-249: the WO's own Main wins over the org setting",
+    );
+    assert.deepStrictEqual(
+      await routeFor(fake(whRows), "org1", "reserve", { mainWarehouseId: "W9" }),
+      { fromWarehouseId: "W9", toWarehouseId: "W2" },
+      "CR-249: reserve pulls from the WO's Main",
+    );
+    assert.deepStrictEqual(
+      await warehouses(fake(whRows.slice(1)), "org1", { mainWarehouseId: "W9" }),
+      { main: "W9", reserve: "W2", issue: "W3" },
+      "CR-249: a per-WO Main satisfies the configured check",
+    );
+    assert.deepStrictEqual(
       await routeFor(fake(whRows), "org1", "issue"),
       { fromWarehouseId: "W2", toWarehouseId: "W3" },
       "issue moves Reserve → Issue",
@@ -295,6 +332,19 @@ if (require.main === module && process.argv.includes("--selftest")) {
       "return moves Issue → Main",
     );
     await assert.rejects(() => routeFor(fake(whRows), "org1", "nope"), /Unknown transaction type/);
+
+    // CR-260: the per-WO pick is demanded only when the org turned it on.
+    assert.strictEqual(needsMainPick({}, ""), false, "setting off = org Main is fine");
+    assert.strictEqual(needsMainPick({ pickMainPerWo: "true" }, ""), true, "setting on + nothing picked");
+    assert.strictEqual(needsMainPick({ pickMainPerWo: "true" }, " "), true, "blank text is not a pick");
+    assert.strictEqual(needsMainPick({ pickMainPerWo: "true" }, "W9"), false, "setting on + picked");
+
+    // CR-259: a Main change is judged on the effective warehouse.
+    assert.strictEqual(mainChanged({ mainWarehouseId: "" }, "W1", "W1"), false, "blank WO + org Main = no change");
+    assert.strictEqual(mainChanged({ mainWarehouseId: "" }, "", "W1"), false, "blank WO + blank = no change");
+    assert.strictEqual(mainChanged({ mainWarehouseId: "" }, "W9", "W1"), true, "blank WO + another warehouse = change");
+    assert.strictEqual(mainChanged({ mainWarehouseId: "W9" }, "W9", "W1"), false, "pinned WO + same id = no change");
+    assert.strictEqual(mainChanged({ mainWarehouseId: "W9" }, "W1", "W1"), true, "pinned WO back to the org Main = change");
 
     // Numbering continues from the highest existing document.
     const numFake = (row) => ({

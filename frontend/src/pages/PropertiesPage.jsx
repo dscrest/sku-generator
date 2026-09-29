@@ -5,13 +5,14 @@ import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
 import { ConfirmModal } from '../components/Modal.jsx';
 import RowMenu from '../components/RowMenu.jsx';
-import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
+import GridFooter, { usePager, FilterSelect, SearchInput, matches, distinct } from '../components/GridFooter.jsx';
 import DataTable, { useGridColumns, ColumnChooser } from '../components/DataTable.jsx';
 
 export default function PropertiesPage() {
   const [props, setProps] = useState([]);
   const [sortCol, setSortCol] = useState('industryName');
   const [sortDir, setSortDir] = useState('asc');
+  const [q, setQ] = useState('');
   const [fIndustry, setFIndustry] = useState('');
   const [fType, setFType] = useState('');
   const [fRequired, setFRequired] = useState('');
@@ -28,6 +29,7 @@ export default function PropertiesPage() {
   useEffect(() => { load(); }, [load]);
 
   const filtered = props.filter(p =>
+    matches(q, p.industryName, p.name, p.caption, p.unit) &&
     (!fIndustry || p.industryName === fIndustry) &&
     (!fType || p.valueType === fType) &&
     (!fRequired || (p.required ? 'Yes' : 'No') === fRequired));
@@ -73,7 +75,7 @@ export default function PropertiesPage() {
     {
       key: 'actions', label: '', lock: true, width: 84, render: p => (
         <div style={{ display: 'flex', justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
-          <RowMenu editLabel="Edit in manager" onEdit={() => navigate(`/sku/industries/${p.industryId}/properties`)} onDelete={() => setConfirmDel(p)} />
+          <RowMenu onEdit={() => navigate(`/sku/industries/${p.industryId}/properties`)} onDelete={() => setConfirmDel(p)} />
         </div>
       ),
     },
@@ -96,6 +98,7 @@ export default function PropertiesPage() {
             right={
               <div style={{ display: 'flex', gap: 8 }}>
                 <ColumnChooser chooser={chooser} />
+                <SearchInput value={q} onChange={setQ} placeholder="Search properties…" />
                 <FilterSelect label="industries" value={fIndustry} onChange={setFIndustry} options={distinct(props, 'industryName')} />
                 <FilterSelect label="types" value={fType} onChange={setFType} options={distinct(props, 'valueType')} />
                 <FilterSelect label="required" value={fRequired} onChange={setFRequired} options={['Yes', 'No']} />

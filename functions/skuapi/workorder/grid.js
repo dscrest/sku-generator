@@ -11,10 +11,21 @@
  * it reads as zero stock and every new work order opens with a false shortage.
  */
 const { zStr } = require("../store");
-const { gridRow } = require("./formulas");
+const { gridRow, componentQtys } = require("./formulas");
 const { byOrg, inList, warehouses } = require("./store");
+const { blockedFor } = require("./blocks");
+const { soQtyPending } = require("./soFields");
 
 const n = (v) => Number(v) || 0;
+
+// Column B excludes units blocked as defective (CR-203): they sit in Main
+// physically but must not be reserved again. Mutates `stock`.
+async function applyBlockedStock(catalyst, orgId, stock) {
+  for (const [id, e] of await blockedFor(catalyst, orgId)) {
+    const s = stock.get(id);
+    if (s && e.qty) s.stockOnHand = Math.max(0, n(s.stockOnHand) - e.qty);
+  }
+}
 
 /**
  * Columns E / F / G per raw material: summed from the purchase-request lines of
@@ -75,8 +86,11 @@ async function balanceMap(catalyst, orgId, workOrderId, workOrderFgId) {
 
 // Pure tail of the grid build: everything already loaded, just compute.
 function assemble(wo, fg, lines, stock, balances, po, lastSyncAt, mainWarehouseId) {
+  // Material already consumed by assemblies (CR-230): caps Return / Replace.
+  const consumed = new Map(componentQtys(lines, n(fg.assembledQty), n(fg.fgQty)).map((c) => [c.rmItemId, c.qty]));
   const rows = lines.map((l) =>
-    gridRow(l, stock.get(String(l.rmItemId)), balances.get(String(l.rmItemId)), po.get(String(l.rmItemId))),
+    gridRow(l, stock.get(String(l.rmItemId)), balances.get(String(l.rmItemId)), po.get(String(l.rmItemId)),
+      consumed.get(String(l.rmItemId)) || 0),
   );
 
   return {
@@ -86,6 +100,9 @@ function assemble(wo, fg, lines, stock, balances, po, lastSyncAt, mainWarehouseI
     fgName: fg.fgName,
     fgSize: fg.fgSize || "",
     fgQty: n(fg.fgQty),
+    // CR-204: the SO line's current qty + whether it differs from what was acknowledged.
+    soQty: fg.soQty === null || fg.soQty === undefined || fg.soQty === "" ? null : n(fg.soQty),
+    soQtyChanged: soQtyPending(fg),
     revision: n(wo.revision),
     lastSyncAt,
     warehousesConfigured: Boolean(mainWarehouseId),
@@ -135,7 +152,7 @@ async function buildGrid(catalyst, orgId, wo, fg) {
   // missing map degrades column B to the org total rather than failing the page.
   let mainWarehouseId = null;
   try {
-    mainWarehouseId = (await warehouses(catalyst, orgId)).main;
+    mainWarehouseId = (await warehouses(catalyst, orgId, wo)).main;
   } catch { /* not configured yet */ }
 
   const [{ map: stock, lastSyncAt }, balances, po] = await Promise.all([
@@ -145,6 +162,7 @@ async function buildGrid(catalyst, orgId, wo, fg) {
   ]);
 
   await healStock(catalyst, orgId, stock, itemIds, mainWarehouseId);
+  await applyBlockedStock(catalyst, orgId, stock);
 
   return assemble(wo, fg, lines, stock, balances, po, lastSyncAt, mainWarehouseId);
 }
@@ -159,10 +177,13 @@ async function buildGridsBulk(catalyst, orgId, pairs) {
   if (!pairs.length) return [];
   const woIds = inList([...new Set(pairs.map((p) => String(p.wo.ROWID)))]);
 
-  let mainWarehouseId = null;
+  // CR-249: a WO may carry its own Main warehouse — stock is read per distinct
+  // Main, one snapshot query each (Ricon has two factories; most orgs one).
+  let orgMain = null;
   try {
-    mainWarehouseId = (await warehouses(catalyst, orgId)).main;
+    orgMain = (await warehouses(catalyst, orgId)).main;
   } catch { /* not configured yet */ }
+  const mainOf = (wo) => (wo.mainWarehouseId ? String(wo.mainWarehouseId) : orgMain);
 
   const [allLines, allBalances, allPrs] = await Promise.all([
     byOrg(catalyst, orgId, "WorkOrderLine", `workOrderId IN (${woIds})`),
@@ -193,8 +214,15 @@ async function buildGridsBulk(catalyst, orgId, pairs) {
   }
 
   const itemIds = [...new Set(allLines.map((l) => String(l.rmItemId)))];
-  const { map: stock, lastSyncAt } = await stockMap(catalyst, orgId, itemIds, mainWarehouseId);
-  await healStock(catalyst, orgId, stock, itemIds, mainWarehouseId);
+  const stockByMain = new Map();
+  let lastSyncAt = null;
+  for (const mainWarehouseId of new Set(pairs.map((p) => mainOf(p.wo)))) {
+    const { map: stock, lastSyncAt: at } = await stockMap(catalyst, orgId, itemIds, mainWarehouseId);
+    await healStock(catalyst, orgId, stock, itemIds, mainWarehouseId);
+    await applyBlockedStock(catalyst, orgId, stock);
+    stockByMain.set(mainWarehouseId, stock);
+    if (at && (!lastSyncAt || at > lastSyncAt)) lastSyncAt = at;
+  }
 
   const pairKey = (woId, fgId) => `${woId}|${fgId}`;
   const linesByPair = new Map();
@@ -218,20 +246,34 @@ async function buildGridsBulk(catalyst, orgId, pairs) {
     return assemble(
       wo, fg,
       linesByPair.get(k) || [],
-      stock,
+      stockByMain.get(mainOf(wo)),
       balByPair.get(k) || EMPTY,
       poByWo.get(String(wo.ROWID)) || EMPTY,
-      lastSyncAt, mainWarehouseId,
+      lastSyncAt, mainOf(wo),
     );
   });
 }
 
 // Row lookup for action validation — same numbers the user is looking at.
+/**
+ * Column B for one item outside any grid (CR-244): Main-warehouse stock,
+ * self-healed if never synced, minus units blocked as defective.
+ */
+async function mainStock(catalyst, orgId, itemId, wo) {
+  let mainWarehouseId = null;
+  try { mainWarehouseId = (await warehouses(catalyst, orgId, wo)).main; } catch { /* not configured yet */ }
+  const ids = [String(itemId)];
+  const { map: stock } = await stockMap(catalyst, orgId, ids, mainWarehouseId);
+  await healStock(catalyst, orgId, stock, ids, mainWarehouseId);
+  await applyBlockedStock(catalyst, orgId, stock);
+  return n((stock.get(String(itemId)) || {}).stockOnHand);
+}
+
 function indexRows(grid) {
   return new Map(grid.rows.map((r) => [String(r.itemId), r]));
 }
 
-module.exports = { buildGrid, buildGridsBulk, indexRows, poSums, stockMap, balanceMap };
+module.exports = { buildGrid, buildGridsBulk, indexRows, poSums, stockMap, balanceMap, mainStock };
 
 // ponytail self-check: `node functions/skuapi/workorder/grid.js --selftest`
 if (require.main === module && process.argv.includes("--selftest")) {
@@ -267,6 +309,11 @@ if (require.main === module && process.argv.includes("--selftest")) {
       { orgId: "org1", ROWID: "PL1", purchaseRequestId: "PR1", rmItemId: "11", zohoPoId: "Z1", purchaseQty: 5, receivedQty: 2, billedQty: 1 },
       { orgId: "org1", ROWID: "PL2", purchaseRequestId: "PR2", rmItemId: "22", zohoPoId: "Z2", purchaseQty: 9, receivedQty: 0, billedQty: 0 },
     ],
+    // CR-203: 5 Seals blocked as defective → B drops from 50 to 45; the repaired row does not count.
+    DefectReturn: [
+      { orgId: "org1", ROWID: "D1", itemId: "22", status: "pending", qty: 5, trackingJson: "" },
+      { orgId: "org1", ROWID: "D2", itemId: "22", status: "repaired", qty: 9, trackingJson: "" },
+    ],
   };
 
   const fake = () => {
@@ -294,7 +341,7 @@ if (require.main === module && process.argv.includes("--selftest")) {
   (async () => {
     const wo1 = { ROWID: "WO1", revision: 1 };
     const wo2 = { ROWID: "WO2", revision: 0 };
-    const fgA = { ROWID: "FGA", fgItemId: "F1", fgName: "Pump A", fgQty: 2 };
+    const fgA = { ROWID: "FGA", fgItemId: "F1", fgName: "Pump A", fgQty: 2, assembledQty: 1 };
     const fgB = { ROWID: "FGB", fgItemId: "F2", fgName: "Pump B", fgQty: 1 };
     const fgC = { ROWID: "FGC", fgItemId: "F3", fgName: "Pump C", fgQty: 3 };
     const pairs = [
@@ -307,7 +354,14 @@ if (require.main === module && process.argv.includes("--selftest")) {
     const c = fake();
     const bulk = await buildGridsBulk(c, "org1", pairs);
     assert.deepStrictEqual(bulk, singles, "bulk grids must equal per-pair buildGrid output");
-    assert.ok(c._count() <= 6, `bulk must stay ~6 queries, used ${c._count()}`);
+    assert.ok(c._count() <= 7, `bulk must stay ~7 queries, used ${c._count()}`);
+    assert.strictEqual(singles[0].rows[1].stock, 45, "blocked defective units are excluded from B");
+    assert.strictEqual(singles[0].rows[0].stock, 6, "unblocked item untouched");
+    // One of two Pump A assembled → 5 Shaft consumed; D stays, nothing left to return.
+    assert.strictEqual(singles[0].rows[0].issued, 1, "issued is not reduced by assembly");
+    assert.strictEqual(singles[0].rows[0].consumed, 5, "10 required / 2 FG × 1 assembled");
+    assert.strictEqual(singles[0].rows[0].returnable, 0, "1 issued − 5 consumed clamps to 0");
+    assert.strictEqual(singles[1].rows[0].consumed, 0, "nothing assembled → nothing consumed");
 
     assert.deepStrictEqual(await buildGridsBulk(fake(), "org1", []), [], "no pairs → no grids, no queries");
 

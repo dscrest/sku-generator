@@ -312,11 +312,13 @@ async function history(catalyst, orgId, workOrderId) {
     byOrg(catalyst, orgId, "PurchaseRequest", `workOrderId = ${zStr(woId)}`),
   ]);
   const ids = inList([woId, ...txns.map((t) => t.ROWID), ...prs.map((p) => p.ROWID)]);
-  const rows = await byOrg(
-    catalyst, orgId, "ActivityLog",
-    `entityId IN (${ids})`,
-    "loggedAt DESC",
-  );
+  return auditRows(catalyst, orgId, `entityId IN (${ids})`);
+}
+
+// ActivityLog rows for a `where` clause, newest first, actor names resolved.
+// Shared by the WO History tab and the generic /api/activity route (CR-233).
+async function auditRows(catalyst, orgId, where) {
+  const rows = await byOrg(catalyst, orgId, "ActivityLog", where, "loggedAt DESC");
   const top = rows.slice(0, 200);
   // Resolve actor names in one query (webhook entries have no userId).
   const userIds = inList([...new Set(top.map((r) => r.userId).filter(Boolean))]);
@@ -338,7 +340,7 @@ async function history(catalyst, orgId, workOrderId) {
   }));
 }
 
-module.exports = { rollUp, unissuedRows, reservedRows, soBom, shortfall, history, pipelineRollup, itemPipeline, reconcileRows, reconciliation, warehouseStock };
+module.exports = { rollUp, unissuedRows, reservedRows, soBom, shortfall, history, auditRows, pipelineRollup, itemPipeline, reconcileRows, reconciliation, warehouseStock };
 
 // ponytail self-check: `node functions/skuapi/workorder/reports.js --selftest`
 if (require.main === module && process.argv.includes("--selftest")) {

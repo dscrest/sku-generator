@@ -13,6 +13,10 @@ const COLUMNS = [
     key: 'woNumber', label: 'Work Order', lock: true, render: r => (
       <span style={{ fontWeight: 600, color: 'var(--blue)' }}>
         {r.attention && <span title="New progress — a PO receipt landed since this was last opened" style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#dc2626', marginRight: 6 }} />}
+        {/* CR-204/245: Sales changed an SO line qty — red ▲ up / ▼ down; open the WO to apply or dismiss */}
+        {r.soQtyChange && <span title={`Sales order qty ${r.soQtyChange.from} → ${r.soQtyChange.to} (${r.soQtyChange.fgName}) — open the work order to apply or dismiss`} style={{ display: 'inline-block', marginRight: 6, color: '#dc2626', fontSize: 11, lineHeight: 1, verticalAlign: 'middle' }}>{r.soQtyChange.to > r.soQtyChange.from ? '▲' : '▼'}</span>}
+        {/* CR-250: Sales added an SO line — red ＋; open the WO to add it as a finished good or dismiss */}
+        {r.soNewLine && <span title={`Sales order has a new line: ${r.soNewLine.name} × ${r.soNewLine.qty} — open the work order to add or dismiss`} style={{ display: 'inline-block', marginRight: 6, color: '#dc2626', fontSize: 12, fontWeight: 700, lineHeight: 1, verticalAlign: 'middle' }}>＋</span>}
         {r.woNumber}
       </span>
     ),
@@ -102,7 +106,7 @@ export default function WorkOrderListPage() {
         <button onClick={() => { setRows(null); load(); }} title="Refresh" style={btn}>⟳</button>
         <ColumnChooser chooser={chooser} />
         <button onClick={() => navigate('/wo/new')} style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
-          + New Work Order
+          + New
         </button>
       </div>
 

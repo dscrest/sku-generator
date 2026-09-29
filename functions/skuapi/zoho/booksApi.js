@@ -222,6 +222,26 @@ async function searchItems(catalyst, q) {
   return data.items || [];
 }
 
+// Item categories (CR-223): Books keeps them as a tree (parent_category_id /
+// parent_category_name). Cached per org like the stock accounts — the tree
+// rarely changes and the configurator asks on every MOC pick.
+const _categoryCache = new Map(); // orgId -> categories[]
+async function listCategories(catalyst) {
+  const orgId = await getOrgId(catalyst);
+  if (_categoryCache.has(orgId)) return _categoryCache.get(orgId);
+  const data = await apiRequest(catalyst, "GET", "/categories");
+  const list = data.categories || [];
+  _categoryCache.set(orgId, list);
+  return list;
+}
+
+// Items under one category. ponytail: one page; page like listItems if a
+// category ever holds more than 200 items.
+async function listItemsByCategory(catalyst, categoryId) {
+  const data = await apiRequest(catalyst, "GET", `/items?category_id=${encodeURIComponent(categoryId)}&per_page=200`);
+  return data.items || [];
+}
+
 // Find an existing Books item by exact (case-insensitive) SKU — `search_text`
 // matches SKUs too, so one call plus an exact filter suffices.
 async function findItemBySku(catalyst, sku) {
@@ -270,6 +290,24 @@ async function listItemCustomFields(catalyst) {
   return fields.map((f) => ({ api_name: f.api_name, label: f.label, data_type: f.data_type }));
 }
 
+// Manufacturer master (Books → Settings → Items → Manufacturers), names only —
+// the dropdown source for the org-wise Manufacturer item field (CR-210).
+// Probed live on Fotedar (CR-231): undocumented `GET /books/v3/manufacturers`
+// → { manufacturers: [{ manufacturer_id, name, address }] }. `/settings/
+// manufacturers` is 404 on both APIs and Inventory v1 is refused outright
+// (6018) for Books-only orgs, so Books v3 only. Also present as
+// `manufacturers[].manufacturer` (+ `brands[]`) on `GET /books/v3/items/editpage`.
+const _manufacturerCache = new Map(); // orgId -> { at, names }
+async function listManufacturers(catalyst) {
+  const orgId = await getOrgId(catalyst);
+  const hit = _manufacturerCache.get(orgId);
+  if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.names;
+  const data = await apiRequest(catalyst, "GET", "/manufacturers");
+  const names = (data.manufacturers || []).map((m) => m.name || m.manufacturer).filter(Boolean);
+  _manufacturerCache.set(orgId, { at: Date.now(), names });
+  return names;
+}
+
 // ---- reserve add-on reads ----
 
 async function getSalesOrder(catalyst, soId) {
@@ -279,13 +317,19 @@ async function getSalesOrder(catalyst, soId) {
 
 // The org's "Work Order No and Date" SO custom field (CR-173): carries the
 // active WO on that SO. Uses the custom-fields endpoint so a confirmed/invoiced
-// SO is otherwise untouched.
-// ponytail: verify on first live call — fall back to PUT /salesorders/{id}
-// { custom_fields } if Books rejects this endpoint.
+// SO is otherwise untouched. Books docs (CR-247): the path is the SINGULAR
+// `/salesorder/{id}/customfields` and the body a bare array — the plural path
+// is "Invalid URL Passed (code 5)". If Books still refuses the body shape, the
+// plain SO update with `custom_fields` is the fallback.
 const SO_WO_CF = "cf_work_order_no_and_date";
 async function stampSalesOrderWo(catalyst, soId, value) {
-  await apiRequest(catalyst, "PUT", `/salesorders/${soId}/customfields`,
-    { custom_fields: [{ api_name: SO_WO_CF, value: String(value ?? "") }] });
+  const cf = { api_name: SO_WO_CF, value: String(value ?? "") };
+  try {
+    await apiRequest(catalyst, "PUT", `/salesorder/${soId}/customfields`, [cf]);
+  } catch (err) {
+    if (err.zohoCode === 57) throw err; // not authorized — the fallback would fail the same way
+    await apiRequest(catalyst, "PUT", `/salesorders/${soId}`, { custom_fields: [cf] });
+  }
 }
 
 // Invoice detail (packing-list widget: resolves the linked SO for line items).
@@ -459,12 +503,15 @@ module.exports = {
   getOrganizations,
   listItems,
   searchItems,
+  listCategories,
+  listItemsByCategory,
   findItemByName,
   findItemBySku,
   createComponentItem,
   getItem,
   deleteItem,
   listItemCustomFields,
+  listManufacturers,
   getSalesOrder,
   stampSalesOrderWo,
   SO_WO_CF,

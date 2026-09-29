@@ -26,15 +26,22 @@ const ACTIONS = [
     move: 'Reserve → Main warehouse', help: 'Release material this work order no longer needs.' },
   { key: 'issue', label: 'Issue', verb: 'Issue', gerund: 'Issuing', capKey: 'reserved',
     move: 'Reserve → Issue warehouse', help: 'Send reserved material to production.' },
-  { key: 'return', label: 'Return', verb: 'Return', gerund: 'Returning', capKey: 'issued',
+  { key: 'return', label: 'Return', verb: 'Return', gerund: 'Returning', capKey: 'returnable',
     move: 'Issue → Main warehouse', help: 'Send unused issued material back to stock.' },
+  // CR-203: defective issued material. Proceed opens the defect dialog (reason,
+  // photo) before the batch picker; the server records a `return` + a
+  // DefectReturn row that blocks those units from reuse. The store manager
+  // decides the replacement from Store issues (CR-244).
+  // capKey returnable = issued − assembled (CR-230): consumed units can't come back.
+  { key: 'replace', label: 'Replace', verb: 'Replace', gerund: 'Replacing', capKey: 'returnable', txnType: 'return',
+    move: 'Issue → Main warehouse — defective, blocked from reuse', help: 'Send defective issued material back with a reason and photo. The store manager decides the replacement from Store issues.' },
   // uncapped: any quantity may be requested — the cap only feeds MAX (what is
   // still short). Confirm raises a purchase request instead of a stock move.
   { key: 'purchase', label: 'Raise PR', verb: 'Request', gerund: 'Requesting', capKey: 'shortfallQty', uncapped: true,
     move: 'Creates a purchase request — no stock moves', help: 'Raise a purchase request for the typed quantities. MAX fills what is still short.' },
   // CR-172: finished goods, not raw materials — one row per FG whose every BOM
   // line is fully issued; Proceed opens the assemble modal. No cap, no qty column.
-  { key: 'assembly', label: 'Assembly', verb: 'Assemble', gerund: 'Assembling',
+  { key: 'assembly', label: 'Make Assembly', verb: 'Assemble', gerund: 'Assembling',
     move: 'Issue warehouse → finished-good stock in Main (Zoho assembly)', help: 'Finished goods with all material issued — send them to assembly.' },
 ];
 
@@ -87,12 +94,13 @@ const th = {
 const ACTION_PERM = {
   reserve: 'wo.action.reserve', dereserve: 'wo.action.dereserve',
   issue: 'wo.action.issue', return: 'wo.action.return', purchase: 'wo.action.po.create',
-  assembly: 'wo.action.assemble',
+  assembly: 'wo.action.assemble', replace: 'wo.action.return',
 };
 
-export default function MaterialsGrid({ workOrderId, fgs, status, onChanged, user }) {
+export default function MaterialsGrid({ workOrderId, fgs, status, mainWarehouseId, soNewLines, onChanged, onSoApplied, user }) {
   const [action, setAction] = useState('reserve');
   const [assembling, setAssembling] = useState(null); // fg in the assemble modal (CR-172)
+  const [assemblyRun, setAssemblyRun] = useState(null); // fgId while the assembly POST is in flight (CR-243)
   const [grids, setGrids] = useState(null);    // one grid per FG (Haresh item 1)
   const [qty, setQty] = useState({});          // rowKey (fgId|itemId) -> typed quantity
   const [sel, setSel] = useState(() => new Set());   // rowKeys ticked for bulk fill
@@ -107,7 +115,9 @@ export default function MaterialsGrid({ workOrderId, fgs, status, onChanged, use
   const [dragKey, setDragKey] = useState(null);
   // Warehouse selection (Haresh item 3): only active when the org setting is on.
   const [whCfg, setWhCfg] = useState(null);           // { allow, options, roles }
-  const [picker, setPicker] = useState(null);         // CR-123: [{entry, pool}] awaiting serial/batch picks
+  const [picker, setPicker] = useState(null);         // CR-123: { items:[{entry, pool}], verb?, onConfirm? } awaiting serial/batch picks
+  const [replace, setReplace] = useState(null);       // CR-203: { entries } in the defect dialog
+  const [replaceMeta, setReplaceMeta] = useState(null); // CR-203: { reason, photo } carried into submitMoves
   const [fromWh, setFromWh] = useState('');
   const [toWh, setToWh] = useState('');
   const act = ACTIONS.find(a => a.key === action);
@@ -136,12 +146,13 @@ export default function MaterialsGrid({ workOrderId, fgs, status, onChanged, use
 
   // The fixed role routing per action — the defaults the selects start from.
   const defaultRoute = useCallback((a) => {
-    const r = whCfg?.roles || {};
+    // The WO's own Main (CR-249) replaces the org Main in every route.
+    const r = { ...(whCfg?.roles || {}), ...(mainWarehouseId ? { main: String(mainWarehouseId) } : {}) };
     return {
       reserve: [r.main, r.reserve], dereserve: [r.reserve, r.main],
-      issue: [r.reserve, r.issue], return: [r.issue, r.main],
+      issue: [r.reserve, r.issue], return: [r.issue, r.main], replace: [r.issue, r.main],
     }[a] || ['', ''];
-  }, [whCfg]);
+  }, [whCfg, mainWarehouseId]);
   useEffect(() => {
     const [f, t] = defaultRoute(action);
     setFromWh(f); setToWh(t);
@@ -313,31 +324,46 @@ export default function MaterialsGrid({ workOrderId, fgs, status, onChanged, use
         onChanged?.();
         return;
       }
-      // CR-123: serial/batch-tracked lines get the picker before anything moves.
-      // Sequential lookups — the Catalyst dev tier throttles concurrent calls.
-      const tracked = [];
-      for (const e of entered) {
-        try {
-          const { data } = await axios.get('/api/wo/tracking-options', {
-            params: {
-              itemId: e.row.itemId, type: action, qty: e.qty,
-              ...(whCfg?.allow && fromWh && toWh ? { fromWarehouseId: fromWh } : {}),
-            },
-          });
-          if (data.tracking) tracked.push({ entry: e, pool: data });
-        } catch { /* pool lookup failed — the server auto-picks FIFO on confirm */ }
-      }
-      if (tracked.length) { setPicker(tracked); return; }
-      await submitMoves(null);
+      // CR-203: the defect dialog comes first; it calls runReplace with its answers.
+      if (action === 'replace') { setReplace({ entries: entered }); return; }
+      await pickThenMove(null);
     } finally {
       setBusy(false);
     }
   }
 
+  // CR-123: serial/batch-tracked lines get the picker before anything moves.
+  // Sequential lookups — the Catalyst dev tier throttles concurrent calls.
+  async function pickThenMove(meta) {
+    const tracked = [];
+    for (const e of entered) {
+      try {
+        const { data } = await axios.get('/api/wo/tracking-options', {
+          params: {
+            itemId: e.row.itemId, type: act.txnType || action, qty: e.qty, woId: workOrderId,
+            ...(whCfg?.allow && fromWh && toWh ? { fromWarehouseId: fromWh } : {}),
+          },
+        });
+        if (data.tracking) tracked.push({ entry: e, pool: data });
+      } catch { /* pool lookup failed — the server auto-picks FIFO on confirm */ }
+    }
+    if (tracked.length) { setPicker({ items: tracked }); return; }
+    await submitMoves(null, meta);
+  }
+
+  // CR-203: the defect dialog answered — pick the defective batches/serials, then post.
+  async function runReplace(meta) {
+    setReplace(null);
+    setReplaceMeta(meta);
+    setBusy(true);
+    try { await pickThenMove(meta); } finally { setBusy(false); }
+  }
+
   // Stock moves are per-FG server-side: one txn per FG, sequentially (the
   // Catalyst dev tier throttles concurrent calls). A failed FG keeps its
   // typed quantities so the user can fix and retry just that part.
-  async function submitMoves(trackingByKey) {
+  async function submitMoves(trackingByKey, meta) {
+    if (action === 'replace') return submitReplace(trackingByKey, meta || replaceMeta);
     const byFg = new Map();
     for (const e of entered) {
       if (!byFg.has(e.row.fgId)) byFg.set(e.row.fgId, []);
@@ -379,7 +405,101 @@ export default function MaterialsGrid({ workOrderId, fgs, status, onChanged, use
     try { await submitMoves(trackingByKey); } finally { setBusy(false); }
   }
 
-  if (!fgs.length) return <Empty>Add a finished good to this work order first.</Empty>;
+  // CR-243: the assembly POST runs here, after the modal/picker is gone — the
+  // Ready row shows "Assembling…" meanwhile, so the count can't change mid-flight.
+  async function runAssembly(fg, body) {
+    setAssembling(null);
+    setAssemblyRun(fg.id);
+    try {
+      const { data } = await axios.post(`/api/wo/${workOrderId}/fg/${fg.id}/assemble`, body);
+      // CR-175: the bundle lands at Issue, a Transfer Order moves the FG to Main.
+      if (data.transferWarning) toast.error(data.transferWarning, { duration: 12000 });
+      toast.success(
+        `Assembly ${data.bundleNumber} created — ${data.assembledQty}/${fg.qty} assembled`
+        + (data.serialRange ? ` · serials ${data.serialRange}` : '')
+        + (data.transferOrderNumber ? ` · moved to Main by ${data.transferOrderNumber}` : ''),
+        { duration: 7000 },
+      );
+      load();
+      onChanged?.();
+    } catch (err) {
+      const d = err.response?.data;
+      (d?.details || [d?.error || 'Could not create the assembly']).forEach(m => toast.error(m, { duration: 8000 }));
+    } finally { setAssemblyRun(null); }
+  }
+
+  // CR-203: one /replace call per FG (return + DefectReturn server-side). The
+  // row then waits in Store issues for the manager's decision (CR-244).
+  async function submitReplace(trackingByKey, meta) {
+    const byFg = new Map();
+    for (const e of entered) {
+      if (!byFg.has(e.row.fgId)) byFg.set(e.row.fgId, []);
+      byFg.get(e.row.fgId).push(e);
+    }
+    const failedKeys = new Set();
+    for (const [fgId, fgEntries] of byFg) {
+      try {
+        const { data } = await axios.post(`/api/wo/${workOrderId}/replace`, {
+          fgId, reason: meta?.reason, photoFileId: meta?.photo?.fileId, photoType: meta?.photo?.type,
+          lines: fgEntries.map(e => ({
+            itemId: e.row.itemId, qty: e.qty,
+            ...(trackingByKey?.[e.key] ? { tracking: trackingByKey[e.key] } : {}),
+          })),
+        });
+        toast.success(`Sent to Store issues — ${data.transferOrderNumber ? `Transfer Order ${data.transferOrderNumber}` : data.txnNumber} created`, { duration: 6000 });
+      } catch (err) {
+        const d = err.response?.data;
+        (d?.details || [d?.error || 'Could not record the defect']).forEach(m => toast.error(m, { duration: 6000 }));
+        fgEntries.forEach(e => failedKeys.add(e.key));
+      }
+    }
+    setReplaceMeta(null);
+    const keep = {};
+    for (const e of entered) if (failedKeys.has(e.key)) keep[e.key] = String(e.qty);
+    load(failedKeys.size ? keep : null);
+    onChanged?.();
+  }
+
+  // CR-204: Sales changed the SO line qty — apply it to the BOM, or acknowledge it.
+  async function applySoQty(g, ack) {
+    setBusy(true);
+    try {
+      const { data } = await axios.post(`/api/wo/${workOrderId}/fg/${g.workOrderFgId}/qty`, ack ? { ack: true } : { qty: g.soQty });
+      toast.success(ack ? 'Sales order quantity acknowledged' : `Quantity applied — now ${data.fgQty}${data.linesChanged ? `, ${data.linesChanged} line${data.linesChanged === 1 ? '' : 's'} rescaled` : ''}`);
+      load(qty);
+      onChanged?.();
+      if (!ack) onSoApplied?.(`${g.fgName} quantity changed to ${g.soQty}`);
+    } catch (err) {
+      const d = err.response?.data;
+      (d?.details || [d?.error || 'Could not apply the quantity']).forEach(m => toast.error(m, { duration: 7000 }));
+    } finally { setBusy(false); }
+  }
+
+  // CR-250: Sales added an SO line after the WO was raised — add it as a finished good, or dismiss.
+  async function addSoLine(p, ack) {
+    setBusy(true);
+    try {
+      const { data } = await axios.post(`/api/wo/${workOrderId}/so-line`, { lineItemId: p.lineItemId, ack });
+      if (ack) toast.success(`${p.name} dismissed`);
+      else toast.success(`${p.name} added — ${data.seeded[0]?.lines ?? 0} BOM line${data.seeded[0]?.lines === 1 ? '' : 's'}`);
+      (data.problems || []).forEach(m => toast.error(m, { duration: 7000 }));
+      load();
+      onChanged?.();
+      if (!ack) onSoApplied?.(`${p.name} × ${p.qty} added from the sales order`);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not add the line', { duration: 7000 });
+    } finally { setBusy(false); }
+  }
+
+  const newLineBanners = (soNewLines || []).map(p => (
+    <Banner key={p.lineItemId} tone="warn">
+      Sales order now has <b>{p.name}</b> × <b>{p.qty}</b> — not on this work order.
+      <button onClick={() => addSoLine(p, false)} disabled={busy} style={{ ...btn, marginLeft: 10, fontWeight: 600 }}>Add to work order</button>
+      <button onClick={() => addSoLine(p, true)} disabled={busy} style={{ ...btn, marginLeft: 6 }}>Dismiss</button>
+    </Banner>
+  ));
+
+  if (!fgs.length) return <>{newLineBanners}<Empty>Add a finished good to this work order first.</Empty></>;
 
   const whNames = Object.fromEntries((whCfg?.options || []).map(w => [String(w.id), w.name]));
   const leftLabel = `Left to ${act.verb.toLowerCase()}`;
@@ -513,11 +633,20 @@ export default function MaterialsGrid({ workOrderId, fgs, status, onChanged, use
           warehouses in <b>Settings</b> (account menu, top right).
         </Banner>
       )}
+      {/* CR-204: Sales changed an SO line qty — the planner applies or dismisses it here. */}
+      {(grids || []).filter(g => g.soQtyChanged).map(g => (
+        <Banner key={g.workOrderFgId} tone="warn">
+          Sales order quantity for <b>{g.fgName}</b> is now <b>{g.soQty}</b> — this work order is for {g.fgQty}.
+          <button onClick={() => applySoQty(g, false)} disabled={busy} style={{ ...btn, marginLeft: 10, fontWeight: 600 }}>Apply {g.soQty}</button>
+          <button onClick={() => applySoQty(g, true)} disabled={busy} style={{ ...btn, marginLeft: 6 }}>Dismiss</button>
+        </Banner>
+      ))}
+      {newLineBanners}
 
       {isAssembly ? (
         <AssemblyPanel
           ready={readyFgs} pending={pendingFgs} loading={loading} canAssemble={SHOP_FLOOR.includes(status)}
-          onAssemble={(f, q) => setAssembling({ ...f, initialQty: q })}
+          running={assemblyRun} onAssemble={(f, q) => setAssembling({ ...f, initialQty: q })}
         />
       ) : (<>
       <div style={{ flex: 1, overflow: 'auto', padding: '0 20px' }}>
@@ -622,18 +751,21 @@ export default function MaterialsGrid({ workOrderId, fgs, status, onChanged, use
           fg={assembling}
           whNames={whNames}
           onClose={() => setAssembling(null)}
-          onDone={msg => { setAssembling(null); toast.success(msg, { duration: 7000 }); load(); onChanged?.(); }}
+          onProceed={body => runAssembly(assembling, body)}
         />
       )}
       {picker && (
         <TrackingPicker
-          items={picker}
-          verb={act.verb}
+          items={picker.items}
+          verb={picker.verb || act.verb}
           whNames={whNames}
           canPickWarehouse={Boolean(whCfg?.allow)}
           onCancel={() => setPicker(null)}
-          onConfirm={confirmPicks}
+          onConfirm={picker.onConfirm || confirmPicks}
         />
+      )}
+      {replace && (
+        <ReplaceDialog entries={replace.entries} onCancel={() => setReplace(null)} onProceed={runReplace} />
       )}
     </div>
   );
@@ -642,7 +774,7 @@ export default function MaterialsGrid({ workOrderId, fgs, status, onChanged, use
 // Assembly tab (CR-172/174): two sections. Ready = every BOM line issued, with
 // a per-row quantity (prefilled to remaining, edit for a partial run) that
 // Proceed carries into the assemble modal. Pending = still waiting on issues.
-function AssemblyPanel({ ready, pending, loading, canAssemble, onAssemble }) {
+function AssemblyPanel({ ready, pending, loading, canAssemble, running, onAssemble }) {
   const [qtys, setQtys] = useState({}); // fgId -> typed qty ('' = remaining)
   const left = { ...num, textAlign: 'left', fontFamily: 'var(--font)' };
   const remaining = f => f.qty - (f.assembledQty || 0);
@@ -683,6 +815,9 @@ function AssemblyPanel({ ready, pending, loading, canAssemble, onAssemble }) {
               const rem = remaining(f);
               const q = qtyOf(f);
               const bad = !(q > 0 && q <= rem);
+              // CR-243: the assembly POST runs from here, not the modal — this row
+              // shows the progress; every row's Proceed waits (one run at a time).
+              const run = running === f.id;
               return (
                 <tr key={f.id} style={{ borderBottom: '1px solid var(--border)' }}>
                   {fgCell(f)}
@@ -693,23 +828,25 @@ function AssemblyPanel({ ready, pending, loading, canAssemble, onAssemble }) {
                   <td style={{ padding: '4px 8px' }}>
                     <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', alignItems: 'center' }}>
                       <input
-                        type="number" min="1" max={rem} step="1"
+                        type="number" min="1" max={rem} step="1" disabled={run}
                         value={qtys[f.id] ?? rem}
                         onChange={e => setQtys(s => ({ ...s, [f.id]: e.target.value }))}
                         title={`Up to ${rem} — less for a partial assembly`}
                         style={{
                           width: 72, padding: '5px 8px', fontSize: 13, textAlign: 'right', fontFamily: 'var(--font-mono)',
                           borderRadius: 'var(--radius-sm)', border: `1px solid ${bad ? '#dc2626' : 'var(--border)'}`,
-                          background: 'var(--bg-card)', color: bad ? '#dc2626' : 'inherit',
+                          background: 'var(--bg-card)', color: bad ? '#dc2626' : 'inherit', opacity: run ? 0.6 : 1,
                         }}
                       />
-                      <button onClick={() => setQtys(s => ({ ...s, [f.id]: String(rem) }))} style={maxBtn}>MAX</button>
+                      <button onClick={() => setQtys(s => ({ ...s, [f.id]: String(rem) }))} disabled={run} style={maxBtn}>MAX</button>
                     </div>
                   </td>
                   <td style={{ padding: '4px 8px', textAlign: 'right' }}>
-                    {canAssemble && (
+                    {run ? (
+                      <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>Assembling…</span>
+                    ) : canAssemble && (
                       <button
-                        onClick={() => onAssemble(f, q)} disabled={bad}
+                        onClick={() => onAssemble(f, q)} disabled={bad || Boolean(running)}
                         style={{ ...btn, background: bad ? 'var(--bg-card)' : 'var(--blue)', color: bad ? 'var(--text-muted)' : '#fff', borderColor: bad ? 'var(--border)' : 'var(--blue)', fontWeight: 600, cursor: bad ? 'not-allowed' : 'pointer' }}
                       >
                         Proceed Assembly
@@ -746,6 +883,117 @@ function AssemblyPanel({ ready, pending, loading, canAssemble, onAssemble }) {
         </table>
       )}
     </div>
+  );
+}
+
+/**
+ * Defect dialog (CR-203; trimmed in CR-244): reason (required) and photo
+ * (optional, ≤5 MB — uploaded first, the id rides with the replace call). The
+ * replacement is the store manager's call, made from Store issues.
+ */
+function ReplaceDialog({ entries, onCancel, onProceed }) {
+  const [reason, setReason] = useState('');
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const field = { ...select, width: '100%', maxWidth: 'none', boxSizing: 'border-box' };
+  const label = { display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 };
+
+  async function proceed() {
+    if (!reason.trim()) return toast.error('Give a reason for the defect');
+    if (file && file.size > 5 * 1024 * 1024) return toast.error('Photo must be under 5 MB');
+    setBusy(true);
+    try {
+      let photo = null;
+      if (file) {
+        const { data } = await axios.post('/api/wo/defects/photo', file, { headers: { 'Content-Type': file.type || 'image/jpeg' } });
+        photo = data;
+      }
+      onProceed({ reason: reason.trim(), photo });
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Photo upload failed');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title="Replace defective material" onClose={onCancel} width={640}>
+      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+        The defective units go back to the Main warehouse and are blocked from reuse. The store manager decides the
+        replacement (reissue, a different item or a purchase) and what happens to these units from <b>Store issues</b>.
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: '30vh', overflowY: 'auto' }}>
+        {entries.map(e => (
+          <div key={e.key} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
+            <span style={{ fontWeight: 600 }}>{e.row.name || e.row.itemId}</span>
+            <span style={{ fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap' }}>× {e.qty}</span>
+          </div>
+        ))}
+      </div>
+      <div>
+        <span style={label}>Reason</span>
+        <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3} placeholder="What is wrong with these units?" autoFocus
+          style={{ ...field, fontFamily: 'var(--font)', resize: 'vertical' }} />
+      </div>
+      <div>
+        <span style={label}>Photo (optional)</span>
+        <PhotoField file={file} onChange={setFile} />
+      </div>
+      <ModalFooter>
+        <ModalBtn onClick={onCancel}>Cancel</ModalBtn>
+        <ModalBtn variant="primary" onClick={proceed} disabled={busy || !reason.trim()}>{busy ? 'Uploading…' : 'Proceed Replace'}</ModalBtn>
+      </ModalFooter>
+    </Modal>
+  );
+}
+
+/**
+ * Photo upload control (CR-244): a click/drop zone over a hidden file input,
+ * thumbnail + name + size once chosen, ✕ to clear. Replaces the bare native
+ * input ("Choose file / No file chosen") nobody recognised as an upload.
+ */
+function PhotoField({ file, onChange }) {
+  const [over, setOver] = useState(false);
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    if (!file) { setUrl(null); return undefined; }
+    const u = URL.createObjectURL(file);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file]);
+  const pick = f => { if (f && f.type.startsWith('image/')) onChange(f); else if (f) toast.error('Choose an image file (JPG, PNG, HEIC)'); };
+  const zone = {
+    display: 'flex', alignItems: 'center', gap: 12, padding: file ? 8 : '18px 12px', cursor: 'pointer',
+    border: `2px dashed ${over ? 'var(--blue)' : 'var(--border)'}`, borderRadius: 'var(--radius-md)',
+    background: over ? 'rgba(37,99,235,0.05)' : 'var(--bg-card)', fontSize: 13, color: 'var(--text-secondary)',
+  };
+  return (
+    <label
+      style={zone}
+      onDragOver={e => { e.preventDefault(); setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={e => { e.preventDefault(); setOver(false); pick(e.dataTransfer.files?.[0]); }}
+    >
+      <input type="file" accept="image/*" hidden onChange={e => { pick(e.target.files?.[0]); e.target.value = ''; }} />
+      {file ? (
+        <>
+          <img src={url} alt="" style={{ height: 56, width: 72, objectFit: 'cover', borderRadius: 4, border: '1px solid var(--border)' }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{(file.size / 1024 / 1024).toFixed(2)} MB · click or drop to change</div>
+          </div>
+          <button type="button" onClick={e => { e.preventDefault(); onChange(null); }} title="Remove photo"
+            style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 16, color: 'var(--text-muted)', padding: '4px 8px' }}>✕</button>
+        </>
+      ) : (
+        <>
+          <span style={{ fontSize: 22 }}>📷</span>
+          <div>
+            <div style={{ fontWeight: 600, color: 'var(--text)' }}>Click to add a photo, or drag it here</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>JPG / PNG / HEIC · up to 5 MB · on a phone this opens the camera or gallery</div>
+          </div>
+        </>
+      )}
+    </label>
   );
 }
 
@@ -925,9 +1173,8 @@ export function TrackingPicker({ items, verb, whNames = {}, canPickWarehouse, on
 // the whole grid — matters on multi-hundred-line BOMs.
 const GridRow = memo(function GridRow({ r, act, visibleCols, qtyVal, ticked, onToggle, onQty, onSync, syncing }) {
   const cap = r[act.capKey];
-  // Uncapped action (Purchase): the input is always open — the cap only says
-  // what MAX would fill, it is not a limit on what may be requested.
-  const locked = !act.uncapped && cap <= 0;
+  // The box is always open (CR-197): a 0 cap no longer locks it. The cap still
+  // feeds MAX and paints an over-cap value red; the server refuses it on Proceed.
   const over = !act.uncapped && Number(qtyVal || 0) > cap;
   return (
     <tr style={{ borderBottom: '1px solid var(--border)' }}>
@@ -965,16 +1212,15 @@ const GridRow = memo(function GridRow({ r, act, visibleCols, qtyVal, ticked, onT
             type="number" min="0" max={act.uncapped ? undefined : cap} step="any"
             value={qtyVal}
             onChange={e => onQty(r.key, e.target.value)}
-            placeholder={locked ? '—' : '0'}
-            disabled={locked}
+            placeholder="0"
             title={act.uncapped
               ? (cap > 0 ? `Short by ${cap} — any quantity may be requested` : 'Not short — request extra if you need it')
-              : cap > 0 ? `Up to ${cap}` : `Nothing to ${act.verb.toLowerCase()} on this line`}
+              : cap > 0 ? `Up to ${cap}` : `Nothing to ${act.verb.toLowerCase()} on this line — Proceed will refuse more than 0`}
             style={{
               width: 72, padding: '5px 8px', fontSize: 13, textAlign: 'right',
               fontFamily: 'var(--font-mono)', borderRadius: 'var(--radius-sm)',
               border: `1px solid ${over ? '#dc2626' : 'var(--border)'}`,
-              background: locked ? 'var(--bg-page)' : 'var(--bg-card)',
+              background: 'var(--bg-card)',
               color: over ? '#dc2626' : 'inherit',
             }}
           />

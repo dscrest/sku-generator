@@ -51,7 +51,7 @@ async function listCompositeItems(catalyst) {
 // item's custom fields; omitted when empty. tracking:
 // 'none'|'serial'|'batch' from the push dialog; serial default matches
 // booksApi.createItem.
-async function createCompositeItem(catalyst, { name, sku, description, mappedItems, customFields, tracking = "serial", inventoryAccountId }) {
+async function createCompositeItem(catalyst, { name, sku, description, mappedItems, customFields, tracking = "serial", inventoryAccountId, unit, extra }) {
   const accountId = inventoryAccountId
     || (await getStockAccountId(catalyst, "finished goods"))
     || (await getStockAccountId(catalyst, "inventory asset"));
@@ -60,7 +60,7 @@ async function createCompositeItem(catalyst, { name, sku, description, mappedIte
     sku: sku || undefined,
     description: description || undefined,
     purchase_description: description || undefined,
-    unit: "pcs",
+    unit: unit || "pcs",
     item_type: "inventory",
     product_type: "goods",
     rate: 0,
@@ -69,6 +69,7 @@ async function createCompositeItem(catalyst, { name, sku, description, mappedIte
     track_batch_number: tracking === "batch",
     inventory_valuation_method: "fifo",
     inventory_account_id: accountId || undefined,
+    ...(extra || {}), // org-enabled item fields, e.g. hsn_or_sac / manufacturer (CR-209)
     mapped_items: (mappedItems || []).map((m) => ({ item_id: String(m.rmItemId), quantity: Number(m.perUnitQty) || 0 })),
     custom_fields: customFields && customFields.length ? customFields : undefined,
   }, "inventory");
@@ -264,9 +265,12 @@ async function withBatchFallback(catalyst, item, itemId, fromWarehouseId) {
 }
 
 // Fetch the item detail then pick its serial/batch numbers for a transfer line.
-async function availableSerialsBatches(catalyst, itemId, fromWarehouseId, qty, name) {
+// `blocked` (CR-203): the item's defective-block entry — those units are
+// removed from the pool before the FIFO pick.
+async function availableSerialsBatches(catalyst, itemId, fromWarehouseId, qty, name, blocked) {
   if (qty <= 0) return {};
   const item = await withBatchFallback(catalyst, await getItemStock(catalyst, itemId), itemId, fromWarehouseId);
+  if (blocked) require("../workorder/blocks").applyBlocks(item, blocked);
   return pickSerialsBatches(item, fromWarehouseId, qty, name);
 }
 
@@ -346,15 +350,16 @@ function trackingToLine(tracking) {
  *   value must be the salesorder_id — a plain "SO-00029" string is silently
  *   dropped by Zoho (verified against the live org).
  */
-async function createTransferOrder(catalyst, { date, fromWarehouseId, toWarehouseId, lines, reason, numberHint, soId }) {
+async function createTransferOrder(catalyst, { date, fromWarehouseId, toWarehouseId, lines, reason, numberHint, soId, blockedEntry }) {
   // The picks per line in the internal shape ({batch_number, quantity_transfer}
   // / serial_numbers) — the TO payload below renames them for Zoho, and the
   // caller's batch note needs the readable form.
   // Serial/batch-tracked items must carry their numbers or Zoho rejects the
   // line. An explicit user pick (CR-121, l.tracking) wins; otherwise FIFO
   // auto-pick — keeps auto-return sweeps and API callers working untouched.
+  // blockedEntry(itemId) → the defective-block entry to exclude (CR-203), optional.
   const picks = await Promise.all(lines.map((l) => trackingToLine(l.tracking)
-    || availableSerialsBatches(catalyst, l.rmItemId, fromWarehouseId, Number(l.qty) || 0, l.name)));
+    || availableSerialsBatches(catalyst, l.rmItemId, fromWarehouseId, Number(l.qty) || 0, l.name, blockedEntry ? blockedEntry(l.rmItemId) : null)));
   const pickedLines = lines.map((l, i) => ({ name: l.name || String(l.rmItemId), ...(picks[i] || {}) }));
   const line_items = lines.map((l, i) => {
     const picked = picks[i];
@@ -459,13 +464,19 @@ async function createBundle(catalyst, {
   date, referenceNumber, compositeItemId, compositeItemName, compositeItemSku,
   qty, components, finishedSerials, fromWarehouseId, description,
 }) {
+  const units = Number(qty) || 0;
   const line_items = await Promise.all(components.map(async (c) => {
     const picked = trackingToLine(c.tracking)
       || await availableSerialsBatches(catalyst, c.rmItemId, fromWarehouseId, Number(c.qty) || 0, c.name);
     return {
       item_id: String(c.rmItemId),
       name: c.name || String(c.rmItemId),
-      quantity_consumed: Number(c.qty) || 0,
+      // PER UNIT of the composite, not the total: Zoho multiplies it by
+      // quantity_to_bundle (total_quantity_consumed) and demands the serial/
+      // batch numbers add up to that product. Sending the total only worked
+      // for qty 1; qty 3 made Zoho expect 9 and reject with 2056 "make sure
+      // you have entered all the batches" (verified live, CR-201).
+      quantity_consumed: Math.round(((Number(c.qty) || 0) / (units || 1)) * 1e4) / 1e4,
       // No per-line location: the bundle's header location_id is where every
       // component is consumed (verified against /bundles/editpage, CR-175).
       ...(picked.serial_numbers ? { serial_numbers: picked.serial_numbers } : {}),
@@ -483,7 +494,6 @@ async function createBundle(catalyst, {
   ];
   let [fgSerial, fgBatch] = tracked(await getItemStock(catalyst, compositeItemId).catch(() => null));
   if (!fgSerial && !fgBatch) [fgSerial, fgBatch] = tracked(await getCompositeItem(catalyst, compositeItemId).catch(() => null));
-  const units = Number(qty) || 0;
   const body = {
     reference_number: String(referenceNumber),
     date,
@@ -500,26 +510,46 @@ async function createBundle(catalyst, {
   // Zoho auto-numbers the bundle's Reference#; a manual value needs the
   // standard ignore flag (error 4097 otherwise). If the org still rejects it,
   // let Zoho number the bundle — the WO reference lives in `description` too.
-  // 900001 ("unable to process your request… try again") is Zoho's internal
-  // error: retry once after a pause, and log the body so a repeat is
-  // diagnosable — the exact payload replayed by hand validated fine (CR-175).
+  // Every rejection logs the body (CR-201: a 2056 took a live replay to
+  // diagnose because only 900001 was logged). 900001 ("unable to process your
+  // request… try again") is Zoho's internal error: retry once after a pause —
+  // the exact payload replayed by hand validated fine (CR-175).
   const post = async (b, path) => {
     try {
       return await apiRequest(catalyst, "POST", path, b, "inventory");
     } catch (err) {
+      console.error(`bundle rejected (${err.zohoCode}); body:`, JSON.stringify(b));
       if (err.zohoCode !== 900001) throw err;
-      console.error("bundle 900001, retrying once; body:", JSON.stringify(b));
       await new Promise((r) => setTimeout(r, 3000));
       return apiRequest(catalyst, "POST", path, b, "inventory");
     }
   };
+  let data;
   try {
-    return await post(body, "/bundles?ignore_auto_number_generation=true");
+    data = await post(body, "/bundles?ignore_auto_number_generation=true");
   } catch (err) {
     if (err.zohoCode !== 4097) throw err;
     delete body.reference_number;
-    return post(body, "/bundles"); // { bundle_id, transaction_number, ... }
+    data = await post(body, "/bundles");
   }
+  // The envelope is { code, message, bundle:{ bundle_id, transaction_number, … } }.
+  // CR-212: the envelope itself used to be returned, so every stored
+  // zohoBundleId was blank and Delete assembly skipped Zoho silently.
+  return data.bundle || data;
+}
+
+// Bundle id from its number (CR-212 — rows stored before the fix above have no
+// id). Matches the reference or transaction number exactly.
+async function findBundleByNumber(catalyst, number) {
+  if (!number) return null;
+  const match = (list) => (list || []).find((b) =>
+    String(b.reference_number) === String(number) || String(b.transaction_number) === String(number));
+  let hit = null;
+  try {
+    hit = match((await apiRequest(catalyst, "GET", `/bundles?reference_number=${encodeURIComponent(String(number))}`, null, "inventory")).bundles);
+  } catch { /* filter unsupported on this edition — scan below */ }
+  if (!hit) hit = match((await apiRequest(catalyst, "GET", "/bundles?per_page=200&sort_column=date&sort_order=D", null, "inventory")).bundles);
+  return hit ? String(hit.bundle_id) : null;
 }
 
 async function getTransferOrder(catalyst, transferOrderId) {
@@ -527,11 +557,78 @@ async function getTransferOrder(catalyst, transferOrderId) {
   return data.transfer_order;
 }
 
+// Transfer order id from its number (CR-212: assemblies from before CR-202
+// stored only the number). Zoho's list filter is `transfer_order_number`; the
+// exact match is re-checked because some editions treat it as "contains".
+async function findTransferOrderByNumber(catalyst, number) {
+  if (!number) return null;
+  const data = await apiRequest(
+    catalyst, "GET", `/transferorders?transfer_order_number=${encodeURIComponent(String(number))}`, null, "inventory",
+  );
+  const hit = (data.transfer_orders || []).find((t) => String(t.transfer_order_number) === String(number));
+  return hit ? String(hit.transfer_order_id) : null;
+}
+
+// CR-202: undo an assembly. Zoho refuses when the stock has moved on (the FG
+// invoiced, the TO's destination stock consumed) — that error surfaces verbatim.
+async function deleteTransferOrder(catalyst, transferOrderId) {
+  await apiRequest(catalyst, "DELETE", `/transferorders/${transferOrderId}`, null, "inventory");
+}
+
+async function deleteBundle(catalyst, bundleId) {
+  await apiRequest(catalyst, "DELETE", `/bundles/${bundleId}`, null, "inventory");
+}
+
+// CR-223: SKU-item delete clears the Books composite too. Zoho refuses when
+// the item has transactions — that error surfaces verbatim.
+async function deleteCompositeItem(catalyst, itemId) {
+  await apiRequest(catalyst, "DELETE", `/compositeitems/${itemId}`, null, "inventory");
+}
+
+/**
+ * Pure: body for a negative quantity adjustment (CR-203 — defective units
+ * written off at the Main location). `tracking` is the CR-123 picks shape.
+ * ponytail: doc-derived field names (adjustment_type, location_id,
+ * line_items[].quantity_adjusted, batches[].out_quantity) — verify against
+ * GET /inventoryadjustments/editpage on the first live write-off; the body
+ * is logged on every rejection for that purpose.
+ */
+function adjustmentBody({ itemId, qty, locationId, reason, description, tracking, date }) {
+  const picked = trackingToLine(tracking) || {};
+  return {
+    date: date || new Date().toISOString().slice(0, 10),
+    reason: reason || "Defective material written off",
+    description: description || undefined,
+    adjustment_type: "quantity",
+    location_id: String(locationId),
+    line_items: [{
+      item_id: String(itemId),
+      quantity_adjusted: -Math.abs(num(qty)),
+      location_id: String(locationId),
+      ...(picked.serial_numbers ? { serial_numbers: picked.serial_numbers } : {}),
+      ...(picked.batches
+        ? { batches: picked.batches.map((b) => ({ batch_id: String(b.batch_id || ""), batch_number: b.batch_number, out_quantity: num(b.quantity_transfer) })) }
+        : {}),
+    }],
+  };
+}
+
+async function createInventoryAdjustment(catalyst, opts) {
+  const body = adjustmentBody(opts);
+  try {
+    const data = await apiRequest(catalyst, "POST", "/inventoryadjustments", body, "inventory");
+    return data.inventory_adjustment || {};
+  } catch (err) {
+    console.error("inventory adjustment rejected:", err.message, JSON.stringify(body));
+    throw err;
+  }
+}
+
 module.exports = {
   isService, getCompositeItem, updateCompositeItem, updateCompositeItemFields, listCompositeItems, createCompositeItem,
-  listWarehouses, getItemStock, listItemsWithStock, createTransferOrder, getTransferOrder,
+  listWarehouses, getItemStock, listItemsWithStock, createTransferOrder, getTransferOrder, deleteTransferOrder, findTransferOrderByNumber,
   availableSerialsBatches, pickSerialsBatches, listSerialsBatches, withBatchFallback, listItemBatchRecords, batchRecordsToPool,
-  trackingToLine, createBundle, finishedProductFields,
+  trackingToLine, createBundle, deleteBundle, deleteCompositeItem, findBundleByNumber, finishedProductFields, adjustmentBody, createInventoryAdjustment,
 };
 
 // ponytail self-check: `node functions/skuapi/zoho/inventoryApi.js --selftest`

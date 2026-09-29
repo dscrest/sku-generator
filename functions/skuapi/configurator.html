@@ -8,6 +8,8 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     * { box-sizing: border-box; }
+    input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+    input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 13.5px; color: #0f172a; background: #e9ecf1; -webkit-font-smoothing: antialiased; }
     .center { display: grid; place-items: center; min-height: 100vh; text-align: center; padding: 24px; }
     .center > div { background: #fff; border-radius: 14px; padding: 32px 40px; box-shadow: 0 1px 2px rgba(15,23,42,.06), 0 12px 40px rgba(15,23,42,.10); }
@@ -27,9 +29,43 @@
 
     #panes { display: flex; flex: 1; min-height: 0; }
     #left { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid #e5e7eb; }
-    #right { flex: 0 1 320px; min-width: 260px; background: #f8fafc; display: flex; flex-direction: column; min-height: 0; }
+    #right { flex: 0 1 440px; min-width: 380px; background: #f8fafc; display: flex; flex-direction: column; min-height: 0; }
     #head { flex: none; display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid #e5e7eb; }
     #head .ttl { font-size: 15px; font-weight: 600; letter-spacing: -.01em; flex: 1; }
+    /* step pills (CR-246): 1 Valve → 2 Configuration */
+    #steps { display: flex; gap: 6px; }
+    .step { display: flex; align-items: center; gap: 7px; border: 1px solid #d9dfe8; border-radius: 999px; padding: 4px 12px 4px 5px; font-size: 12.5px; font-weight: 500; color: #64748b; background: #fff; }
+    .step .n { width: 20px; height: 20px; border-radius: 50%; background: #eef2f7; color: #64748b; display: grid; place-items: center; font-size: 11px; font-weight: 600; }
+    .step.on { border-color: #0f766e; color: #0f766e; background: #f0fdfa; }
+    .step.on .n { background: #0f766e; color: #fff; }
+    .step:disabled { opacity: .5; }
+    #step-foot { display: flex; justify-content: flex-end; margin-top: 14px; }
+    #next-btn { padding: 9px 16px; font-weight: 600; border-radius: 9px; }
+    #back-link { border: 0; background: none; color: #0f766e; font-size: 12.5px; font-weight: 500; padding: 0; margin-top: 12px; }
+    #back-link:hover { text-decoration: underline; }
+    /* vertical question rows (CR-246) — MSUN Quote Maker's parameter list, expanding inline */
+    #qs { display: flex; flex-direction: column; gap: 2px; }
+    #qs .sec { margin: 12px 0 4px; }
+    .q { border-radius: 8px; background: #fff; border: 1px solid transparent; }
+    .q.open { border-color: #99d5cf; }
+    .q-row { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; text-align: left; padding: 7px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; color: #334155; min-width: 0; }
+    .q-row:hover { background: #eef2f7; }
+    .q-row .num { width: 18px; height: 18px; border-radius: 50%; background: #eef2f7; color: #64748b; display: grid; place-items: center; font-size: 10px; flex: none; }
+    .q-row .cap { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+    .q-row .cap .req { color: #dc2626; }
+    .q-row .val { flex: none; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: #94a3b8; }
+    .q.set .q-row { background: #f0fdfa; }
+    .q.set .q-row .val { color: #0f766e; font-weight: 600; }
+    .q-row .x { display: none; flex: none; color: #94a3b8; font-size: 13px; line-height: 1; padding: 0 2px; }
+    .q.set .q-row .x { display: block; }
+    .q-row .x:hover { color: #dc2626; }
+    .q-body { padding: 2px 8px 8px 34px; }
+    .q-opt { padding: 6px 8px; border-radius: 6px; font-size: 12.5px; color: #0f172a; cursor: pointer; }
+    .q-opt:hover { background: #eef2f7; }
+    .q-opt.on { background: #f0fdfa; color: #0f766e; font-weight: 600; }
+    .q-body .rng { display: flex; gap: 8px; align-items: center; }
+    .q-body .rng input { width: 140px; font-size: 13px; }
+    .q-body .q-find { width: 100%; font-size: 12.5px; padding: 5px 8px; border-radius: 6px; margin-bottom: 4px; }
     #form { flex: 1; overflow: auto; padding: 4px 20px 16px; }
     .sec { font: 600 11px 'IBM Plex Sans', sans-serif; letter-spacing: .06em; text-transform: uppercase; color: #64748b; margin: 16px 0 8px; }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px 12px; }
@@ -37,12 +73,24 @@
     .fld .req { color: #dc2626; }
     .fld select, .fld input { width: 100%; font-size: 13px; }
     .fld.set select, .fld.set input { border-color: #99d5cf; background: #f0fdfa; }
-    #find-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
-    #find-msg { font-size: 12.5px; }
-    #sizing { margin-top: 12px; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; }
+    /* Valve Selection Section card (CR-218) */
+    .hl { margin-top: 16px; padding: 2px 14px 14px; background: #f0fdfa; border: 1px solid #99d5cf; border-radius: 10px; }
+    .hl .sec { margin-top: 10px; }
+    .hl .fld input[readonly] { background: #fff; }
+    /* RAV type · Find · Motor/Bare Shaft radio in one row above the sizing table (CR-224) */
+    /* same columns as the duty grid: RAV type under Capacity, radio across the middle, Find under Volume */
+    #find-row { margin-top: 10px; align-items: end; }
+    #op-row { grid-column: 2 / -2; }
+    #find-btn { grid-column: -2; justify-self: start; }
+    #find-msg { font-size: 12.5px; margin-top: 6px; }
+    #find-msg:empty { display: none; }
+    #op-row { display: flex; gap: 18px; align-items: center; height: 31px; font-size: 13px; color: #0f172a; }
+    #op-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    #op-row input { accent-color: #0f766e; margin: 0; }
+    #sizing { border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; background: #fff; }
     #sizing .cap { display: flex; align-items: baseline; gap: 10px; padding: 10px 14px; background: #f8fafc; border-bottom: 1px solid #e5e7eb; font-size: 12.5px; color: #64748b; }
     #sizing .cap b { font-size: 16px; color: #0f172a; font-variant-numeric: tabular-nums; }
-    .opt { display: grid; grid-template-columns: 18px 190px minmax(90px, 1fr) 100px 120px 96px; white-space: nowrap; gap: 10px; align-items: center; padding: 8px 14px; border-bottom: 1px solid #eef1f5; cursor: pointer; font-size: 13px; font-variant-numeric: tabular-nums; }
+    .opt { display: grid; grid-template-columns: 18px 190px minmax(90px, 1fr) 100px 120px; white-space: nowrap; gap: 10px; align-items: center; padding: 8px 14px; border-bottom: 1px solid #eef1f5; cursor: pointer; font-size: 13px; font-variant-numeric: tabular-nums; }
     .opt:last-child { border-bottom: 0; }
     .opt:hover { background: #f8fafc; }
     .opt.on { background: #f0fdfa; }
@@ -50,18 +98,13 @@
     .opt.on .dot { border: 4.5px solid #0f766e; }
     .opt .m { font-weight: 600; }
     .opt .s, .opt .r { color: #64748b; font-size: 12.5px; }
-    .opt .sp { color: #0f766e; font-size: 12px; text-align: right; }
-    .opt.up { font-size: 12.5px; color: #64748b; }
-    .opt.up .m { font-weight: 500; }
-    .opt.up .dot { visibility: hidden; }
-    .opt.up.on .dot { visibility: visible; }
     .big { padding: 8px 14px; font-size: 12.5px; color: #b45309; background: #fffbeb; border-bottom: 1px solid #eef1f5; }
     #result { flex: none; border-top: 1px solid #e5e7eb; background: #fff; padding: 12px 20px; display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
     #res-main { flex: 1; min-width: 220px; }
     #res-sku { font: 500 14px 'IBM Plex Mono', monospace; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     #res-name { font-size: 12.5px; color: #64748b; margin-top: 2px; }
     #res-msg { font-size: 12.5px; margin-top: 2px; }
-    #res-comps { font-size: 12px; margin-top: 6px; max-height: 132px; overflow-y: auto; }
+    #res-comps { font-size: 12px; margin-top: 6px; max-height: 180px; overflow-y: auto; }
     #res-comps div { display: flex; gap: 8px; padding: 2px 0; border-top: 1px solid #eef2f6; }
     #res-comps .c-name { flex: 0 0 120px; color: #64748b; }
     #res-comps .c-item { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -69,15 +112,14 @@
     .badge.exists { color: #15803d; background: #dcfce7; }
     .badge.fresh { color: #b45309; background: #fef3c7; }
     #result label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; color: #64748b; font-weight: 500; }
-    #result label input { width: 84px; text-align: right; }
-    #result label input[type=checkbox] { width: 18px; height: 18px; margin: 7px 0; }
+    #result label input { width: 120px; text-align: right; font-variant-numeric: tabular-nums; }
     #res-add { padding: 8px 16px; font-weight: 600; }
 
     /* quote lines */
     #lines-head { padding: 14px 16px 8px; display: flex; align-items: baseline; justify-content: space-between; font-size: 14.5px; font-weight: 600; }
     #lines-clear { border: 0; background: none; color: #64748b; font-size: 12px; padding: 0; font-weight: 400; }
     #lines-clear:hover { color: #0f172a; }
-    #lines { flex: 1; overflow: auto; padding: 0 12px; display: flex; flex-direction: column; gap: 8px; }
+    #lines { flex: 1; overflow: auto; padding: 0 12px; display: flex; flex-direction: column; gap: 8px; position: relative; }
     .l-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px 10px 10px 4px; display: grid; grid-template-columns: 18px minmax(0,1fr); gap: 4px; }
     .l-move { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
     .l-move button { border: 0; background: none; color: #94a3b8; font-size: 9px; line-height: 1; padding: 2px; }
@@ -92,14 +134,52 @@
     .badge.type { color: #475569; background: #e2e8f0; }
     .l-x { border: 0; background: none; color: #94a3b8; font-size: 15px; line-height: 1; padding: 0 2px; }
     .l-x:hover { color: #dc2626; }
-    .l-grid { display: grid; grid-template-columns: 56px 1fr 56px minmax(0,1fr); gap: 6px; align-items: end; margin-top: 8px; }
+    /* Qty · UOM · Base price · Disc % — no total in the row (CR-248); Price detail carries the amount */
+    .l-grid { display: grid; grid-template-columns: minmax(56px,1fr) minmax(76px,1.2fr) minmax(120px,2fr) minmax(60px,1fr); gap: 6px; align-items: end; margin-top: 8px; }
     .l-grid label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; color: #64748b; font-weight: 500; }
-    .l-grid input { width: 100%; padding: 5px 7px; text-align: right; border-radius: 6px; font-size: 13px; }
-    .l-total { text-align: right; font-size: 13.5px; font-weight: 600; padding-bottom: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .l-grid input, .l-grid select { width: 100%; padding: 5px 7px; text-align: right; border-radius: 6px; font-size: 13px; font-variant-numeric: tabular-nums; }
     .l-empty { margin: 8px 4px; padding: 26px 14px; border: 1.5px dashed #d9dfe8; border-radius: 10px; text-align: center; color: #64748b; line-height: 1.5; }
     #lines-foot { flex: none; padding: 12px 16px; border-bottom: 1px solid #e5e7eb; background: #fff; display: flex; flex-direction: column; gap: 10px; }
-    #subtotal-row { display: flex; justify-content: space-between; font-size: 12.5px; color: #64748b; }
-    #subtotal { color: #0f172a; font-weight: 600; font-size: 14.5px; font-variant-numeric: tabular-nums; }
+    /* line class (CR-220): Mfg cream / BO blue tint + 3px stripe, chip */
+    .l-card.mfg { background: #FCE8D8; box-shadow: inset 3px 0 0 #E07A2F; }
+    .l-card.bo { background: #D9ECF3; box-shadow: inset 3px 0 0 #3B8FB5; }
+    .badge.cls { font-weight: 600; text-transform: uppercase; font-size: 10.5px; padding: 2px 6px; }
+    .badge.cls.mfg { background: #FCE8D8; color: #7A3E10; border: 1px solid #f0c9ad; }
+    .badge.cls.bo { background: #D9ECF3; color: #0F4C66; border: 1px solid #b9d9e6; }
+    .l-card.mfg .badge.cls, .l-card.bo .badge.cls { background: #fff; }
+    /* card actions (CR-246): Edit · BOM · Price detail — no unit caption, the total already shows it */
+    .l-unit { grid-column: 1 / -1; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+    .l-unit button { height: 24px; padding: 0 10px; font-size: 12px; font-weight: 500; border-radius: 9px; }
+    #pop .bom { max-height: 260px; overflow-y: auto; font-size: 12px; }
+    #pop .bom div { display: flex; gap: 8px; padding: 3px 0; border-top: 1px solid #eef2f6; }
+    #pop .bom .c-name { flex: 0 0 110px; color: #64748b; }
+    #pop .bom .c-item { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #pop .bom .c-qty { font-family: 'IBM Plex Mono', monospace; white-space: nowrap; }
+    #pop .bom .error { color: #b91c1c; }
+    #save-btn { padding: 8px 14px; font-size: 13px; font-weight: 500; border-radius: 9px; }
+    #res-cancel { border: 0; background: none; color: #64748b; font-size: 12px; padding: 0 4px; }
+    #res-cancel:hover { color: #0f172a; text-decoration: underline; }
+    /* price detail popover (CR-220, mockup frame 1e) */
+    #pop-scrim { position: absolute; inset: 0; z-index: 4; }
+    #pop { position: absolute; right: 14px; width: 340px; max-width: calc(100% - 28px); background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; box-shadow: 0 12px 32px rgba(15,23,42,.14); z-index: 5; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+    #pop .p-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    #pop .p-head b { font-weight: 500; }
+    #pop .p-head span { font: 12px 'IBM Plex Mono', monospace; color: #64748b; }
+    #pop .p-in { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end; }
+    #pop .p-in label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: #64748b; }
+    #pop .p-in input { height: 30px; text-align: right; font-variant-numeric: tabular-nums; border-radius: 9px; }
+    #pop .seg { display: grid; grid-template-columns: 1fr 1fr; height: 30px; border: 1px solid #e5e7eb; border-radius: 9px; padding: 2px; gap: 2px; background: #f8fafc; }
+    #pop .seg button { border: 0; border-radius: 7px; background: transparent; color: #64748b; font-weight: 500; padding: 0; }
+    #pop .seg button.on { background: #fff; color: #0f172a; box-shadow: 0 1px 2px rgba(15,23,42,.10); }
+    #pop table { width: 100%; border: 1px solid #e5e7eb; border-radius: 9px; border-spacing: 0; overflow: hidden; font-variant-numeric: tabular-nums; }
+    #pop th { height: 26px; font-size: 11px; font-weight: 400; color: #64748b; background: #f8fafc; border-bottom: 1px solid #e5e7eb; text-align: right; padding: 0 10px; }
+    #pop th:first-child, #pop td:first-child { text-align: left; }
+    #pop td { height: 28px; padding: 0 10px; border-bottom: 1px solid #f1f5f9; text-align: right; transition: background .6s; }
+    #pop td.pct { color: #64748b; }
+    #pop tr.flash td { background: #FEF9C3; }
+    #pop tr.tot td { height: 32px; font-weight: 500; border-bottom: 0; }
+    #pop .p-foot { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: #64748b; }
+    #pop .p-foot .note { color: #B45309; }
     #add-btn { padding: 11px 14px; font-size: 13.5px; font-weight: 600; border-radius: 9px; }
     #quote-btn { padding: 10px 14px; font-size: 13px; font-weight: 600; border-radius: 9px; }
     #status { font-size: 12px; color: #0f766e; }
@@ -125,8 +205,13 @@
       <div id="left">
         <div id="head">
           <span class="ttl">Product Configurator</span>
-          <label class="muted" for="product">Product</label>
-          <select id="product"></select>
+          <!-- ponytail: product picker hidden, RAV is the only live product; unhide when a second one ships -->
+          <label class="muted hidden" for="product">Product</label>
+          <select id="product" class="hidden"></select>
+          <div id="steps" class="hidden">
+            <button type="button" class="step on" data-step="1"><span class="n">1</span>Valve</button>
+            <button type="button" class="step" data-step="2" disabled><span class="n">2</span>Configuration</button>
+          </div>
         </div>
         <div id="form"><p class="muted">Loading questions…</p></div>
         <div id="result">
@@ -136,18 +221,17 @@
             <div id="res-msg"></div>
             <div id="res-comps"></div>
           </div>
-          <label id="res-push-lab" class="hidden" title="Push the new item to Zoho Books now. Off = saved to the SKU master only; push it later from the SKU Items page.">Push to Books<input id="res-push" type="checkbox" checked /></label>
-          <label>Qty<input id="res-qty" type="number" min="1" value="1" /></label>
-          <label>Rate<input id="res-rate" type="number" min="0" /></label>
+          <label>Base price<input id="res-rate" type="number" min="0" /></label>
           <button id="res-add" class="primary" disabled>Add to lines</button>
+          <button id="res-cancel" type="button" class="hidden">Cancel edit</button>
         </div>
       </div>
       <div id="right">
         <div id="lines-head"><span>Quote lines <span id="line-count" class="muted">0</span></span><button id="lines-clear" class="hidden">Clear</button></div>
         <div id="lines-foot">
-          <div id="subtotal-row"><span id="subtotal-units">Subtotal</span><span id="subtotal">0.00</span></div>
           <button id="add-btn" class="primary" disabled>Add item to Quote</button>
           <button id="quote-btn" class="primary hidden" disabled>Create Quote</button>
+          <button id="save-btn" type="button" disabled title="Keep these lines and their configuration on this record — reopen the Configurator later to edit them">Save</button>
           <span id="status"></span>
         </div>
         <div id="lines"><div class="l-empty">No lines yet.<br>Configure a product and add it.</div></div>
@@ -156,6 +240,252 @@
   </div></div>
 
 <script>
+// Searchable dropdowns (CR-265): every native <select> opens a type-to-filter
+// panel instead of the OS popup. The select stays the source of truth — a pick
+// sets it and fires a native change, so no call site knows the difference and
+// any new <select> is covered without being asked.
+// ES5, no imports: everything above the export line is pasted verbatim at the
+// top of each widget's <script> (self-contained by packaging; first, so a
+// failed widget init can't skip it); searchableSelect.test.js fails on drift.
+var SS_MAX_H = 240;   // list height cap
+var SS_HEAD = 48;     // search box + panel padding above the list
+var SS_PANEL_CSS = 'position:fixed;z-index:2000;box-sizing:border-box;padding:4px;text-align:left;' +
+  'background:var(--bg-card,#fff);border:1px solid var(--border,#d9dfe8);border-radius:var(--radius-md,8px);' +
+  'box-shadow:0 8px 24px rgba(0,0,0,.14);font-size:13px;font-weight:400;color:var(--text-primary,#0f172a);';
+var SS_INPUT_CSS = 'display:block;width:100%;box-sizing:border-box;margin:0 0 4px;padding:6px 8px;' +
+  'font:inherit;font-size:13px;text-align:left;outline:none;color:inherit;background:var(--bg-card,#fff);' +
+  'border:1px solid var(--border,#d9dfe8);border-radius:6px;';
+var SS_ROW_CSS = 'padding:7px 10px;border-radius:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+
+function optionRows(select) {
+  var rows = [];
+  for (var i = 0; i < select.options.length; i++) {
+    var o = select.options[i];
+    rows.push({ i: i, label: o.text, disabled: Boolean(o.disabled), selected: i === select.selectedIndex });
+  }
+  return rows;
+}
+
+function filterRows(rows, q) {
+  var s = String(q || '').trim().toLowerCase();
+  if (!s) return rows;
+  return rows.filter(function (r) { return r.label.toLowerCase().indexOf(s) !== -1; });
+}
+
+// Next pickable index from `from` in direction `delta`; stays put at the ends,
+// -1 when nothing is pickable.
+function stepActive(rows, from, delta) {
+  for (var i = from + delta; i >= 0 && i < rows.length; i += delta) {
+    if (!rows[i].disabled) return i;
+  }
+  return rows[from] && !rows[from].disabled ? from : -1;
+}
+
+// Panel box from the select's rect: below by default, above when that side has
+// more room; never narrower than 180 (page-size, table cells) nor off-screen.
+function placePanel(rect, vw, vh) {
+  var below = vh - rect.bottom;
+  var up = below < SS_MAX_H + SS_HEAD && rect.top > below;
+  var minWidth = Math.min(Math.max(rect.width, 180), vw - 16);
+  var pos = {
+    left: Math.max(8, Math.min(rect.left, vw - minWidth - 8)),
+    minWidth: minWidth,
+    maxWidth: Math.max(minWidth, Math.min(420, vw - 16)),
+    maxHeight: Math.max(80, Math.min(SS_MAX_H, (up ? rect.top : below) - SS_HEAD - 12)),
+  };
+  if (up) pos.bottom = vh - rect.top + 4; else pos.top = rect.bottom + 4;
+  return pos;
+}
+
+// Keys that open the panel from a focused select. Enter is left alone: it
+// submits modal forms and walks grid columns.
+function isOpenKey(e) {
+  if (e.ctrlKey || e.metaKey) return false;
+  var k = e.key || '';
+  if (k === 'ArrowDown' || k === 'ArrowUp' || k === 'F4') return true;
+  return !e.altKey && k.length === 1;
+}
+
+function installSearchableSelects(doc) {
+  if (doc.__searchableSelects) return;
+  doc.__searchableSelects = true;
+  var win = doc.defaultView;
+  // ponytail: touch devices keep the OS picker (no search there) — build a
+  // touch panel if phones/tablets become a target.
+  if (win.matchMedia && win.matchMedia('(hover: none)').matches) return;
+
+  var cur = null; // the open panel: { select, panel, input, list, rows, shown, active, observer }
+
+  function close(refocus) {
+    if (!cur) return;
+    var c = cur;
+    cur = null;
+    c.observer.disconnect();
+    if (c.panel.parentNode) c.panel.parentNode.removeChild(c.panel);
+    if (refocus && c.select.isConnected) c.select.focus();
+  }
+
+  // Close first: a change handler may rebuild the row this select lives in.
+  function pick(row) {
+    if (row.disabled) return;
+    var select = cur.select;
+    close(false);
+    if (select.selectedIndex !== row.i) {
+      select.selectedIndex = row.i;
+      select.dispatchEvent(new Event('input', { bubbles: true }));
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    if (select.isConnected) select.focus();
+  }
+
+  function paint(scroll) {
+    var kids = cur.list.children;
+    for (var n = 0; n < cur.shown.length; n++) {
+      kids[n].style.background = n === cur.active ? 'var(--bg-secondary,#eef2f7)' : 'none';
+      if (scroll && n === cur.active && kids[n].scrollIntoView) kids[n].scrollIntoView({ block: 'nearest' });
+    }
+    cur.input.setAttribute('aria-activedescendant', cur.active >= 0 ? 'ss-opt-' + cur.active : '');
+  }
+
+  function build() {
+    cur.shown = filterRows(cur.rows, cur.input.value);
+    cur.list.textContent = '';
+    cur.shown.forEach(function (r, n) {
+      var d = doc.createElement('div');
+      d.id = 'ss-opt-' + n;
+      d.setAttribute('role', 'option');
+      d.setAttribute('aria-selected', r.selected ? 'true' : 'false');
+      if (r.disabled) d.setAttribute('aria-disabled', 'true');
+      d.textContent = r.label || ' ';
+      d.title = r.label;
+      d.style.cssText = SS_ROW_CSS + (r.disabled ? 'opacity:.5;cursor:default;' : 'cursor:pointer;') +
+        (r.selected ? 'font-weight:600;' : '');
+      d.addEventListener('mouseenter', function () { if (!r.disabled) { cur.active = n; paint(false); } });
+      d.addEventListener('click', function () { pick(r); });
+      cur.list.appendChild(d);
+    });
+    if (!cur.shown.length) {
+      var none = doc.createElement('div');
+      none.textContent = 'No matches';
+      none.style.cssText = SS_ROW_CSS + 'color:var(--text-muted,#94a3b8);';
+      cur.list.appendChild(none);
+    }
+  }
+
+  function show(select, typed) {
+    var pos = placePanel(select.getBoundingClientRect(), win.innerWidth, win.innerHeight);
+    var panel = doc.createElement('div');
+    panel.setAttribute('data-searchable-select', '');
+    panel.style.cssText = SS_PANEL_CSS + 'left:' + pos.left + 'px;min-width:' + pos.minWidth + 'px;max-width:' + pos.maxWidth + 'px;' +
+      (pos.top === undefined ? 'bottom:' + pos.bottom + 'px;' : 'top:' + pos.top + 'px;');
+    var input = doc.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Search…';
+    input.autocomplete = 'off';
+    input.value = typed;
+    input.setAttribute('role', 'combobox');
+    input.setAttribute('aria-expanded', 'true');
+    input.setAttribute('aria-controls', 'ss-list');
+    input.setAttribute('aria-label', 'Search options');
+    input.style.cssText = SS_INPUT_CSS;
+    var list = doc.createElement('div');
+    list.id = 'ss-list';
+    list.setAttribute('role', 'listbox');
+    list.style.cssText = 'overflow-y:auto;max-height:' + pos.maxHeight + 'px;';
+    panel.appendChild(input);
+    panel.appendChild(list);
+
+    // Rebuild when the app re-renders the options; vanish with the select.
+    var observer = new win.MutationObserver(function (muts) {
+      if (!cur) return;
+      if (!cur.select.isConnected) return close(false);
+      for (var m = 0; m < muts.length; m++) {
+        if (cur.select.contains(muts[m].target)) {
+          cur.rows = optionRows(cur.select);
+          build();
+          cur.active = stepActive(cur.shown, -1, 1);
+          paint(true);
+          return;
+        }
+      }
+    });
+    cur = { select: select, panel: panel, input: input, list: list, rows: optionRows(select), shown: [], active: -1, observer: observer };
+    build();
+    cur.active = -1;
+    if (!typed) cur.shown.forEach(function (r, n) { if (r.selected && !r.disabled) cur.active = n; });
+    if (cur.active < 0) cur.active = stepActive(cur.shown, -1, 1);
+
+    input.addEventListener('input', function () {
+      build();
+      cur.active = stepActive(cur.shown, -1, 1);
+      paint(true); // back to the top match
+    });
+    input.addEventListener('keydown', function (e) {
+      // Nothing typed here may reach page shortcuts or an open modal's Escape.
+      e.stopPropagation();
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        cur.active = stepActive(cur.shown, cur.active, e.key === 'ArrowDown' ? 1 : -1);
+        paint(true);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (cur.shown[cur.active]) pick(cur.shown[cur.active]);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        close(true);
+      } else if (e.key === 'Tab') {
+        close(true); // Tab then moves on from the select
+      }
+    });
+    // Other popovers (calendar, row menu) close on a document mousedown outside
+    // themselves — ours must not count. Rows keep the search box focused.
+    panel.addEventListener('mousedown', function (e) {
+      e.stopPropagation();
+      if (e.target !== input) e.preventDefault();
+    });
+
+    doc.body.appendChild(panel);
+    // Content can be wider than the select: pull back inside the viewport.
+    var over = pos.left + panel.offsetWidth + 8 - win.innerWidth;
+    if (over > 0) panel.style.left = Math.max(8, pos.left - over) + 'px';
+    observer.observe(doc.body, { childList: true, subtree: true });
+    paint(true);
+    input.focus();
+  }
+
+  function usable(el) {
+    return el && el.tagName === 'SELECT' && !el.disabled && !el.multiple && !(el.size > 1);
+  }
+
+  doc.addEventListener('mousedown', function (e) {
+    if (cur && cur.panel.contains(e.target)) return;
+    var was = cur && cur.select;
+    close(false);
+    // Firefox reports the <option> as the target.
+    var select = e.target.closest ? e.target.closest('select') : null;
+    if (e.button !== 0 || !usable(select)) return;
+    e.preventDefault(); // no native popup
+    if (was === select) return select.focus(); // second click closes
+    show(select, '');
+  }, true);
+
+  doc.addEventListener('keydown', function (e) {
+    if (cur || !usable(e.target) || !isOpenKey(e)) return;
+    e.preventDefault();
+    show(e.target, e.key.length === 1 && e.key !== ' ' ? e.key : '');
+  }, true);
+
+  // The anchor moved → close. Scrolling our own list must neither close us nor
+  // reach the capture-phase scroll closers of the popover we may be opened from.
+  win.addEventListener('scroll', function (e) {
+    if (!cur) return;
+    if (cur.panel.contains(e.target)) return e.stopImmediatePropagation();
+    close(false);
+  }, true);
+  win.addEventListener('resize', function () { close(false); });
+}
+installSearchableSelects(document);
+
 // Product Configurator CRM widget (CR-181) — guided questions → sizing → SKU →
 // existing-or-new item → Quote lines.
 // ponytail: boot/auth, cart and quote write-back are copied verbatim from
@@ -170,11 +500,46 @@ var CRM_TRIGGER = ['workflow', 'blueprint', 'approval'];
 
 var recordId = null;
 var moduleName = 'Quotes';
-var lines = []; // [{ id, sku, name, type, values, qty, rate, disc, rateTouched, badge }] — array so ▲▼ reorder works
+var lines = []; // [{ id, sku, name, type, values, qty, rate, disc, rateTouched, badge, parent, config, bom }] — array so ▲▼ reorder works
+// Saved cart (CR-246): keyed by the CRM record; ownedRowIds = the subform rows
+// the widget wrote and still owns — replaced on the next push, never the rows
+// typed by hand in CRM.
+var docKey = null;
+var ownedRowIds = [];
+var hadSaved = false; // a saved cart was restored → Save stays enabled even when emptied
+var editingId = null; // cart line being re-configured (Edit on its card)
 // Org display labels for the stored item types (SKU Settings, CR-180); the
 // label is also the CRM Products.Item_Source picklist value.
 var typeLabels = {};
 function typeLabel(t) { return typeLabels[t] || t; }
+
+/* ---------- price ladder (CR-220) ---------- */
+// Base → OH → Margin → P&F → Other → Disc, each step = previous ÷ (1 − pct);
+// the % set depends on the line class: Mfg (Manufacturing) or BO (Trading).
+// ponytail: mirrors recipe/ladder.js — keep the two in step.
+var LADDER_STEPS = [['oh', 'OH'], ['margin', 'Margin'], ['pf', 'P&F'], ['other', 'Other'], ['disc', 'Disc']];
+var priceLadder = { mfg: {}, bo: {} };
+function applyLadder(base, pcts) {
+  var p = pcts || {}, v = Number(base) || 0, out = { base: v };
+  LADDER_STEPS.forEach(function (s) {
+    var pct = Math.min(99.99, Math.max(0, Number(p[s[0]]) || 0));
+    v = v / (1 - pct / 100);
+    out[s[0]] = v;
+  });
+  out.unit = v;
+  return out;
+}
+function classOf(type) { return type === 'Manufacturing' ? 'mfg' : 'bo'; }
+function ladderOf(l) { return applyLadder(l.rate, priceLadder[l.cls]); }
+function unitPrice(l) { return ladderOf(l).unit; }
+function fmtMoney(v) { return Math.round(Number(v) || 0).toLocaleString('en-IN'); }
+// Units for Qty (CR-206). Default list inlined (CR-214: /api/recipe/uoms sits
+// behind the Recipe Engine add-on); the org's own list (SKU Settings → Units
+// of measure, CR-216) arrives with /api/sku-items/settings and replaces it.
+// normUom() keeps unknown text, so a drift between the two is harmless.
+var uomList = ['Nos', 'Pcs', 'Kgs', 'Gms', 'Mtr', 'CM', 'MM', 'Ltr', 'Set', 'Box'];
+// Qty / UOM are set on the card (CR-248) — the footer only carries Base price.
+function fillUoms(list) { uomList = list; }
 var authDone = false;
 
 function findLine(id) { return lines.find(function (l) { return l.id === id; }); }
@@ -222,6 +587,7 @@ ZOHO.embeddedApp.on('PageLoad', function (data) {
     try { eid = JSON.parse(eid); } catch (e) { /* keep as-is */ }
   }
   recordId = Array.isArray(eid) ? eid[0] : eid;
+  docKey = moduleName.toLowerCase() + ':' + recordId;
   if (!recordId) {
     // CreateOrCloneView = unsaved record → no record id to write lines into.
     return message(data.ButtonPosition === 'CreateOrCloneView'
@@ -252,7 +618,7 @@ function probe() {
       if (!me.orgId) return orgStep();
       var missing = ['sku-generator', 'recipe-engine'].filter(function (a) { return !(me.addons || []).includes(a); });
       if (missing.length) {
-        return message('The Product Configurator needs the ' + missing.join(' + ') + ' add-on enabled for ' + (me.orgName || 'this organization') + '.');
+        return message('The Product Configurator needs the ' + missing.map(function (a) { return a === 'sku-generator' ? 'SKU Generator' : 'Product Configurator'; }).join(' + ') + ' add-on enabled for ' + (me.orgName || 'this organization') + '.');
       }
       startConfigurator();
     });
@@ -346,6 +712,13 @@ var genKey = null;       // guards against stale generate responses
 var lineSeq = 0;
 
 function roleProp(role) { return props.find(function (p) { return p.sizingRole === role; }); }
+// Motor/gear questions follow the Motor Operated / Bare Shaft radio (CR-223).
+// ponytail: caption match; a Property flag if a second product needs it.
+var MOTOR_RE = /^(motor|gear|drive)\b/i;
+function isMotor(p) { return MOTOR_RE.test(String(p.caption || '')); }
+var motorOp = true; // widget-only, not a SKU question
+// ponytail: MOC by caption — the question whose answer names the Books item category child.
+function mocProp() { return props.find(function (p) { return String(p.caption || '').trim().toUpperCase() === 'MOC'; }); }
 function displayOf(p) {
   var v = sel[p.id];
   if (v === undefined || v === null || v === '') return '';
@@ -367,11 +740,28 @@ function startConfigurator() {
     }
   } catch (e) { /* older SDK */ }
   discoverSubforms(); // warm the metadata cache; failures surface at add time
+  // Saved cart for this record (CR-246): lines + the CRM rows the widget owns.
+  api('/api/recipe/config-quote?docKey=' + encodeURIComponent(docKey))
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (!d || !d.lines) return;
+      hadSaved = true;
+      ownedRowIds = (d.crmRowIds || []).map(String);
+      lines = d.lines.map(function (l) { l.bom = l.bom || []; return l; });
+      lineSeq = lines.reduce(function (m, l) { return Math.max(m, Number(String(l.id).replace(/^c/, '')) || 0); }, lineSeq);
+      renderCart();
+      setStatus('Restored ' + lines.length + ' saved line' + (lines.length === 1 ? '' : 's') + '.');
+    })
+    .catch(function () { /* nothing saved / no access — start empty */ });
+  Array.prototype.forEach.call(document.querySelectorAll('#steps .step'), function (b) {
+    b.addEventListener('click', function () { goStep(Number(b.dataset.step)); });
+  });
   api('/api/sku-items/settings').then(function (r) { return r.ok ? r.json() : {}; })
     .then(function (s) {
       typeLabels = s.typeLabels || {};
-      // Org default for the per-line "Push to Books" switch (SKU Settings, CR-184).
-      $('res-push').checked = s.widgetAutoPush !== false;
+      designRate = s.designRate === true;
+      if (s.priceLadder) priceLadder = s.priceLadder;
+      if (Array.isArray(s.uoms) && s.uoms.length) fillUoms(s.uoms);
       renderCart();
     })
     .catch(function () { /* raw type names */ });
@@ -384,14 +774,34 @@ function startConfigurator() {
       opt.textContent = ind.name;
       $('product').appendChild(opt);
     });
+    // ponytail: default by name (CR-218); an Industry.isDefault flag if a second org needs a different one.
+    var rav = inds.find(function (ind) { return String(ind.name).trim().toUpperCase() === 'RAV'; });
+    if (rav) $('product').value = rav.id;
     loadProduct();
   }).catch(function () { $('form').innerHTML = '<p class="error">Failed to load products.</p>'; });
 }
 $('product').addEventListener('change', loadProduct);
 
-function loadProduct() {
-  industryId = String($('product').value);
-  props = []; sel = {}; sizing = null; picked = null; gen = null; existing = null; genKey = null;
+// `after` (edit mode, CR-246) runs instead of the plain render once the
+// questions are in; the same product's questions are reused, not re-fetched.
+function loadProduct(after) {
+  var id = String($('product').value);
+  var same = id === industryId && props.length > 0;
+  industryId = id;
+  sel = {}; sizing = null; picked = null; gen = null; existing = null; genKey = null;
+  step = 1;
+  var ready = function () {
+    props.forEach(function (p) {
+      var dflt = (valuesByProp[p.id] || []).find(function (v) { return v.isDefault; });
+      if (dflt) sel[p.id] = String(dflt.id);
+      if (p.sizingRole === 'speed') sel[p.id] = '20'; // sheet default, editable
+    });
+    if (after) return after();
+    renderForm();
+    refreshResult();
+  };
+  if (same) return ready();
+  props = [];
   $('form').innerHTML = '<p class="muted">Loading questions…</p>';
   renderResult();
   // Two calls total (properties + batched values) — never one per property,
@@ -402,13 +812,7 @@ function loadProduct() {
   ]).then(function (res) {
     props = (Array.isArray(res[0]) ? res[0] : []).filter(function (p) { return p.showInWidget || p.sizingRole; });
     valuesByProp = res[1] || {};
-    props.forEach(function (p) {
-      var dflt = (valuesByProp[p.id] || []).find(function (v) { return v.isDefault; });
-      if (dflt) sel[p.id] = String(dflt.id);
-      if (p.sizingRole === 'speed') sel[p.id] = '20'; // sheet default, editable
-    });
-    renderForm();
-    refreshResult();
+    ready();
   }).catch(function () { $('form').innerHTML = '<p class="error">Failed to load questions.</p>'; });
 }
 
@@ -439,17 +843,38 @@ function field(p) {
     });
   }
   inp.value = sel[p.id] || '';
+  inp.dataset.prop = p.id;
   // 'change' (commit), not 'input' — one SKU preview per answer, no timers.
   inp.addEventListener('change', function () {
     sel[p.id] = inp.value;
     wrap.classList.toggle('set', Boolean(inp.value));
-    if (DUTY_ROLES.indexOf(p.sizingRole) > -1) { sizing = null; picked = null; renderSizing(); }
-    // A hand-changed model no longer matches the picked option's speed figures.
-    if ((p.sizingRole === 'model' || p.sizingRole === 'series') && picked) { picked = null; renderSizing(); }
+    if (DUTY_ROLES.indexOf(p.sizingRole) > -1) { sizing = null; picked = null; renderSizing(); updateVolume(); }
+    if (p.sizingRole === 'capacity') autoPick(Number(inp.value));
     refreshResult();
   });
   wrap.appendChild(inp);
   return wrap;
+}
+
+// Capacity-banded values (CR-228): a List value carrying capMin/capMax is
+// pre-selected when the capacity input (TPH) falls in its band — e.g. Motor HP
+// from the geared-motor sheet. Overlapping edges go to the higher band; no band
+// hit leaves the answer alone. The select stays editable; the next TPH edit
+// re-picks.
+function autoPick(tph) {
+  if (!(tph > 0)) return;
+  props.forEach(function (p) {
+    if (p.valueType === 'Range') return;
+    var hit = null;
+    (valuesByProp[p.id] || []).slice().sort(function (a, b) { return (Number(a.capMin) || 0) - (Number(b.capMin) || 0); }).forEach(function (v) {
+      if (v.capMin === null || v.capMin === undefined || v.capMax === null || v.capMax === undefined) return;
+      if (Number(v.capMin) <= tph && tph <= Number(v.capMax)) hit = v;
+    });
+    if (!hit) return;
+    sel[p.id] = String(hit.id);
+    var inp = $('form').querySelector('[data-prop="' + p.id + '"]');
+    if (inp) { inp.value = sel[p.id]; inp.parentNode.classList.add('set'); }
+  });
 }
 
 function section(title, list) {
@@ -466,50 +891,231 @@ function section(title, list) {
   return box;
 }
 
+/* ---------- two steps (CR-246): 1 Valve → 2 Configuration ---------- */
+var step = 1;
+var sized = false; // the product has sizing roles → step 1 exists
+function goStep(n) {
+  step = n;
+  var s1 = $('step1'), s2 = $('step2');
+  if (s1) s1.classList.toggle('hidden', n !== 1);
+  if (s2) s2.classList.toggle('hidden', n !== 2);
+  $('result').classList.toggle('hidden', n !== 2);
+  Array.prototype.forEach.call(document.querySelectorAll('#steps .step'), function (b) { b.classList.toggle('on', Number(b.dataset.step) === n); });
+  $('form').scrollTop = 0;
+  if (n === 2) {
+    // Rows were built with step 1; answers may have moved since (autoPick).
+    Array.prototype.forEach.call(document.querySelectorAll('#qs .q'), function (q) { if (q._paint) q._paint(); });
+    openNextQ(null);
+  }
+}
+// Step 2 reachable once a model is picked (non-sized products have no step 1).
+function syncNext() {
+  var ok = !sized || Boolean(picked);
+  var b = $('next-btn'); if (b) b.disabled = !ok;
+  var p = document.querySelector('#steps [data-step="2"]'); if (p) p.disabled = !ok;
+}
+// One question row: num · caption · answer · ✕; click → options expand under it.
+function qRow(p, n) {
+  var q = document.createElement('div');
+  q.className = 'q';
+  var row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'q-row';
+  var num = document.createElement('span'); num.className = 'num'; num.textContent = n;
+  var cap = document.createElement('span'); cap.className = 'cap';
+  cap.textContent = p.caption + (p.unit ? ' (' + p.unit + ')' : '');
+  if (p.required) { var rq = document.createElement('span'); rq.className = 'req'; rq.textContent = ' *'; cap.appendChild(rq); }
+  var val = document.createElement('span'); val.className = 'val';
+  var x = document.createElement('span'); x.className = 'x'; x.textContent = '✕'; x.title = 'Clear';
+  row.appendChild(num); row.appendChild(cap); row.appendChild(val); row.appendChild(x);
+  var body = document.createElement('div');
+  body.className = 'q-body hidden';
+  var inp = null;
+  var paint = function () {
+    var d = displayOf(p);
+    val.textContent = d || '—';
+    q.classList.toggle('set', Boolean(d));
+    if (inp) inp.value = sel[p.id] || '';
+    Array.prototype.forEach.call(body.querySelectorAll('.q-opt'), function (o) { o.classList.toggle('on', o.dataset.v === String(sel[p.id] || '')); });
+  };
+  q._paint = paint;
+  var commit = function (v) {
+    if (v === '' || v === undefined) delete sel[p.id]; else sel[p.id] = v;
+    paint();
+    refreshResult();
+  };
+  if (p.valueType === 'Range') {
+    body.innerHTML = '<div class="rng"><input type="number" min="0" step="any"><button type="button">Done</button></div>';
+    inp = body.querySelector('input');
+    var done = function () { commit(inp.value); openNextQ(q); };
+    inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') done(); });
+    body.querySelector('button').addEventListener('click', done);
+  } else {
+    // Every pick list is searchable (CR-265); toggleQ focuses it on open.
+    var find = document.createElement('input');
+    find.type = 'search';
+    find.placeholder = 'Filter…';
+    find.className = 'q-find';
+    find.addEventListener('input', function () {
+      var s = find.value.trim().toLowerCase();
+      Array.prototype.forEach.call(body.querySelectorAll('.q-opt'), function (o) {
+        o.style.display = !s || o.textContent.toLowerCase().indexOf(s) !== -1 ? '' : 'none';
+      });
+    });
+    body.appendChild(find);
+    (valuesByProp[p.id] || []).forEach(function (v) {
+      var o = document.createElement('div');
+      o.className = 'q-opt';
+      o.dataset.v = String(v.id);
+      o.textContent = v.displayValue;
+      o.addEventListener('click', function () { commit(String(v.id)); openNextQ(q); });
+      body.appendChild(o);
+    });
+  }
+  x.addEventListener('click', function (e) { e.stopPropagation(); commit(''); });
+  row.addEventListener('click', function () { toggleQ(q.classList.contains('open') ? null : q); });
+  paint();
+  q.appendChild(row);
+  q.appendChild(body);
+  return q;
+}
+// Only one row open at a time; null closes all.
+function toggleQ(open) {
+  Array.prototype.forEach.call(document.querySelectorAll('#qs .q'), function (e) {
+    var on = e === open;
+    e.classList.toggle('open', on);
+    e.querySelector('.q-body').classList.toggle('hidden', !on);
+  });
+  if (open) { var i = open.querySelector('input'); if (i) i.focus(); }
+}
+// After an answer: expand the next unanswered row (from the top when `after` is null).
+function openNextQ(after) {
+  var all = Array.prototype.slice.call(document.querySelectorAll('#qs .q'));
+  var next = all.slice(after ? all.indexOf(after) + 1 : 0).find(function (e) { return !e.classList.contains('set'); });
+  toggleQ(next || null);
+}
+// The Configuration card: MOC + other questions, then Motor Selection rows.
+function step2Box(rest, motor) {
+  var box = document.createElement('div');
+  box.className = 'hl';
+  box.innerHTML = '<div class="sec">Configuration</div><div id="qs"></div>';
+  var qs = box.querySelector('#qs');
+  var n = 0;
+  rest.forEach(function (p) { qs.appendChild(qRow(p, ++n)); });
+  if (motor.length) {
+    qs.insertAdjacentHTML('beforeend', '<div class="sec">Motor Selection</div>');
+    motor.forEach(function (p) { qs.appendChild(qRow(p, ++n)); });
+  }
+  if (!n) qs.innerHTML = '<p class="muted">This product has no questions yet.</p>';
+  return box;
+}
+
 function renderForm() {
   var form = $('form');
   form.innerHTML = '';
   var model = roleProp('model');
-  var sized = Boolean(model && roleProp('capacity') && roleProp('density'));
+  sized = Boolean(model && roleProp('capacity') && roleProp('density'));
+  $('steps').classList.toggle('hidden', !sized);
   if (!sized) {
-    // Generic path: a product without sizing roles is a plain question list.
-    var all = section('Configuration', props);
-    if (all) form.appendChild(all); else form.innerHTML = '<p class="muted">This product has no questions yet.</p>';
+    // Generic path: a product without sizing roles is the vertical question list alone.
+    var s2only = document.createElement('div');
+    s2only.id = 'step2';
+    s2only.appendChild(step2Box(props, []));
+    form.appendChild(s2only);
+    syncNext();
+    goStep(2);
     return;
   }
+  // Series / Model have no dropdowns (CR-223): the picked sizing option fills
+  // them, and the SKU name carries them.
   var isPick = function (p) { return p.sizingRole === 'model' || p.sizingRole === 'series'; };
-  var feed = props.filter(function (p) { return !isPick(p) && (DUTY_ROLES.indexOf(p.sizingRole) > -1 || p.skuPosition < model.skuPosition); });
-  var rest = props.filter(function (p) { return !isPick(p) && feed.indexOf(p) === -1; });
-  var feedBox = section('Feed data', feed);
+  var group = roleProp('group');
+  var feed = props.filter(function (p) { return !isPick(p) && !isMotor(p) && p !== group && (DUTY_ROLES.indexOf(p.sizingRole) > -1 || p.skuPosition < model.skuPosition); });
+  var motor = props.filter(isMotor);
+  var rest = props.filter(function (p) { return !isPick(p) && !isMotor(p) && p !== group && feed.indexOf(p) === -1; });
+  // Bare Shaft: Configuration is MOC only.
+  var bareHidden = motorOp ? [] : rest.filter(function (p) { return p !== mocProp(); });
+  if (!motorOp) rest = rest.filter(function (p) { return bareHidden.indexOf(p) === -1; });
+  var s1 = document.createElement('div');
+  s1.id = 'step1';
+  var feedBox = section('Valve Selection Section', feed);
+  feedBox.classList.add('hl');
+  // Volume (Ltr/Min) = TPH×1000 ÷ BD ÷ (RPM×60), shown right after Speed (CR-218).
+  var vol = document.createElement('label');
+  vol.className = 'fld';
+  vol.innerHTML = '<span>Volume (Ltr/Min)</span><input id="volume" readonly placeholder="Calculated volume" />';
+  var speedAt = feed.indexOf(roleProp('speed'));
+  var grid = feedBox.querySelector('.grid');
+  if (speedAt > -1 && grid.children[speedAt]) grid.children[speedAt].after(vol); else grid.appendChild(vol);
+  // Last row of the card: RAV type · Motor/Bare Shaft radio · Find button.
   var findRow = document.createElement('div');
   findRow.id = 'find-row';
-  findRow.innerHTML = '<button id="find-btn" class="primary" type="button">Find suitable models</button><span id="find-msg" class="error"></span>';
+  findRow.className = 'grid';
+  if (group) findRow.appendChild(field(group));
+  // Motor Operated / Bare Shaft (CR-224): bare shaft = the valve alone — the
+  // motor/gear questions are hidden and cleared so the SKU drops them.
+  var op = document.createElement('div');
+  op.id = 'op-row';
+  op.innerHTML = '<label><input type="radio" name="op" value="motor"> Motor Operated</label>' +
+    '<label><input type="radio" name="op" value="bare"> Bare Shaft Operated</label>';
+  op.querySelector('[value=' + (motorOp ? 'motor' : 'bare') + ']').checked = true;
+  op.addEventListener('change', function (e) {
+    motorOp = e.target.value === 'motor';
+    // Bare shaft = the valve alone: motor/gear answers and every non-MOC configuration answer go.
+    if (!motorOp) motor.concat(rest.filter(function (p) { return p !== mocProp(); })).forEach(function (p) { delete sel[p.id]; });
+    var top = form.scrollTop;
+    renderForm();
+    form.scrollTop = top;
+    refreshResult();
+  });
+  findRow.appendChild(op);
+  findRow.insertAdjacentHTML('beforeend', '<button id="find-btn" class="primary" type="button">Find suitable models</button>');
   feedBox.appendChild(findRow);
-  var sz = document.createElement('div');
-  sz.id = 'sizing';
-  sz.className = 'hidden';
-  feedBox.appendChild(sz);
-  form.appendChild(feedBox);
-  form.appendChild(section('Selected model', props.filter(isPick)));
-  var restBox = section('Configuration', rest);
-  if (restBox) form.appendChild(restBox);
-  $('find-btn').addEventListener('click', findModels);
+  feedBox.insertAdjacentHTML('beforeend', '<div id="find-msg" class="error"></div>');
+  s1.appendChild(feedBox);
+  // Model Selection: the sizing options, its own card (shown once Find has run).
+  s1.insertAdjacentHTML('beforeend', '<div id="sizing-box" class="hl hidden"><div class="sec">Model Selection</div><div id="sizing"></div></div>');
+  s1.insertAdjacentHTML('beforeend', '<div id="step-foot"><button id="next-btn" class="primary" type="button" disabled>Configuration →</button></div>');
+  form.appendChild(s1);
+  // Step 2: Configuration rows (MOC first); Motor Selection rows only when Motor Operated.
+  var s2 = document.createElement('div');
+  s2.id = 'step2';
+  s2.innerHTML = '<button id="back-link" type="button">← Valve</button>';
+  s2.appendChild(step2Box(rest, motorOp ? motor : []));
+  form.appendChild(s2);
+  $('find-btn').addEventListener('click', function () { findModels(); });
+  $('next-btn').addEventListener('click', function () { goStep(2); });
+  $('back-link').addEventListener('click', function () { goStep(1); });
   renderSizing();
+  updateVolume();
+  syncNext();
+  goStep(step);
 }
 
-function findModels() {
+function updateVolume() {
+  var inp = $('volume');
+  if (!inp) return;
+  var num = function (role) { var p = roleProp(role); return p ? Number(sel[p.id]) : 0; };
+  var tph = num('capacity'), bd = num('density'), rpm = num('speed') || 20;
+  var ok = tph > 0 && bd > 0 && rpm > 0;
+  inp.value = ok ? ((tph * 1000) / bd / (rpm * 60)).toFixed(2) : '';
+  inp.parentNode.classList.toggle('set', ok);
+}
+
+// `preset` = a saved line's sizing input (edit mode); returns the request promise.
+function findModels(preset) {
   var num = function (role) { var p = roleProp(role); return p ? Number(sel[p.id]) : 0; };
   var group = roleProp('group');
-  var body = {
+  var body = preset || {
     industryId: industryId, tph: num('capacity'), bd: num('density'), rpm: num('speed') || 20,
     group: group ? displayOf(group) : '',
   };
   $('find-msg').textContent = '';
-  if (!(body.tph > 0) || !(body.bd > 0)) { $('find-msg').textContent = 'Enter ' + roleProp('capacity').caption + ' and ' + roleProp('density').caption + ' first.'; return; }
-  if (group && !body.group) { $('find-msg').textContent = 'Choose ' + group.caption + ' first.'; return; }
+  if (!(body.tph > 0) || !(body.bd > 0)) { $('find-msg').textContent = 'Enter ' + roleProp('capacity').caption + ' and ' + roleProp('density').caption + ' first.'; return Promise.resolve(); }
+  if (group && !body.group) { $('find-msg').textContent = 'Choose ' + group.caption + ' first.'; return Promise.resolve(); }
   var btn = $('find-btn');
   btn.disabled = true;
-  api('/api/recipe/sizing/select', { method: 'POST', body: JSON.stringify(body) })
+  return api('/api/recipe/sizing/select', { method: 'POST', body: JSON.stringify(body) })
     .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
     .then(function (res) {
       btn.disabled = false;
@@ -517,18 +1123,20 @@ function findModels() {
       sizing = res.d;
       sizing.input = body;
       picked = null;
+      syncNext();
       renderSizing();
     })
     .catch(function () { btn.disabled = false; $('find-msg').textContent = 'Sizing failed — network error.'; });
 }
 
-function optRow(o, series, isUp) {
+function optRow(o, series) {
   var row = document.createElement('div');
   var on = picked && picked.modelCode === o.modelCode && picked.series === series;
-  row.className = 'opt' + (isUp ? ' up' : '') + (on ? ' on' : '');
+  row.className = 'opt' + (on ? ' on' : '');
+  // Linked Books valve item (CR-226) leads the row; the sheet code stays as a hint.
   var cells = [
-    ['dot', ''], ['m', (isUp ? 'one size up: ' : '') + o.modelCode], ['s', series],
-    ['c', o.capacity.toFixed(2) + ' ltr/rev'], ['r', 'runs at ' + o.requiredRpm + ' RPM'], ['sp', '+' + o.sparePct + '% spare'],
+    ['dot', ''], ['m', o.item ? o.item.name : o.modelCode], ['s', series + (o.item ? ' · ' + o.modelCode : '')],
+    ['c', o.capacity.toFixed(2) + ' ltr/rev'], ['r', 'runs at ' + o.requiredRpm + ' RPM'],
   ];
   cells.forEach(function (c) {
     var s = document.createElement('span');
@@ -544,7 +1152,7 @@ function renderSizing() {
   var box = $('sizing');
   if (!box) return;
   box.innerHTML = '';
-  box.classList.toggle('hidden', !sizing);
+  $('sizing-box').classList.toggle('hidden', !sizing);
   if (!sizing) return;
   var cap = document.createElement('div');
   cap.className = 'cap';
@@ -553,14 +1161,12 @@ function renderSizing() {
   cap.querySelector('b').textContent = sizing.reqCap.toFixed(2) + ' ltr/rev';
   cap.querySelector('span').textContent = i.tph + ' TPH · ' + i.bd + ' kg/ltr · ' + i.rpm + ' RPM' + (i.group ? ' · ' + i.group : '');
   box.appendChild(cap);
-  // Options arrive capacity-sorted; show them grouped by series, with the
-  // series' single "one size up" row after its last fitting model.
+  // Options arrive capacity-sorted; show them grouped by series.
   var seriesSeen = [];
   sizing.options.forEach(function (o) { if (seriesSeen.indexOf(o.series) === -1) seriesSeen.push(o.series); });
   seriesSeen.forEach(function (series) {
-    var mine = sizing.options.filter(function (o) { return o.series === series; });
-    mine.forEach(function (o) { box.appendChild(optRow(o, series, false)); });
-    if (mine[0].next) box.appendChild(optRow(mine[0].next, series, true));
+    sizing.options.filter(function (o) { return o.series === series; })
+      .forEach(function (o) { box.appendChild(optRow(o, series)); });
   });
   sizing.tooBig.forEach(function (t) {
     var d = document.createElement('div');
@@ -581,12 +1187,11 @@ function pick(o, series) {
   var seriesValueId = (sizing.options.find(function (x) { return x.series === series; }) || {}).seriesValueId;
   if (!o.valueId) { $('find-msg').textContent = o.modelCode + ' is missing from the "' + model.caption + '" question values — add it in the app.'; return; }
   $('find-msg').textContent = '';
-  picked = { modelCode: o.modelCode, series: series, capacity: o.capacity, requiredRpm: o.requiredRpm };
+  picked = { modelCode: o.modelCode, series: series, capacity: o.capacity, requiredRpm: o.requiredRpm, recipeCode: o.recipeCode || '', item: o.item || null };
   sel[model.id] = String(o.valueId);
   if (ser && seriesValueId) sel[ser.id] = String(seriesValueId);
-  var top = $('form').scrollTop;
-  renderForm(); // re-render so the Selected model dropdowns show the pick
-  $('form').scrollTop = top;
+  renderSizing(); // the highlighted option row is the model selection
+  syncNext();
   refreshResult();
 }
 
@@ -617,74 +1222,148 @@ function renderResult(msg, isError) {
   $('res-name').textContent = '';
   $('res-msg').textContent = msg || '';
   $('res-msg').className = isError ? 'error' : 'muted';
-  var ready = Boolean(gen && gen.sku && !(gen.missingRequired || []).length);
+  // A linked Books item (CR-226) is ready as soon as it is picked — no SKU generation.
+  var linked = Boolean(existing && !gen);
+  var ready = linked || Boolean(gen && gen.sku && !(gen.missingRequired || []).length);
   $('res-add').disabled = !ready;
-  refreshComponents(ready);
-  if (!gen || !gen.sku) {
+  refreshComponents();
+  refreshPrice(ready);
+  if (!linked && (!gen || !gen.sku)) {
     var hint = document.createElement('span');
     hint.className = 'muted';
     hint.textContent = 'Answer the questions to generate the SKU.';
     sku.appendChild(hint);
     return;
   }
-  sku.appendChild(document.createTextNode(gen.sku));
+  sku.appendChild(document.createTextNode(linked ? existing.sku : gen.sku));
   if (ready) {
     var b = document.createElement('span');
     b.className = 'badge ' + (existing ? 'exists' : 'fresh');
     b.id = 'res-badge';
     sku.appendChild(b);
   }
-  $('res-push-lab').classList.toggle('hidden', !ready || Boolean(existing && existing.zohoItemId));
   syncBadge();
-  $('res-name').textContent = (existing && existing.name) || gen.name || '';
+  $('res-name').textContent = (existing && existing.name) || (gen && gen.name) || '';
 }
 
-/* ---------- component items (Component Map) ---------- */
-// The items this set of answers leads to — shown only; the quote still gets the
-// one valve line, and the same map builds the Books BOM when the item is pushed.
+/* ---------- BOM items (Product Design + Books category + Component Map) ---------- */
+// First the picked model's Product Design components (CR-227, on pick; the
+// material cell fills once the MOC names one), then — once the MOC is chosen
+// (CR-223) — every Books item under the item category <MOC caption> → <MOC
+// answer> (Casing CI, Side Cover CI…), then the Component Map lines. Display
+// only — the quote still gets the one valve line, and the Component Map alone
+// builds the Books BOM when the item is pushed.
 var compKey = null;
-function refreshComponents(ready) {
+var compLines = [];      // last resolved component lines — asQuoteLine ones become their own quote lines (CR-195)
+var compView = [];       // what the list shows, [{c, item, qty, cls}] — frozen on the line as its BOM (CR-246)
+function compRow(cells, cls, title) {
+  var row = document.createElement('div');
+  cells.forEach(function (c) {
+    var sp = document.createElement('span');
+    sp.className = c[0];
+    sp.textContent = c[1];
+    row.appendChild(sp);
+  });
+  if (cls) row.className = cls;
+  if (title) row.title = title;
+  return row;
+}
+function refreshComponents() {
   var box = $('res-comps');
-  if (!ready) { compKey = null; box.innerHTML = ''; return; }
-  var key = industryId + '|' + JSON.stringify(sel);
+  var moc = mocProp();
+  var mocDone = Boolean(moc && sel[moc.id]);
+  var design = picked && (picked.recipeCode || picked.item) ? { recipeCode: picked.recipeCode, skuItemId: picked.item ? picked.item.id : null } : null;
+  if (!mocDone && !design) { compKey = null; compLines = []; compView = []; box.innerHTML = ''; return; }
+  var key = industryId + '|' + JSON.stringify(sel) + '|' + JSON.stringify(design);
   if (key === compKey) return;
   compKey = key;
+  compLines = [];
+  compView = [];
   box.innerHTML = '';
-  api('/api/recipe/component-map/resolve', { method: 'POST', body: JSON.stringify({ industryId: industryId, selectedValues: sel }) })
-    .then(function (r) { return r.ok ? r.json() : null; })
-    .then(function (d) {
-      if (key !== compKey || !d) return; // stale, or no access — the list is optional
-      (d.lines || []).forEach(function (l) {
-        var row = document.createElement('div');
-        [['c-name', l.component], ['c-item', l.sku ? l.sku + ' · ' + (l.name || '') : 'item deleted'], ['c-qty', '× ' + l.qty]].forEach(function (c) {
-          var sp = document.createElement('span');
-          sp.className = c[0];
-          sp.textContent = c[1];
-          row.appendChild(sp);
-        });
-        if (!l.sku || !l.inBooks) { row.className = 'error'; row.title = l.sku ? 'Not in Zoho Books yet — the Books push will fail until it is.' : ''; }
-        box.appendChild(row);
-      });
-      (d.missing || []).forEach(function (c) {
-        var row = document.createElement('div');
-        row.className = 'error';
-        row.textContent = c + ' — no item mapped for these answers';
-        box.appendChild(row);
-      });
+  // Every row shown is also remembered for the line's BOM snapshot.
+  var addRow = function (cells, cls, title) {
+    box.appendChild(compRow(cells, cls, title));
+    compView.push({ c: cells[0][1], item: cells[1][1], qty: cells[2][1], cls: cls || '' });
+  };
+  var child = mocDone ? displayOf(moc) : '';
+  var none = function () { return Promise.resolve(null); };
+  var lv = lineValues();
+  Promise.all([
+    !design ? none() : api('/api/recipe/sizing/bom', { method: 'POST', body: JSON.stringify({ recipeCode: design.recipeCode, skuItemId: design.skuItemId, answers: Object.keys(lv).map(function (k) { return lv[k]; }) }) })
+      .then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
+    !mocDone ? none() : api('/api/recipe/category-items?parent=' + encodeURIComponent(moc.caption) + '&child=' + encodeURIComponent(child))
+      .then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; }),
+    !mocDone ? none() : api('/api/recipe/component-map/resolve', { method: 'POST', body: JSON.stringify({ industryId: industryId, selectedValues: sel }) })
+      .then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
+  ]).then(function (res) {
+    if (key !== compKey) return; // stale
+    // Product Design lines: component · item (or material) · qty. Red only when
+    // something is linked but not in Books yet.
+    var covered = {};
+    ((res[0] && res[0].lines) || []).forEach(function (l) {
+      covered[String(l.component).trim().toLowerCase()] = true;
+      var linked = Boolean(l.sku || l.name || l.material);
+      var item = l.sku ? l.sku + ' · ' + (l.name || '') : (l.name || l.material || 'no item linked');
+      addRow(
+        [['c-name', l.component], ['c-item', item], ['c-qty', '× ' + l.qty + ' ' + (l.uom || 'Nos')]],
+        linked && !l.inBooks ? 'error' : '', linked && !l.inBooks ? 'Not in Zoho Books yet.' : '');
+    });
+    (Array.isArray(res[1]) ? res[1] : []).forEach(function (it) {
+      addRow([['c-name', child], ['c-item', (it.sku ? it.sku + ' · ' : '') + (it.name || '')], ['c-qty', '']]);
+    });
+    var d = res[2];
+    if (!d) return; // no access / MOC not chosen — the map list is optional
+    compLines = d.lines || [];
+    compLines.forEach(function (l) {
+      var bad = !l.sku || !l.inBooks;
+      addRow(
+        [['c-name', l.component], ['c-item', l.sku ? l.sku + ' · ' + (l.name || '') : 'item deleted'], ['c-qty', '× ' + l.qty + ' ' + (l.uom || 'Nos') + (l.asQuoteLine ? ' · separate line' : '')]],
+        bad ? 'error' : '', bad && l.sku ? 'Not in Zoho Books yet — the Books push will fail until it is.' : '');
+    });
+    // A component the design already lists is not "unmapped".
+    (d.missing || []).filter(function (c) { return !covered[String(c).trim().toLowerCase()]; }).forEach(function (c) {
+      addRow([['c-name', c], ['c-item', 'no item mapped for these answers'], ['c-qty', '']], 'error', '');
+    });
+  });
+}
+
+/* ---------- design cost (CR-211) ---------- */
+// Rate from the picked model's Product Design (SizingModel.recipeCode →
+// POST /sizing/price) when the org's SKU setting is on and the Rate box has
+// not been typed in. Every answer goes along as text so the server can pick
+// the material option the MOC names. Prefills the Base price box only — no
+// cost line is shown (CR-238); a failed lookup leaves the box alone.
+var designRate = false;
+var priceKey = null;
+var rateTyped = false;
+$('res-rate').addEventListener('input', function () { rateTyped = true; });
+function refreshPrice(ready) {
+  var code = picked && picked.recipeCode;
+  if (!ready || !designRate || !code) { priceKey = null; return; }
+  var lv = lineValues();
+  var answers = Object.keys(lv).map(function (k) { return lv[k]; });
+  var key = code + '|' + JSON.stringify(answers);
+  if (key === priceKey) return;
+  priceKey = key;
+  api('/api/recipe/sizing/price', { method: 'POST', body: JSON.stringify({ recipeCode: code, answers: answers }) })
+    .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+    .then(function (res) {
+      if (key !== priceKey || !res.ok) return;
+      if (!rateTyped) $('res-rate').value = res.d.unitCost;
     })
-    .catch(function () {});
+    .catch(function () { /* no prefill */ });
 }
 
 function syncBadge() {
   var b = $('res-badge');
   if (!b) return;
-  var push = $('res-push').checked;
-  b.textContent = existing ? (existing.zohoItemId ? 'EXISTING ITEM · IN BOOKS' : (push ? 'EXISTING ITEM — WILL BE PUSHED' : 'EXISTING ITEM · NOT IN BOOKS'))
-    : (push ? 'NEW ITEM — WILL BE CREATED & PUSHED' : 'NEW ITEM — WILL BE CREATED, NOT PUSHED');
+  b.textContent = existing ? (existing.zohoItemId ? (picked && picked.item === existing ? 'BOOKS ITEM' : 'EXISTING ITEM · IN BOOKS') : 'EXISTING ITEM · NOT IN BOOKS')
+    : 'NEW ITEM — WILL BE CREATED';
 }
-$('res-push').addEventListener('change', syncBadge);
 
 function refreshResult() {
+  // Picked model carries a Books valve item (CR-226): quote it as-is, no generate.
+  if (picked && picked.item) { genKey = null; gen = null; existing = picked.item; return renderResult(); }
   var sv = skuValues();
   var key = industryId + '|' + JSON.stringify(sv);
   if (key === genKey) return;
@@ -713,43 +1392,51 @@ function refreshResult() {
     .catch(function () { if (key === genKey) renderResult('SKU preview failed — network error.', true); });
 }
 
-async function pushToBooks(id) {
-  var pr = await api('/api/sku-items/' + id + '/push-zoho', { method: 'POST', body: '{}' });
-  if (pr.ok) return;
-  var pd = await pr.json().catch(function () { return {}; });
-  throw new Error(pd.error || ('HTTP ' + pr.status));
-}
-
 $('res-add').addEventListener('click', async function () {
   var btn = $('res-add');
   btn.disabled = true;
   try {
-    var item = existing, badge = null, note = '';
+    var item = existing;
     if (!item) {
       var r = await api('/api/sku/create-item', { method: 'POST', body: JSON.stringify({
         name: gen.name || gen.sku, sku: gen.sku, description: gen.description || '', type: 'Manufacturing',
-        industryId: industryId, selectedValues: skuValues(),
+        industryId: industryId, selectedValues: skuValues(), uom: uomList[0],
       }) });
       item = await r.json();
       if (!r.ok) throw new Error(item.error || 'Create failed.');
-      badge = 'books';
     }
-    // New items, and existing ones never pushed, go to Books now when the Push
-    // box is on. A failure never blocks the quote — the item is in the SKU
-    // master and can be pushed later from the SKU Items page.
-    if (!item.zohoItemId && !$('res-push').checked) {
-      badge = 'pending';
-      note = 'Saved to the SKU master, not pushed — push it later from the SKU Items page.';
-    } else if (!item.zohoItemId) {
-      try { await pushToBooks(item.id); if (!badge) badge = 'books'; } catch (pe) {
-        badge = 'pending';
-        note = 'Books push failed: ' + (pe.message || pe) + '. Push it later from the SKU Items page.';
-      }
+    // Items are never pushed to Books from this widget (CR-238): new ones sit
+    // in the SKU master and are pushed later from the SKU Items page. The
+    // pending chip marks lines whose item is not in Books yet.
+    var badge = item.zohoItemId ? null : 'pending';
+    var qty = 1;
+    // What the line needs to be re-opened for editing (CR-246) + its BOM snapshot.
+    var config = {
+      industryId: industryId, sel: JSON.parse(JSON.stringify(sel)), motorOp: motorOp,
+      sizingInput: sizing ? sizing.input : null, pick: picked ? { modelCode: picked.modelCode, series: picked.series } : null,
+    };
+    var it = { sku: item.sku, name: item.name, type: item.type || 'Manufacturing', values: lineValues(), config: config, bom: compView.slice() };
+    var line = editingId && findLine(editingId);
+    if (line) {
+      // Update in place: answers, item and BOM change; qty / UOM / disc stay.
+      Object.assign(line, it, { cls: classOf(it.type), badge: badge });
+      if (rateTyped) { line.rate = Number($('res-rate').value) || 0; line.rateTouched = true; }
+      // Loose components follow the valve: drop the old ones, add the current set after it.
+      lines = lines.filter(function (l) { return l.parent !== line.id; });
+      var kids = looseLines(line.id, line.qty);
+      lines.splice.apply(lines, [lines.indexOf(line) + 1, 0].concat(kids));
+      renderCart();
+      if (!line.rateTouched) prefillRate(line);
+      kids.forEach(prefillRate);
+      stopEdit();
+      setStatus('Line updated — Add item to ' + moduleName.replace(/s$/, '').toLowerCase() + ' to send it to CRM.');
+    } else {
+      line = addToCart(Object.assign({ id: 'c' + (++lineSeq) }, it),
+        { badge: badge, rate: Number($('res-rate').value) || 0, qty: qty, uom: item.uom || uomList[0] });
+      looseLines(line.id, qty).forEach(function (l) { lines.push(l); renderCart(); prefillRate(l); });
+      setStatus('');
     }
-    addToCart({ id: 'c' + (++lineSeq), sku: item.sku, name: item.name, type: item.type || 'Manufacturing', values: lineValues() },
-      { badge: badge, rate: Number($('res-rate').value) || 0, qty: Math.max(1, Number($('res-qty').value) || 1) });
-    setStatus(note, Boolean(note));
-    $('res-qty').value = 1;
+    rateTyped = false; priceKey = null; // next pick fills the Rate box again
     genKey = null; // same answers now resolve to the existing item
     refreshResult();
   } catch (err) {
@@ -757,48 +1444,132 @@ $('res-add').addEventListener('click', async function () {
     btn.disabled = false;
   }
 });
+// Components sold separately (map rows flagged "separate quote line") get their
+// own line, qty × valves; they are not in the composite BOM (push.js).
+function looseLines(parentId, qty) {
+  return compLines.filter(function (l) { return l.asQuoteLine && l.sku; }).map(function (l) {
+    return newLine({ id: 'c' + (++lineSeq), sku: l.sku, name: l.name || l.sku, type: 'Trading', values: { Component: l.component }, parent: parentId },
+      { qty: l.qty * qty, uom: l.uom });
+  });
+}
+
+/* ---------- edit a cart line (CR-246) ---------- */
+// Re-opens the line's saved answers: same product, its sizing input re-run
+// (one /sizing/select) and the saved model re-picked, then step 2. "Add to
+// lines" becomes "Update line" until done or cancelled.
+function editLine(line) {
+  var cfg = line.config;
+  if (!cfg) return;
+  closePop();
+  editingId = line.id;
+  $('res-add').textContent = 'Update line';
+  $('res-cancel').classList.remove('hidden');
+  setStatus('Editing ' + line.sku + ' — change the answers, then Update line.');
+  if ($('product').querySelector('[value="' + cfg.industryId + '"]')) $('product').value = cfg.industryId;
+  loadProduct(function () {
+    Object.keys(cfg.sel || {}).forEach(function (k) { sel[k] = cfg.sel[k]; });
+    motorOp = cfg.motorOp !== false;
+    renderForm();
+    var done = function () { goStep(2); refreshResult(); };
+    if (!cfg.sizingInput || !cfg.pick) return done();
+    findModels(cfg.sizingInput).then(function () {
+      var o = sizing && sizing.options.find(function (x) { return x.modelCode === cfg.pick.modelCode && x.series === cfg.pick.series; });
+      if (o) { pick(o, o.series); return done(); }
+      $('find-msg').textContent = 'Saved model ' + cfg.pick.modelCode + ' (' + cfg.pick.series + ') is not offered any more — pick again.';
+      goStep(1);
+    });
+  });
+}
+function stopEdit() {
+  editingId = null;
+  $('res-add').textContent = 'Add to lines';
+  $('res-cancel').classList.add('hidden');
+}
+$('res-cancel').addEventListener('click', function () { stopEdit(); setStatus(''); });
 
 /* ---------- cart (quote lines) ---------- */
-function addToCart(it, opts) {
+// `rate` is the BASE price; the CRM line gets unitPrice() — the ladder result
+// for the line's class (CR-220). `disc` stays the CRM line discount.
+function newLine(it, opts) {
   opts = opts || {};
-  var line = {
+  return {
     id: it.id, sku: it.sku, name: it.name, type: it.type || '', values: it.values || {},
-    qty: opts.qty || 1, rate: opts.rate || 0, disc: 0,
+    qty: opts.qty || 1, uom: opts.uom || 'Nos', rate: opts.rate || 0, disc: 0, cls: classOf(it.type),
     rateTouched: Boolean(opts.rate), badge: opts.badge || null,
+    parent: it.parent || null, config: it.config || null, bom: it.bom || [],
   };
-  lines.push(line);
-  renderCart();
+}
+// Prefill the rate from the CRM Product's Unit_Price (async, keeps manual edits).
+function prefillRate(line) {
   if (line.rateTouched) return;
-  // Prefill the rate from the CRM Product's Unit_Price (async, keeps manual edits).
   ZOHO.CRM.API.searchRecord({
     Entity: 'Products', Type: 'criteria',
-    Query: '(Product_Code:equals:' + it.sku + ')',
+    Query: '(Product_Code:equals:' + line.sku + ')',
   }).then(function (res) {
     var hit = res && res.data && res.data[0];
-    if (hit && findLine(it.id) && !line.rateTouched) {
+    if (hit && findLine(line.id) && !line.rateTouched) {
       line.rate = Number(hit.Unit_Price) || 0;
       renderCart();
     }
   }).catch(function () { /* no prefill */ });
 }
+function addToCart(it, opts) {
+  var line = newLine(it, opts);
+  lines.push(line);
+  renderCart();
+  prefillRate(line);
+  return line;
+}
 function removeFromCart(id) {
-  lines = lines.filter(function (l) { return l.id !== id; });
+  // A valve takes its loose components with it.
+  lines = lines.filter(function (l) { return l.id !== id && l.parent !== id; });
+  if (editingId === id || (editingId && !findLine(editingId))) { stopEdit(); setStatus(''); }
   renderCart();
 }
-function lineTotal(l) { return l.qty * l.rate * (1 - l.disc / 100); }
+function lineTotal(l) { return l.qty * unitPrice(l) * (1 - l.disc / 100); }
 function updateTotals() {
-  var units = 0, subtotal = 0;
-  lines.forEach(function (l) { units += l.qty; subtotal += lineTotal(l); });
   $('line-count').textContent = lines.length;
-  $('subtotal-units').textContent = 'Subtotal · ' + units + (units === 1 ? ' unit' : ' units');
-  $('subtotal').textContent = subtotal.toFixed(2);
   $('add-btn').disabled = !lines.length;
   $('quote-btn').disabled = !lines.length;
+  $('save-btn').disabled = !lines.length && !hadSaved;
   $('lines-clear').classList.toggle('hidden', !lines.length);
 }
 $('lines-clear').addEventListener('click', function () {
   lines = [];
+  if (editingId) { stopEdit(); setStatus(''); }
   renderCart();
+});
+// Save the cart + configuration on this record (CR-246). `key`/`ids` override
+// the record key and owned rows (Deal → Quote re-keys the same cart).
+// A quote's cart also carries the quote number: the work order raised from the
+// converted sales order finds this configuration by it.
+var quoteNos = {};
+function quoteNoOf(key) {
+  var m = /^quotes:(\d+)$/.exec(key);
+  if (!m) return Promise.resolve('');
+  if (quoteNos[key] !== undefined) return Promise.resolve(quoteNos[key]);
+  return ZOHO.CRM.API.getRecord({ Entity: 'Quotes', RecordID: m[1] }).then(function (res) {
+    var rec = res && res.data && res.data[0];
+    // Quote_No = an org's own numbering field (when it has one), else CRM's Quote_Number.
+    return (quoteNos[key] = String((rec && (rec.Quote_No || rec.Quote_Number)) || ''));
+  }).catch(function () { return ''; }); // the number is a convenience — never blocks the save
+}
+function saveConfig(key, ids) {
+  key = key || docKey;
+  return quoteNoOf(key).then(function (quoteNo) {
+    return api('/api/recipe/config-quote/' + encodeURIComponent(key), {
+      method: 'POST', body: JSON.stringify({ crmRowIds: ids || ownedRowIds, lines: lines, quoteNo: quoteNo }),
+    });
+  }).then(function (r) {
+    if (r.ok) { hadSaved = true; return r.json(); }
+    return r.json().catch(function () { return {}; }).then(function (d) { throw new Error(d.error || ('Save failed (' + r.status + ')')); });
+  });
+}
+$('save-btn').addEventListener('click', function () {
+  $('save-btn').disabled = true;
+  saveConfig()
+    .then(function () { setStatus('Saved.'); }, function (e) { setStatus('Save failed: ' + errText(e), true); })
+    .then(updateTotals);
 });
 function moveLine(i, d) {
   var j = i + d;
@@ -812,7 +1583,8 @@ function renderCart() {
   if (!lines.length) box.innerHTML = '<div class="l-empty">No lines yet.<br>Configure a product and add it.</div>';
   lines.forEach(function (it, idx) {
     var card = document.createElement('div');
-    card.className = 'l-card';
+    card.className = 'l-card ' + it.cls;
+    card.dataset.id = it.id;
     var mv = document.createElement('div');
     mv.className = 'l-move';
     [['▲', -1, idx === 0], ['▼', 1, idx === lines.length - 1]].forEach(function (m) {
@@ -833,6 +1605,10 @@ function renderCart() {
     var sk = document.createElement('div');
     sk.className = 'l-sku';
     sk.textContent = it.sku;
+    var cb = document.createElement('span');
+    cb.className = 'badge cls ' + it.cls;
+    cb.textContent = it.cls === 'mfg' ? 'Mfg' : 'BO';
+    sk.appendChild(cb);
     if (it.type) {
       var tb = document.createElement('span');
       tb.className = 'badge type';
@@ -855,10 +1631,22 @@ function renderCart() {
     main.appendChild(top);
     var grid = document.createElement('div');
     grid.className = 'l-grid';
-    var tot = document.createElement('div');
-    [['Qty', 'qty', 1], ['Rate', 'rate', 0], ['Disc %', 'disc', 0]].forEach(function (f) {
+    [['Qty', 'qty', 1], ['UOM', 'uom'], ['Base price', 'rate', 0], ['Disc %', 'disc', 0]].forEach(function (f) {
       var lab = document.createElement('label');
       lab.textContent = f[0];
+      if (f[1] === 'uom') {
+        var sel = document.createElement('select');
+        uomList.concat(uomList.indexOf(it.uom) < 0 ? [it.uom] : []).forEach(function (u) {
+          var o = document.createElement('option');
+          o.value = o.textContent = u;
+          sel.appendChild(o);
+        });
+        sel.value = it.uom;
+        sel.addEventListener('change', function () { it.uom = sel.value; });
+        lab.appendChild(sel);
+        grid.appendChild(lab);
+        return;
+      }
       var inp = document.createElement('input');
       inp.type = 'number';
       inp.min = f[2];
@@ -868,20 +1656,140 @@ function renderCart() {
         var v = Number(inp.value) || f[2];
         it[f[1]] = f[1] === 'disc' ? Math.min(100, Math.max(0, v)) : v;
         if (f[1] === 'rate') it.rateTouched = true;
-        tot.textContent = lineTotal(it).toFixed(2);
         updateTotals(); // in place — a full re-render would drop the input focus
       });
       lab.appendChild(inp);
       grid.appendChild(lab);
     });
-    tot.className = 'l-total';
-    tot.textContent = lineTotal(it).toFixed(2);
-    grid.appendChild(tot);
+    // Card actions: Edit (configured lines), BOM (snapshot), Price detail (CR-220 ladder popover).
+    var unitRow = document.createElement('div');
+    unitRow.className = 'l-unit';
+    var actions = [];
+    if (it.config) actions.push(['Edit', function () { editLine(it); }]);
+    if (it.bom && it.bom.length) actions.push(['BOM', function () { openBom(it, card); }]);
+    actions.push(['Price detail', function () { openPop(it, card); }]);
+    actions.forEach(function (a) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = a[0];
+      b.addEventListener('click', a[1]);
+      unitRow.appendChild(b);
+    });
+    grid.appendChild(unitRow);
     main.appendChild(grid);
     card.appendChild(main);
     box.appendChild(card);
   });
   updateTotals();
+}
+
+/* ---------- price detail popover (CR-220, mockup 1e) ---------- */
+// Base input, Mfg/BO toggle, the ladder steps with their % and value, unit
+// total. Edits apply to the line in place; the card re-renders on close.
+var popLine = null, popFlash = null;
+function closePop() {
+  var p = $('pop'), s = $('pop-scrim');
+  if (p) p.remove();
+  if (s) s.remove();
+  if (popLine) { popLine = null; renderCart(); }
+}
+// Scrim + empty popover box anchored at the card (shared by Price detail and BOM).
+function showPop(line, card) {
+  closePop();
+  popLine = line;
+  var host = $('lines');
+  var scrim = document.createElement('div');
+  scrim.id = 'pop-scrim';
+  scrim.addEventListener('click', closePop);
+  var pop = document.createElement('div');
+  pop.id = 'pop';
+  // Below the card when it fits, else above the footer.
+  pop.style.top = Math.max(4, Math.min(card.offsetTop + 8, host.scrollHeight - 320)) + 'px';
+  host.appendChild(scrim); host.appendChild(pop);
+  return pop;
+}
+function openPop(line, card) { drawPop(line, showPop(line, card), false); }
+// BOM snapshot (CR-246): the component list as it read when the line was added.
+function openBom(line, card) {
+  var pop = showPop(line, card);
+  pop.innerHTML = '<div class="p-head"><b></b><span></span></div><div class="bom"></div><div class="p-foot"><span>As resolved when the line was added</span></div>';
+  pop.querySelector('b').textContent = line.name || line.sku;
+  pop.querySelector('.p-head span').textContent = line.sku;
+  var box = pop.querySelector('.bom');
+  (line.bom || []).forEach(function (r) {
+    box.appendChild(compRow([['c-name', r.c], ['c-item', r.item], ['c-qty', r.qty]], r.cls || '', ''));
+  });
+}
+function drawPop(line, pop, flash) {
+  var clsName = line.cls === 'mfg' ? 'Mfg' : 'BO';
+  pop.innerHTML = '';
+  var head = document.createElement('div');
+  head.className = 'p-head';
+  head.innerHTML = '<b></b><span></span>';
+  head.querySelector('b').textContent = line.name || line.sku;
+  head.querySelector('span').textContent = line.sku;
+  pop.appendChild(head);
+
+  var inRow = document.createElement('div');
+  inRow.className = 'p-in';
+  var bl = document.createElement('label');
+  bl.textContent = 'Base price';
+  var bi = document.createElement('input');
+  bi.type = 'number'; bi.min = 0; bi.value = line.rate;
+  bi.addEventListener('input', function () {
+    line.rate = Number(bi.value) || 0; line.rateTouched = true;
+    fillPopTable(line, tbl); updateTotals();
+  });
+  bl.appendChild(bi);
+  var cl = document.createElement('label');
+  cl.textContent = 'Class';
+  var seg = document.createElement('div');
+  seg.className = 'seg';
+  [['mfg', 'Mfg'], ['bo', 'BO']].forEach(function (c) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = c[1];
+    b.className = line.cls === c[0] ? 'on' : '';
+    b.addEventListener('click', function () {
+      if (line.cls === c[0]) return;
+      line.cls = c[0];
+      updateTotals();
+      drawPop(line, pop, true);
+    });
+    seg.appendChild(b);
+  });
+  cl.appendChild(seg);
+  inRow.appendChild(bl); inRow.appendChild(cl);
+  pop.appendChild(inRow);
+
+  var tbl = document.createElement('table');
+  pop.appendChild(tbl);
+  fillPopTable(line, tbl, flash);
+
+  var foot = document.createElement('div');
+  foot.className = 'p-foot';
+  var l = document.createElement('span');
+  l.textContent = clsName + ' % set from org settings';
+  var n = document.createElement('span');
+  n.className = 'note';
+  n.textContent = flash ? '% set switched to ' + clsName : '';
+  foot.appendChild(l); foot.appendChild(n);
+  pop.appendChild(foot);
+  clearTimeout(popFlash);
+  if (flash) popFlash = setTimeout(function () {
+    tbl.querySelectorAll('tr.flash').forEach(function (r) { r.classList.remove('flash'); });
+    n.textContent = '';
+  }, 1400);
+}
+function fillPopTable(line, tbl, flash) {
+  var lad = ladderOf(line), pcts = priceLadder[line.cls] || {};
+  var rows = '<tr><th>Step</th><th>%</th><th>Value</th></tr>' +
+    '<tr><td>Base</td><td></td><td>' + fmtMoney(lad.base) + '</td></tr>';
+  LADDER_STEPS.forEach(function (s) {
+    rows += '<tr' + (flash ? ' class="flash"' : '') + '><td>' + s[1] + '</td><td class="pct">' + (Number(pcts[s[0]]) || 0) + '%</td><td>' + fmtMoney(lad[s[0]]) + '</td></tr>';
+  });
+  rows += '<tr class="tot"><td>Total / unit</td><td></td><td>' + fmtMoney(lad.unit) + '</td></tr>';
+  tbl.innerHTML = rows;
 }
 
 /* ---------- write-back to the Quote ---------- */
@@ -920,6 +1828,21 @@ function insertProduct(data) {
     return ins.data[0].details.id;
   });
 }
+// Fixed picklists on a new Product, matched by field label so the org's API
+// name / value casing doesn't matter; a field the module lacks is skipped.
+var FIXED_PRODUCT_PICKS = { 'Product Type': 'goods', 'Item Classification': 'Finished Good' };
+function fixedProductPicks() {
+  var out = {};
+  productCols.forEach(function (f) {
+    var want = FIXED_PRODUCT_PICKS[f.field_label];
+    if (!want) return;
+    var pv = (f.pick_list_values || []).filter(function (p) {
+      return String(p.actual_value || p.display_value).toLowerCase() === want.toLowerCase();
+    })[0];
+    out[f.api_name] = pv ? (pv.actual_value || pv.display_value) : want;
+  });
+  return out;
+}
 function findOrCreateProduct(it) {
   return getProductCols().then(function () {
     return ZOHO.CRM.API.searchRecord({
@@ -942,7 +1865,7 @@ function findOrCreateProduct(it) {
         .then(function (out) { var e = rowError(out); if (e) warnings.push(it.sku + ': product fields not updated — ' + e); return hit.id; },
               function (err) { warnings.push(it.sku + ': product fields not updated — ' + errText(err)); return hit.id; });
     }
-    var base = { Product_Name: it.name, Product_Code: it.sku, Unit_Price: it.rate || 0 };
+    var base = Object.assign({ Product_Name: it.name, Product_Code: it.sku, Unit_Price: unitPrice(it) || 0 }, fixedProductPicks());
     // Parameter fields rejected → still create the bare product so the line lands.
     return insertProduct(Object.assign({}, base, params)).catch(function (err) {
       warnings.push(it.sku + ': product created without parameter fields — ' + errText(err));
@@ -1037,9 +1960,24 @@ function customRow(custom, line, pid) {
 
 // Re-send an existing subform row as { id } only — the row is retained
 // unchanged, without echoing back read-only fields (subform update replaces
-// all rows; omitted rows are deleted).
+// all rows; omitted rows are deleted). Rows the widget wrote earlier
+// (ownedRowIds, CR-246) are left out — the cart replaces them.
 function keepRows(rows) {
-  return (rows || []).map(function (r) { return r.id ? { id: r.id } : r; });
+  return (rows || []).filter(function (r) { return ownedRowIds.indexOf(String(r.id)) < 0; })
+    .map(function (r) { return r.id ? { id: r.id } : r; });
+}
+// The rows just written are the last N of each subform (appended after the
+// kept rows) — read them back so the next push can replace them.
+function readOwnedRows(entity, id, keys) {
+  return ZOHO.CRM.API.getRecord({ Entity: entity, RecordID: id }).then(function (res) {
+    var rec = res && res.data && res.data[0];
+    var ids = [];
+    keys.forEach(function (k) {
+      if (!k[0] || !k[1]) return;
+      ((rec && rec[k[0]]) || []).slice(-k[1]).forEach(function (r) { if (r.id) ids.push(String(r.id)); });
+    });
+    return ids;
+  });
 }
 
 // Zoho SDK rejects with plain objects, not Errors — stringify those.
@@ -1079,11 +2017,12 @@ async function pushLines() {
     setStatus('Item ' + (i + 1) + ' of ' + lines.length + ': ' + lines[i].sku + '…');
     var pid = needsProduct ? await findOrCreateProduct(lines[i]) : null;
     // CRM's subform Discount is an amount, not a percent.
-    var discAmt = lines[i].qty * lines[i].rate * lines[i].disc / 100;
+    var unit = unitPrice(lines[i]);
+    var discAmt = lines[i].qty * unit * lines[i].disc / 100;
     if (stdKey) {
       var srow = v3
-        ? { Product_Name: { id: pid }, Quantity: lines[i].qty, List_Price: lines[i].rate, Discount: discAmt }
-        : { product: { id: pid }, quantity: lines[i].qty, list_price: lines[i].rate, Discount: discAmt };
+        ? { Product_Name: { id: pid }, Quantity: lines[i].qty, List_Price: unit, Discount: discAmt }
+        : { product: { id: pid }, quantity: lines[i].qty, list_price: unit, Discount: discAmt };
       var d = lineDesc(lines[i]);
       if (d && stdDescCol) srow[stdDescCol] = d;
       applyParamCols(stdCols, lines[i], srow);
@@ -1100,6 +2039,13 @@ async function pushLines() {
   var out = await ZOHO.CRM.API.updateRecord({ Entity: moduleName, APIData: upd, Trigger: CRM_TRIGGER });
   var row = out && out.data && out.data[0];
   if (!row || row.code !== 'SUCCESS') throw new Error('Update failed: ' + JSON.stringify(row && row.message));
+  // Own the new rows + save the cart (CR-246); the record is already updated,
+  // so a failure here is reported, not thrown.
+  setStatus('Saving configuration…');
+  try {
+    ownedRowIds = await readOwnedRows(moduleName, recordId, [[stdKey, stdRows.length], [info.custom && info.custom.key, custRows.length]]);
+    await saveConfig();
+  } catch (e) { warnings.push('Configuration not saved — ' + errText(e)); }
 }
 
 $('add-btn').addEventListener('click', async function () {
@@ -1179,7 +2125,31 @@ function paramVals(line) {
   var vals = {};
   Object.keys(line.values || {}).forEach(function (cap) { vals[normLabel(cap)] = line.values[cap]; });
   if (line.type) vals.itemsource = vals.itemtype = typeLabel(line.type);
+  // UOM (CR-206) → Products "Usage Unit" and any "UOM"/"Unit" line column.
+  if (line.uom) vals.uom = vals.unit = vals.usageunit = line.uom;
+  // Price ladder (CR-220): class + each step's value, for orgs that add
+  // matching line columns ("Item Class", "Base Price", "OH", "Margin", "P & F",
+  // "Other", "Disc"). Not in line.values, which would leak into the description.
+  if (line.cls) {
+    var lad = ladderOf(line);
+    vals.itemclass = vals.class = line.cls === 'mfg' ? 'Mfg' : 'BO';
+    vals.baseprice = vals.base = lad.base;
+    vals.oh = vals.overhead = lad.oh;
+    vals.margin = lad.margin;
+    vals.pf = vals.pandf = vals.packingforwarding = lad.pf;
+    vals.other = lad.other;
+    vals.disc = lad.disc;
+  }
   return vals;
+}
+// Picklist columns take the org's own casing: "kgs" → "Kgs" when the list has
+// it; no match sends the raw value and CRM's rejection lands in `warnings`.
+// ponytail: the Usage Unit picklist must carry the units (CRM admin, per org).
+function pickValue(f, v) {
+  var pv = (f.pick_list_values || []).filter(function (p) {
+    return String(p.actual_value || p.display_value).toLowerCase() === String(v).toLowerCase();
+  })[0];
+  return pv ? (pv.actual_value || pv.display_value) : v;
 }
 function applyParamCols(columns, line, row) {
   if (!columns) return;
@@ -1195,7 +2165,7 @@ function applyParamCols(columns, line, row) {
     var v = colVal(vals, f);
     if (v === undefined || v === null || v === '') return;
     var numeric = f.data_type === 'double' || f.data_type === 'integer' || f.data_type === 'currency';
-    row[f.api_name] = numeric ? Number(v) || 0 : String(v);
+    row[f.api_name] = numeric ? Number(v) || 0 : String(pickValue(f, v));
   });
 }
 
@@ -1221,10 +2191,11 @@ $('quote-btn').addEventListener('click', async function () {
       setStatus('Item ' + (i + 1) + ' of ' + lines.length + ': ' + lines[i].sku + '…');
       var pid = await findOrCreateProduct(lines[i]);
       // CRM's subform Discount is an amount, not a percent.
-      var discAmt = lines[i].qty * lines[i].rate * lines[i].disc / 100;
+      var unit = unitPrice(lines[i]);
+      var discAmt = lines[i].qty * unit * lines[i].disc / 100;
       var qrow = meta.v3
-        ? { Product_Name: { id: pid }, Quantity: lines[i].qty, List_Price: lines[i].rate, Discount: discAmt }
-        : { product: { id: pid }, quantity: lines[i].qty, list_price: lines[i].rate, Discount: discAmt };
+        ? { Product_Name: { id: pid }, Quantity: lines[i].qty, List_Price: unit, Discount: discAmt }
+        : { product: { id: pid }, quantity: lines[i].qty, list_price: unit, Discount: discAmt };
       var d = lineDesc(lines[i]);
       if (d && meta.descCol) qrow[meta.descCol] = d;
       applyParamCols(meta.columns, lines[i], qrow);
@@ -1235,7 +2206,8 @@ $('quote-btn').addEventListener('click', async function () {
     }
 
     setStatus('Creating quote…');
-    var data = { Subject: deal.Deal_Name || 'Quote', Deal_Name: { id: recordId } };
+    // Quote_Stage is always Draft — CRM would otherwise apply the layout default.
+    var data = { Subject: deal.Deal_Name || 'Quote', Deal_Name: { id: recordId }, Quote_Stage: 'Draft' };
     if (deal.Account_Name && deal.Account_Name.id) data.Account_Name = { id: deal.Account_Name.id };
     if (deal.Contact_Name && deal.Contact_Name.id) data.Contact_Name = { id: deal.Contact_Name.id };
     data[meta.key] = rows;
@@ -1243,6 +2215,15 @@ $('quote-btn').addEventListener('click', async function () {
     var out = await ZOHO.CRM.API.insertRecord({ Entity: 'Quotes', APIData: data, Trigger: CRM_TRIGGER });
     var row = out && out.data && out.data[0];
     if (!row || row.code !== 'SUCCESS') throw new Error('Quote create failed: ' + JSON.stringify(row && row.message));
+    // Save the cart on the Deal and again under the new Quote (owning its
+    // rows), so the Configurator opened from that Quote shows and replaces them.
+    setStatus('Saving configuration…');
+    try {
+      var newId = String(row.details.id);
+      var ids = await readOwnedRows('Quotes', newId, [[meta.key, rows.length], [meta.custom && meta.custom.key, custRows.length]]);
+      await saveConfig();
+      await saveConfig('quotes:' + newId, ids);
+    } catch (e) { warnings.push('Configuration not saved — ' + errText(e)); }
     finish('Quote created.');
   } catch (err) {
     setStatus(errText(err), true);

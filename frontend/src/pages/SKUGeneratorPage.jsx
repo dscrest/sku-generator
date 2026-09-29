@@ -3,6 +3,12 @@ import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import CrmInfoCard, { readDealId } from '../components/CrmInfoCard';
+import { cleanFieldValue, itemFieldError } from '../components/itemFieldRules.js';
+import PickList from '../components/PickList.jsx';
+import RecordPage from '../components/RecordPage.jsx';
+import { CloseX } from '../components/Modal.jsx';
+import { btn } from '../components/woCommon.jsx';
+import { SkuRail } from './SKUItemPage.jsx';
 
 const T = {
   accent: '#4f46e5',
@@ -41,6 +47,8 @@ function DotIcon() {
 // server would drop. The UI for moving properties in/out is hidden (CR-011) —
 // every property is in the SKU — but the column and the gate stay for later.
 const isActive = p => p.activeInSku !== false;
+// SKUItem.booksData holds the org-enabled extra item fields (HSN, Manufacturer… CR-209).
+const parseBooksData = (s) => { try { return JSON.parse(s || '{}') || {}; } catch { return {}; } };
 
 const ctrlStyle = {
   width: '100%', height: 32, boxSizing: 'border-box',
@@ -107,9 +115,26 @@ export default function SKUGeneratorPage() {
   // legacy per-industry fallback server-side.
   const [seriesSettings, setSeriesSettings] = useState({ seriesMode: 'off', seriesPad: 4 });
   const typeLabel = (t) => seriesSettings.typeLabels?.[t] || t; // org naming (CR-180)
+  // Extra item fields the org switched on in Settings → SKU (CR-209); other
+  // orgs get an empty list and never see the card. Values keyed by Books field.
+  const extraFields = (seriesSettings.itemFieldCatalog || []).filter(f => (seriesSettings.itemFields || []).includes(f.key));
+  const [fields, setFields] = useState({});
+  // Dropdown values for fields backed by a Books master (Manufacturer, CR-210);
+  // a failed fetch says so once and leaves the field a text input (CR-231).
+  const [fieldOptions, setFieldOptions] = useState({});
+  useEffect(() => {
+    extraFields.filter(f => f.source).forEach(f =>
+      axios.get(f.source).then(r => setFieldOptions(o => ({ ...o, [f.key]: r.data })))
+        .catch(() => toast.error(`${f.label} list could not be loaded from Zoho Books`)));
+  }, [seriesSettings]);
 
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+
+  // Items rail (record-page shell): same list the details page shows; a card
+  // click opens that item's details.
+  const [list, setList] = useState(null);
+  useEffect(() => { axios.post('/api/sku-items/search', {}).then(r => setList(r.data)).catch(() => setList([])); }, []);
 
   useEffect(() => {
     axios.get('/api/sku-items/settings')
@@ -139,6 +164,7 @@ export default function SKUGeneratorPage() {
           if (ind) {
             setEditItem(ed.item);
             setItemType(ed.item.type);
+            setFields(parseBooksData(ed.item.booksData));
             editSelsRef.current = ed.selections;
             setSelectedIndustry(ind);
             return;
@@ -232,12 +258,14 @@ export default function SKUGeneratorPage() {
     if (!preview?.sku || creating) return;
     if (missingRequired.length) { toast.error(`Required fields missing: ${missingRequired.join(', ')}`); return; }
     if (preview.duplicate) { toast.error(`SKU "${preview.sku}" already exists`); return; }
+    const fieldErr = itemFieldError(extraFields, fields);
+    if (fieldErr) { toast.error(fieldErr); return; }
     setCreating(true);
     try {
       if (editItem) {
         const { data } = await axios.post('/api/sku/update-item', {
           itemId: editItem.id, name: preview.name, sku: preview.sku,
-          description: preview.description, selectedValues: selections,
+          description: preview.description, selectedValues: selections, fields,
         });
         if (data.zohoWarning) {
           toast.error(`Saved, but Zoho Books push failed: ${data.zohoWarning}`, { duration: 8000 });
@@ -251,11 +279,11 @@ export default function SKUGeneratorPage() {
           name: preview.name, sku: preview.sku,
           description: preview.description, type: itemType,
           industryId: selectedIndustry.id,
-          selectedValues: selections,
+          selectedValues: selections, fields,
         });
         toast.success(`SKU "${data.sku || preview.sku}" created`);
       }
-      navigate('/sku/items'); // land on the list with the (new) SKU visible
+      navigate(editItem ? `/sku/items/${editItem.id}` : '/sku/items'); // back to the item, or the list with the new SKU visible
     } catch (err) {
       toast.error(err.response?.data?.error || (editItem ? 'Failed to update item' : 'Failed to create item'));
     } finally { setCreating(false); }
@@ -313,16 +341,27 @@ export default function SKUGeneratorPage() {
     },
   ];
 
+  const canCreate = Boolean(preview?.sku) && !creating;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: T.bg, fontFamily: T.sans }}>
-
-      {/* ── Scrollable body. No page head: the SKU tab bar above already names
-          the page, and the stats row moved out with it. */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px 32px' }}>
-
-        <Link to="/sku/items" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 600, color: T.ink3, textDecoration: 'none', marginBottom: 12 }}>
-          ← Back to SKUs
-        </Link>
+    <RecordPage
+      rail={<SkuRail items={list} selectedId={editItem?.id} onSelect={i => navigate(`/sku/items/${i.id}`)} />}
+      title={editItem ? editItem.sku : 'New'}
+      chips={preview?.sku && <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accentInk, fontWeight: 600 }}>{preview.sku}</span>}
+      actions={
+        <>
+          <button
+            onClick={handleCreateItem} disabled={!canCreate} title={canCreate ? '⌘↵ / Ctrl+Enter' : undefined}
+            style={{ ...btn, fontWeight: 600, background: canCreate ? 'var(--blue)' : undefined, color: canCreate ? '#fff' : undefined, borderColor: canCreate ? 'var(--blue)' : undefined, cursor: canCreate ? 'pointer' : 'not-allowed', opacity: canCreate ? 1 : 0.6 }}
+          >
+            {creating ? (editItem ? 'Updating…' : 'Creating…') : (editItem ? 'Save' : 'Create')}
+          </button>
+          <CloseX onClick={() => navigate(editItem ? `/sku/items/${editItem.id}` : '/sku/items')} title={editItem ? 'Back to the item' : 'Back to the list'} />
+        </>
+      }
+      tabs={[['details', 'Details']]} tab="details" onTab={() => {}}
+    >
+      {/* ── Scrollable body */}
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 24px 32px', background: T.bg, fontFamily: T.sans }}>
 
         {/* Deal context when opened from a Zoho CRM custom link button */}
         {readDealId(searchParams) && <CrmInfoCard dealId={readDealId(searchParams)} />}
@@ -507,6 +546,40 @@ export default function SKUGeneratorPage() {
               </div>
             )}
 
+            {/* ── Extra item fields (CR-209) — only the ones this org enabled */}
+            {selectedIndustry && extraFields.length > 0 && (
+              <div style={{ background: T.bgElev, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: shadowSm, overflow: 'hidden' }}>
+                <SectionHead label="Item details" />
+                {extraFields.map(f => (
+                  <PropRow key={f.key} prop={{ caption: f.label }}>
+                    {/* Books-master fields (Manufacturer) get a sized typeahead pick list
+                        (CR-231 follow-up); a stored off-master value stays as typed. */}
+                    {fieldOptions[f.key]?.length ? (
+                      <PickList
+                        value={fields[f.key] ?? ''}
+                        options={fieldOptions[f.key]}
+                        placeholder="Select or type"
+                        inputProps={{ tabIndex: 0, maxLength: f.maxLen }}
+                        onChange={v => setFields(prev => ({ ...prev, [f.key]: cleanFieldValue(f, v) }))}
+                        style={ctrlStyle}
+                      />
+                    ) : (
+                      <input
+                        tabIndex={0}
+                        value={fields[f.key] ?? ''}
+                        maxLength={f.maxLen}
+                        inputMode={f.digits ? 'numeric' : undefined}
+                        pattern={f.digits ? '\\d*' : undefined}
+                        onChange={e => setFields(prev => ({ ...prev, [f.key]: cleanFieldValue(f, e.target.value) }))}
+                        style={ctrlStyle}
+                      />
+                    )}
+                    <span />
+                  </PropRow>
+                ))}
+              </div>
+            )}
+
             {/* ── Description preview — exactly what Zoho Books receives */}
             {selectedIndustry && preview?.description && (
               <div style={{ background: T.bgElev, border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: shadowSm, overflow: 'hidden' }}>
@@ -561,12 +634,12 @@ export default function SKUGeneratorPage() {
             <div style={{ background: T.bgElev, border: `1px solid ${T.border}`, borderRadius: 12, overflow: 'hidden', boxShadow: shadowSm }}>
               <div style={{ padding: '16px 18px 14px' }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: T.ink, marginBottom: 3 }}>
-                  {editItem ? `Editing ${editItem.sku}` : 'Save this SKU'}
+                  {editItem ? `Editing ${editItem.sku}` : 'Item type'}
                 </div>
                 <div style={{ fontSize: 12, color: T.ink3, marginBottom: 14, minHeight: 18 }}>
                   {preview?.sku
                     ? <span style={{ fontFamily: T.mono, fontWeight: 600, color: T.accentInk }}>{preview.sku}</span>
-                    : editItem ? 'Adjust values, then update' : 'Choose the item type, then create'}
+                    : editItem ? 'Adjust values, then Save above' : 'Choose the item type, then Create above'}
                 </div>
 
                 {editItem ? (
@@ -599,29 +672,6 @@ export default function SKUGeneratorPage() {
                 )}
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <button
-                    onClick={handleCreateItem}
-                    disabled={creating || !preview?.sku}
-                    style={{
-                      width: '100%', padding: '9px 14px', borderRadius: 8,
-                      fontSize: 13.5, fontWeight: 500,
-                      border: `1px solid ${preview?.sku && !creating ? T.accent : T.borderStrong}`,
-                      cursor: creating || !preview?.sku ? 'not-allowed' : 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                      background: preview?.sku && !creating ? T.accent : T.bgSubtle,
-                      color: preview?.sku && !creating ? '#fff' : T.ink4,
-                      fontFamily: T.sans, opacity: creating ? 0.75 : 1,
-                      boxShadow: preview?.sku && !creating ? '0 1px 0 rgba(79,70,229,0.4)' : 'none',
-                      transition: 'all 0.12s',
-                    }}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
-                    {creating ? (editItem ? 'Updating…' : 'Creating…') : (editItem ? 'Update SKU' : 'Create Item')}
-                    {!creating && preview?.sku && (
-                      <span style={{ fontFamily: T.mono, fontSize: 10, opacity: 0.65, padding: '1px 5px', border: '1px solid rgba(255,255,255,0.35)', borderRadius: 3, lineHeight: 1 }}>⌘↵</span>
-                    )}
-                  </button>
-
                   <button
                     onClick={handleCopyPermalink}
                     disabled={!selectedIndustry}
@@ -679,6 +729,6 @@ export default function SKUGeneratorPage() {
           </div>
         </div>
       </div>
-    </div>
+    </RecordPage>
   );
 }

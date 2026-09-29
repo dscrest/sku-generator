@@ -76,7 +76,7 @@ export default function EstimateTermsSettingsPage() {
         </select>
         <input value={draft.name} maxLength={80} placeholder="Template name" style={{ width: 220, cursor: 'text' }}
           onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
-        <button onClick={addCopy} disabled={busy}>+ New (copy of this)</button>
+        <button onClick={addCopy} disabled={busy}>+ New</button>
         <button onClick={remove} disabled={busy || templates.length < 2}>Delete</button>
         <span className="est-spacer" />
         <button className="est-active" onClick={save} disabled={busy || !draft.name.trim()}>Save</button>

@@ -2,6 +2,9 @@
 // Run: node functions/skuapi/zoho/push.test.js
 // CR-029: composite create payload + associated-items validation.
 const assert = require("assert");
+// auth.isConfigured reads these at require time (CR-223 deleteFromZoho case).
+process.env.ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID || "x";
+process.env.ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET || "x";
 
 // Patch booksApi BEFORE requiring inventoryApi/push so their destructured refs
 // capture the stubs (no live Zoho calls).
@@ -13,9 +16,11 @@ booksApi.apiRequest = async (catalyst, method, path, body, service) => {
 };
 booksApi.getStockAccountId = async () => "acc-fg";
 booksApi.findItemByName = async () => null; // no legacy RM1/RM2 in this fake org
+// deleteItem binds booksApi's own apiRequest — route it through the stub (CR-223).
+booksApi.deleteItem = (c, id) => booksApi.apiRequest(c, "DELETE", `/items/${id}`, null, "books");
 
 const { createCompositeItem } = require("./inventoryApi");
-const { buildAssociatedItems, mergeMappedLines, valueItemSku, requireBomLines } = require("./push");
+const { buildAssociatedItems, mergeMappedLines, valueItemSku, requireBomLines, deleteFromZoho } = require("./push");
 
 // Stub catalyst: __orgId for orgClause, canned ZCQL rows keyed by table name.
 const catalystWith = (rowsByTable) => ({
@@ -128,6 +133,18 @@ const catalystWith = (rowsByTable) => ({
   );
   assert.deepStrictEqual(legacy.lines.map((l) => l.rmItemId).sort(), ["101", "102", "900"], "placeholders out, manual line 900 kept");
   assert.strictEqual(legacy.changed, true);
+
+  // --- CR-223: SKU-item delete picks the Zoho API by type; gone = fine; refusal = 409 ---
+  assert.deepStrictEqual(await deleteFromZoho({}, { type: "Manufacturing", zohoItemId: "" }), { zohoDeleted: false });
+  assert.deepStrictEqual(await deleteFromZoho({}, { type: "Manufacturing", zohoItemId: "77" }), { zohoDeleted: true });
+  assert.deepStrictEqual([captured.method, captured.path, captured.service], ["DELETE", "/compositeitems/77", "inventory"]);
+  assert.deepStrictEqual(await deleteFromZoho({}, { type: "Trading", zohoItemId: "78" }), { zohoDeleted: true });
+  assert.deepStrictEqual([captured.method, captured.path, captured.service], ["DELETE", "/items/78", "books"]);
+  booksApi.apiRequest = async () => { const e = new Error("gone"); e.zohoCode = 1002; throw e; };
+  assert.deepStrictEqual(await deleteFromZoho({}, { type: "Trading", zohoItemId: "79" }), { zohoDeleted: false, gone: true });
+  booksApi.apiRequest = async () => { const e = new Error("Item has transactions"); e.zohoCode = 3005; throw e; };
+  await assert.rejects(deleteFromZoho({}, { type: "Trading", sku: "V-A", zohoItemId: "80" }),
+    (e) => e.status === 409 && /V-A: Item has transactions/.test(e.message));
 
   console.log("push CR-029/CR-030 composite payload + associated-items + merge + CR-163 value SKU + CR-184 BOM guard: ok");
 })();

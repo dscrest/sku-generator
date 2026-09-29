@@ -1,56 +1,6 @@
 "use strict";
 
-/** RAVS150 demo data (CR-104) — from the legacy costing sheet / design reference. */
-
-const MATERIALS = [
-  ["CI", 70], ["FG260", 80], ["WCB", 100], ["SGI", 120], ["CF8", 280], ["CF3", 300],
-  ["CF8M", 430], ["CF3M", 480], ["HRS", 160], ["IC WCB", 250], ["IC CF8", 340], ["IC CF8M", 480],
-].map(([code, rate]) => ({ code, name: code, rate, uom: "KG", effectiveFrom: "2026-04-01", status: "Active" }));
-
-const DEMO_RECIPE = {
-  code: "RCP-RAVS150-STD",
-  name: "RAVS150 Standard",
-  productCode: "RAVS150",
-  productName: "Rotary airlock valve, 150 mm",
-  effectiveFrom: "2026-04-01",
-  changeReason: "Initial recipe from costing sheet",
-  components: [
-    {
-      code: "CASING", name: "Casing", question: "What material should the casing be made from?",
-      qty: 1, uom: "Nos", required: true, allowMaterial: true,
-      options: [
-        { mat: "CI", castWeight: 55, fixedCosts: { MACHINING: 2000, DRILLING: 1000, ASSEMBLY: 400 } },
-        { mat: "WCB", castWeight: 55, fixedCosts: { MACHINING: 2000, DRILLING: 1000, ASSEMBLY: 500 } },
-        { mat: "CF8", castWeight: 55, fixedCosts: { MACHINING: 4000, DRILLING: 1200, ASSEMBLY: 600 } },
-        { mat: "FG260", castWeight: 55, fixedCosts: { MACHINING: 2000, DRILLING: 1000, ASSEMBLY: 400 } },
-        { mat: "SGI", castWeight: 55, fixedCosts: { MACHINING: 2200, DRILLING: 1000, ASSEMBLY: 450 } },
-        { mat: "CF8M", castWeight: 55, fixedCosts: { MACHINING: 4000, DRILLING: 1200, ASSEMBLY: 600 } },
-      ],
-    },
-    {
-      code: "SIDE_COVER", name: "Side Cover", question: "What material should the side cover be made from?",
-      qty: 2, uom: "Nos", required: true, allowMaterial: true,
-      options: [
-        { mat: "CI", castWeight: 23, fixedCosts: { MACHINING: 600, DRILLING: 200 } },
-        { mat: "WCB", castWeight: 23, fixedCosts: { MACHINING: 700, DRILLING: 200 } },
-        { mat: "CF8", castWeight: 46, fixedCosts: { MACHINING: 850, DRILLING: 250 } },
-      ],
-    },
-    {
-      code: "SHAFT", name: "Shaft", question: "Shaft material",
-      qty: 1, uom: "Nos", required: true, allowMaterial: true,
-      options: [
-        { mat: "HRS", castWeight: 12, fixedCosts: { MACHINING: 900, DRILLING: 150, ASSEMBLY: 200 } },
-        { mat: "CF8", castWeight: 12, fixedCosts: { MACHINING: 1400, DRILLING: 200, ASSEMBLY: 200 } },
-      ],
-    },
-    {
-      code: "FASTENERS", name: "Fasteners", question: "",
-      qty: 1, uom: "Set", required: true, allowMaterial: false,
-      options: [{ mat: "HRS", castWeight: 1.2, fixedCosts: { ASSEMBLY: 150 } }],
-    },
-  ],
-};
+/** Recipe Engine / Product Configurator seed data. The RAVS150 demo recipe (CR-104) was removed in CR-196. */
 
 const DEFAULT_COST_ELEMENTS = [
   { code: "CASTING", label: "CS Cost", calcType: "RATE_QTY", sequence: 1 },
@@ -79,11 +29,10 @@ const SIZING_MODELS = [
 // Quotation question sheet. Values: "Display" or ["Display", "SKU"]; SKU defaults
 // to the display text upper-cased without spaces. `sku: false` keeps the answer
 // off the SKU (duty data — it rides on the quote line, not the item).
+// `widget: false` (CR-223) keeps the question in the bank but off the configurator.
 const uniq = (a) => [...new Set(a)];
 const YN = [["Y", "Y"], ["N", "N"]];
 const RAV_QUESTIONS = [
-  { caption: "Prod. Type", sku: false, values: ["Powder", "Granule", "Fiber"] },
-  { caption: "Application", sku: false, values: ["Pressure Conv", "Vac Conv", "Bag Filter", "Hoper discharge", "Silo discharge"] },
   { caption: "Capacity", unit: "TPH", range: true, sku: false, role: "capacity", required: true },
   { caption: "Bulk Density", unit: "kg/ltr", range: true, sku: false, role: "density", required: true },
   { caption: "Speed", unit: "RPM", range: true, sku: false, role: "speed", required: true },
@@ -92,28 +41,53 @@ const RAV_QUESTIONS = [
   { caption: "Series", role: "series", required: true,
     values: [["Square", "SQ"], ["RAVH-S Square", "SSQ"], ["Round", "RD"], ["Round Old", "RDO"], ["RAVH-S IC", "SIC"], ["RAVS", "SAN"], ["CB", "CB"], ["RAVB Square", "BSQ"]] },
   { caption: "Model", role: "model", required: true, inName: true, values: uniq(SIZING_MODELS.map((m) => m.modelCode)) },
-  { caption: "No of blade", values: [["Default", "BD"], ["8", "B8"], ["10", "B10"]] },
+  { caption: "No of blade", widget: false, values: [["Default", "BD"], ["8", "B8"], ["10", "B10"]] },
   { caption: "MOC", required: true, inName: true,
     values: ["CI", "WCB", ["MS Fab", "MSF"], ["SS304", "S304"], ["SS304L", "S304L"], ["SS316", "S316"], ["SS316L", "S316L"], ["H Alloy", "HAL"]] },
   // Sheet says only "HP / Bare Shaft" — the HP ladder is a starter guess; edit in Properties.
-  { caption: "Motor HP", values: [["Bare Shaft", "BS"], ["0.5 HP", "H05"], ["1 HP", "H1"], ["1.5 HP", "H15"], ["2 HP", "H2"], ["3 HP", "H3"], ["5 HP", "H5"], ["7.5 HP", "H75"], ["10 HP", "H10"]] },
+  // "Bare Shaft" is the widget's Motor Operated / Bare Shaft radio (CR-223), not an HP value.
+  { caption: "Motor HP", values: [["0.5 HP", "H05"], ["1 HP", "H1"], ["1.5 HP", "H15"], ["2 HP", "H2"], ["3 HP", "H3"], ["5 HP", "H5"], ["7.5 HP", "H75"], ["10 HP", "H10"]] },
   { caption: "Motor Make", values: ["BBL", "CG", "ABB", "HM", ["Elmech", "ELM"]] },
   { caption: "Motor Type", values: [["IP55 IE2", "IE2"], ["IP55 IE3", "IE3"], ["IP55 IE4", "IE4"], "FLP"] },
   { caption: "Gear Make", values: [["Elmech", "ELM"], "SEW", ["Bonfiglioli", "BON"], "PBL", ["Nord", "NRD"]] },
   { caption: "Gear type", values: [["Inline Helical", "IH"], "NMRV", ["Warm", "WRM"]] },
   { caption: "Drive", values: [["Chain", "CH"], ["Direct", "DR"], ["Couple", "CP"]] },
   // Gear Model is "can change manually" with no list on the sheet — add values in Properties.
-  { caption: "Gear Model", values: [["Standard", "GS"]] },
-  { caption: "Rotor", values: [["0", "R0"]] },
-  { caption: "Coating", values: ["TC"] },
+  { caption: "Gear Model", widget: false, values: [["Standard", "GS"]] },
+  { caption: "Rotor", widget: false, values: [["0", "R0"]] },
+  { caption: "Coating", widget: false, values: ["TC"] },
   // Sheet cell is cut off after "Brass Tippi…" — check for further values.
-  { caption: "Rotor Strip", values: [["3-Side Rubber Strip", "RS3"], ["Spring steel", "SST"], "PTFE", ["Brass Tipping", "BRT"]] },
+  { caption: "Rotor Strip", widget: false, values: [["3-Side Rubber Strip", "RS3"], ["Spring steel", "SST"], "PTFE", ["Brass Tipping", "BRT"]] },
   { caption: "Shaft Air Purging", values: YN },
-  { caption: "Shaft Air Purge SOV", values: YN },
-  { caption: "Gear Mounting Connector", values: YN },
+  { caption: "Shaft Air Purge SOV", widget: false, values: YN },
+  { caption: "Gear Mounting Connector", widget: false, values: YN },
   { caption: "Proximity sensor", values: YN },
   { caption: "Inlet Companion flange", unit: "Nos", range: true },
   { caption: "Outlet Companion flange", unit: "Nos", range: true },
 ];
 
-module.exports = { MATERIALS, DEMO_RECIPE, DEFAULT_COST_ELEMENTS, SIZING_MODELS, RAV_QUESTIONS };
+// CR-195: Ricon's sample sheet (RAVH 100 S-Square, CI) as Component Map rows,
+// by question caption / answer text and Books item NAME — resolved to ids by
+// POST /seed-rav-map. `question` is added to the RAV question bank when absent:
+// Motor supply = Fitted (BOM line) / Loose (its own quote & SO line). Off the
+// widget since CR-223 — the Motor rows below only match once it is answered
+// elsewhere (or the map is re-keyed in the grid).
+const RAV_MAP_SAMPLE = {
+  question: { caption: "Motor supply", widget: false, values: [["Fitted", "MF"], ["Loose", "ML"]] },
+  rows: (() => {
+    const cast = { Model: "RAVH 100", Series: "RAVH-S Square", MOC: "CI" };
+    const motor = { "Motor HP": "0.5 HP", "Motor Make": "BBL", "Motor Type": "IP55 IE2" };
+    return [
+      { component: "Casing", when: cast, item: "Casing CI", qty: 55, required: true },
+      { component: "Side Cover", when: cast, item: "Side Cover CI", qty: 23, required: true },
+      { component: "Brg Cover", when: cast, item: "Brg Cover CI", qty: 1, required: true },
+      { component: "Gland", when: cast, item: "Gland CI", qty: 1, required: true },
+      { component: "Motor", when: { ...motor, "Motor supply": "Fitted" }, item: "Motor HP BBL IP IE2 0.5", qty: 1 },
+      { component: "Motor", when: { ...motor, "Motor supply": "Loose" }, item: "Motor HP BBL IP IE2 0.5", qty: 1, asQuoteLine: true },
+      // Sheet shows Gear type "Inline Helical" next to item "Gear Elmech NMRV" — mapped on NMRV; edit in the grid if wrong.
+      { component: "Gear", when: { "Gear Make": "Elmech", "Gear type": "NMRV" }, item: "Gear Elmech NMRV", qty: 1 },
+    ];
+  })(),
+};
+
+module.exports = { DEFAULT_COST_ELEMENTS, SIZING_MODELS, RAV_QUESTIONS, RAV_MAP_SAMPLE };

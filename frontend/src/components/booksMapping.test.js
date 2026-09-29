@@ -19,6 +19,13 @@ assert.equal(m['Selling Price'], '');
 assert.equal(autoMap(['Category (Custom Field)'], ['Category Name'])['Category (Custom Field)'], 'Category Name');
 assert.equal(autoMap(['Category (Custom Field)'], ['Category Name', 'CF.Category'])['Category (Custom Field)'], 'CF.Category');
 
+// Books export column names feed the import sheet's fields; the field's own name wins.
+{
+  const e = autoMap(['Selling Price', 'Purchase Price', 'Warehouse Name'], ['Rate', 'Purchase Rate', 'Location Name']);
+  assert.deepEqual(e, { 'Selling Price': 'Rate', 'Purchase Price': 'Purchase Rate', 'Warehouse Name': 'Location Name' });
+  assert.equal(autoMap(['Selling Price'], ['Rate', 'Selling Price'])['Selling Price'], 'Selling Price');
+}
+
 const rows = applyMapping(
   [{ 'item name': 'Chair', Sku: 'CH-1', 'Sell Price': '99', 'Extra Col': 'x' }],
   { ...m, 'Selling Price': 'Sell Price' },

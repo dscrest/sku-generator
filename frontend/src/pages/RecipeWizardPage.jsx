@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
-import { inr } from './recipeShared.jsx';
+import { inr, statusLabel } from './recipeShared.jsx';
 
 /**
  * Sales configurator (CR-104): 5-step guided wizard. Sales never sees the
@@ -12,7 +12,7 @@ import { inr } from './recipeShared.jsx';
  * is recomputed and frozen server-side).
  */
 
-const STEPS = ['Product', 'Recipe', 'Configure', 'Review', 'Quotation'];
+const STEPS = ['Product', 'Template', 'Configure', 'Review', 'Quotation'];
 
 const card = { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' };
 const btn = {
@@ -45,10 +45,10 @@ export default function RecipeWizardPage() {
 
   useEffect(() => {
     axios.get('/api/recipe/products').then(r => setProducts(r.data)).catch(() => {});
-    axios.get('/api/recipe/recipes').then(r => setRecipes(r.data)).catch(() => toast.error('Failed to load recipes'));
+    axios.get('/api/recipe/recipes').then(r => setRecipes(r.data)).catch(() => toast.error('Failed to load templates'));
   }, []);
 
-  // Products that actually have a published recipe, plus recipe-only product
+  // Products that actually have an active design, plus recipe-only product
   // codes (recipes not linked to an ERP item yet still need to be quotable).
   const published = recipes.filter(r => r.status === 'Published');
   const productCards = useMemo(() => {
@@ -60,7 +60,7 @@ export default function RecipeWizardPage() {
       byCode.get(r.productCode).recipes++;
     }
     const q = search.toLowerCase();
-    // All ERP products stay visible; ones without a published recipe get a
+    // All ERP products stay visible; ones without an active design get a
     // "create one" CTA instead of silently disappearing.
     return [...byCode.values()]
       .filter(p => !q || `${p.code} ${p.name}`.toLowerCase().includes(q))
@@ -72,7 +72,7 @@ export default function RecipeWizardPage() {
   // Load the chosen recipe's bundle (components + option prices) for step 3.
   useEffect(() => {
     if (!recipeId) { setBundle(null); return; }
-    axios.get(`/api/recipe/recipes/${recipeId}`).then(r => setBundle(r.data)).catch(() => toast.error('Failed to load recipe'));
+    axios.get(`/api/recipe/recipes/${recipeId}`).then(r => setBundle(r.data)).catch(() => toast.error('Failed to load template'));
   }, [recipeId]);
 
   const components = bundle?.components || [];
@@ -191,14 +191,14 @@ export default function RecipeWizardPage() {
                       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13.5, fontWeight: 600, minWidth: 90 }}>{p.code}</span>
                       <span style={{ fontSize: 13.5, color: 'var(--text-secondary)', flex: 1 }}>{p.name}</span>
                       {hasRecipe
-                        ? <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{p.recipes} recipe{p.recipes !== 1 ? 's' : ''}</span>
-                        : <span style={{ fontSize: 11.5, color: 'var(--blue)', fontWeight: 600 }}>No recipe yet — create one →</span>}
+                        ? <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>{p.recipes} template{p.recipes !== 1 ? 's' : ''}</span>
+                        : <span style={{ fontSize: 11.5, color: 'var(--blue)', fontWeight: 600 }}>No template yet — create one →</span>}
                     </button>
                   );
                 })}
                 {productCards.length === 0 && (
                   <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-                    No products yet. <button onClick={() => navigate('/recipe/recipes')} style={{ border: 'none', background: 'none', color: 'var(--blue)', cursor: 'pointer', fontSize: 13, padding: 0, fontWeight: 600 }}>Create a recipe →</button>
+                    No products yet. <button onClick={() => navigate('/recipe/recipes')} style={{ border: 'none', background: 'none', color: 'var(--blue)', cursor: 'pointer', fontSize: 13, padding: 0, fontWeight: 600 }}>Create a template →</button>
                   </div>
                 )}
               </div>
@@ -208,8 +208,8 @@ export default function RecipeWizardPage() {
           {/* Step 2: recipe + qty */}
           {step === 1 && (
             <div style={{ ...card, padding: 24 }}>
-              <h1 style={h1}>Which recipe applies?</h1>
-              <div style={sub}>Only published recipes for {productCode} are selectable. The default is preselected.</div>
+              <h1 style={h1}>Which template applies?</h1>
+              <div style={sub}>Only active templates for {productCode} are selectable. The default is preselected.</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {productRecipes.map((r, i) => {
                   const on = String(recipeId) === String(r.id);
@@ -222,10 +222,10 @@ export default function RecipeWizardPage() {
                       background: on ? 'var(--blue-light)' : 'var(--bg-card)',
                     }}>
                       <span style={{ fontSize: 14, fontWeight: 600 }}>{r.name}</span>
-                      <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>v{r.version}</span>
+                      <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{r.code}</span>
                       <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.effectiveFrom ? `Effective ${r.effectiveFrom}` : ''}</span>
                       <span style={{ fontSize: 11.5, color: selectable ? 'var(--blue)' : 'var(--text-muted)', fontWeight: 600 }}>
-                        {selectable ? (i === productRecipes.findIndex(x => x.status === 'Published') ? 'Default' : '') : `${r.status} · not selectable`}
+                        {selectable ? (i === productRecipes.findIndex(x => x.status === 'Published') ? 'Default' : '') : `${statusLabel(r.status)} · not selectable`}
                       </span>
                     </button>
                   );
@@ -297,7 +297,7 @@ export default function RecipeWizardPage() {
             <div style={{ ...card, overflow: 'hidden' }}>
               <div style={{ padding: '20px 24px 12px' }}>
                 <h1 style={h1}>Review cost and price</h1>
-                <div style={{ ...sub, marginBottom: 0 }}>Cost comes from the recipe and cost master; click a line to adjust its costs for this quotation only.</div>
+                <div style={{ ...sub, marginBottom: 0 }}>Cost comes from the template and cost master; click a line to adjust its costs for this quotation only.</div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr', padding: '8px 24px', fontSize: 10.5, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', borderBottom: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
                 <span>Component</span><span>Material</span><span style={{ textAlign: 'right' }}>Unit cost</span><span style={{ textAlign: 'right' }}>× {review?.qty ?? qty}</span>
@@ -335,7 +335,7 @@ export default function RecipeWizardPage() {
                           </div>
                         ))}
                         <div style={{ alignSelf: 'flex-end', fontSize: 11.5, color: 'var(--text-muted)', paddingBottom: 7 }}>
-                          Blank = recipe value. Applies to this quotation only.
+                          Blank = template value. Applies to this quotation only.
                           {edited && <button onClick={() => setOverrides(o => { const n = { ...o }; delete n[cid]; return n; })}
                             style={{ border: 'none', background: 'none', color: 'var(--blue)', cursor: 'pointer', fontSize: 11.5, padding: 0, marginLeft: 8, fontWeight: 600 }}>Reset</button>}
                         </div>
@@ -382,7 +382,7 @@ export default function RecipeWizardPage() {
               <div style={{ width: 46, height: 46, borderRadius: '50%', background: 'var(--blue-light)', color: 'var(--blue)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', fontSize: 20, fontWeight: 700 }}>✓</div>
               <h1 style={{ ...h1, fontSize: 20 }}>Quotation {qtn.qtnNo} created</h1>
               <div style={{ color: 'var(--text-secondary)', fontSize: 13, maxWidth: 440, margin: '0 auto 20px', lineHeight: 1.55 }}>
-                The configuration, recipe version and material rates are frozen in a snapshot. Later changes to the recipe or rates will not affect this quotation.
+                The configuration, template and material rates are frozen in a snapshot. Later changes to the template or rates will not affect this quotation.
               </div>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
                 <button style={btn} onClick={() => navigate(`/recipe/quotations/${qtn.id}`)}>View snapshot</button>
@@ -415,7 +415,7 @@ export default function RecipeWizardPage() {
             <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Configuration summary</div>
             <div style={{ fontSize: 16, fontWeight: 700, marginTop: 6, fontFamily: 'var(--font-mono)' }}>{productCode || '—'}</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-              {selRecipe ? `${selRecipe.name} v${selRecipe.version}` : 'No recipe selected'} · Qty {qty}
+              {selRecipe ? selRecipe.name : 'No template selected'} · Qty {qty}
             </div>
           </div>
           <div style={{ padding: '6px 16px' }}>
@@ -428,7 +428,7 @@ export default function RecipeWizardPage() {
                 </div>
               );
             })}
-            {components.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>Pick a product and recipe to begin.</div>}
+            {components.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>Pick a product and template to begin.</div>}
           </div>
           <div style={{ padding: '10px 16px 14px', background: 'var(--bg-secondary)', borderTop: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, padding: '2px 0' }}>

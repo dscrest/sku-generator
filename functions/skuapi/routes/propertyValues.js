@@ -51,8 +51,12 @@ router.get("/property-values/linked", async (req, res) => {
   }
 });
 
+// CR-228: capMin/capMax = the capacity-role band that pre-selects this value
+// in the CRM configurator. Number in, null for blank/invalid.
+const band = (v) => (v === undefined || v === null || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null);
+
 router.post("/property-values", async (req, res) => {
-  const { displayValue, name, sku, description, propertyId, createAsItem, isDefault } = req.body;
+  const { displayValue, name, sku, description, propertyId, createAsItem, isDefault, capMin, capMax } = req.body;
   if (!displayValue || !name || !sku || !propertyId) {
     return res.status(400).json({ error: "displayValue, name, sku, propertyId are required" });
   }
@@ -67,6 +71,7 @@ router.post("/property-values", async (req, res) => {
       propertyId: String(propertyId),
       createAsItem: createAsItem ? "true" : "false",
       isDefault: isDefault ? "true" : "false",
+      capMin: band(capMin), capMax: band(capMax),
       orgId: req.orgId,
     });
     const value = out(row);
@@ -123,12 +128,14 @@ router.put("/property-values/:id", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
   if (!(await ownsRow(req.catalyst, TABLE, id))) return res.status(404).json({ error: "Not found" });
-  const { displayValue, name, sku, description, createAsItem, isDefault } = req.body;
+  const { displayValue, name, sku, description, createAsItem, isDefault, capMin, capMax } = req.body;
   const data = { ROWID: id };
   if (displayValue) data.displayValue = displayValue;
   if (name) data.name = name;
   if (sku) data.sku = sku;
   if (description !== undefined) data.description = description;
+  if (capMin !== undefined) data.capMin = band(capMin);
+  if (capMax !== undefined) data.capMax = band(capMax);
   if (createAsItem !== undefined) data.createAsItem = createAsItem ? "true" : "false";
   if (isDefault !== undefined) data.isDefault = isDefault ? "true" : "false";
   try {

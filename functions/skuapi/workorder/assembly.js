@@ -9,12 +9,14 @@
  * assembled FG closes; QC + Close stay manual (decided flow).
  */
 const { zStr } = require("../store");
-const { updateCompositeItem, getCompositeItem, createBundle, createTransferOrder } = require("../zoho/inventoryApi");
+const {
+  updateCompositeItem, getCompositeItem, createBundle, createTransferOrder, deleteBundle, deleteTransferOrder, findTransferOrderByNumber, findBundleByNumber,
+} = require("../zoho/inventoryApi");
 const { warehouses, logActivity, byOrg } = require("./store");
 const bom = require("./bom");
 const { loadContext, trackingProblem } = require("./txn");
 const { buildGrid } = require("./grid");
-const { fullyIssued } = require("./formulas");
+const { fullyIssued, componentQtys } = require("./formulas");
 const { serialPrefix, normalizePrefix, nextSerials } = require("./serial");
 // CR-172: any shop-floor stage, once the FG's material is fully issued; Completed requires one.
 const { ASSEMBLABLE } = require("./status");
@@ -53,20 +55,6 @@ async function resolvePrefix(catalyst, orgId, fg, prefix, lenient) {
   e.status = 400; throw e;
 }
 
-// Pure: what `qty` units consume. Per-unit × qty; fall back to
-// requiredQty/fgQty for lines imported without perUnitQty (excel/manual rows).
-// Rounded to 4 dp so 0.1 × 3 is 0.3 everywhere (picker, pick check, Zoho).
-function componentQtys(lines, qty, fgQty) {
-  return lines
-    .filter((l) => n(l.requiredQty) > 0)
-    .map((l) => ({
-      rmItemId: String(l.rmItemId),
-      name: l.rmName,
-      qty: Math.round((n(l.perUnitQty) > 0 ? n(l.perUnitQty) * qty : fgQty > 0 ? (n(l.requiredQty) / fgQty) * qty : 0) * 1e4) / 1e4,
-    }))
-    .filter((c) => c.qty > 0);
-}
-
 // Pure (CR-176): overlay the modal's picks ([{ itemId, tracking }]) onto the
 // components; every pick must cover its line's qty exactly. Returns the
 // problems (all of them) so the user fixes the form in one pass.
@@ -93,7 +81,7 @@ async function previewAssembly(catalyst, orgId, workOrderId, fgId, qty, prefix) 
     .map((c) => ({ itemId: c.rmItemId, name: c.name, qty: c.qty }));
   return {
     prefix: p, serials, serialRange: serialRange(serials), remaining,
-    components, fromWarehouseId: (await warehouses(catalyst, orgId)).issue,
+    components, fromWarehouseId: (await warehouses(catalyst, orgId, wo)).issue,
   };
 }
 
@@ -135,36 +123,47 @@ async function assembleFg(catalyst, orgId, workOrderId, fgId, qty, userId, prefi
 
   // Push any WO-side BOM edits to the composite first so Zoho and the WO agree
   // on what goes into one unit. Best-effort: a failed push must not block
-  // production (bundle lines below are explicit anyway).
-  try {
-    await updateCompositeItem(catalyst, fg.fgItemId, lines.filter((l) => n(l.requiredQty) > 0));
-    await bom.refreshComposite(catalyst, orgId, fg.fgItemId);
-  } catch (err) {
-    console.error("composite push before assembly failed:", err && err.message);
+  // production (bundle lines below are explicit anyway). Skipped for a valve
+  // configured on a quote (CR-261): its composite is shared by every MOC and must keep
+  // its placeholders — this order's items go on the bundle only.
+  if (!String(fg.configJson || "").trim()) {
+    try {
+      await updateCompositeItem(catalyst, fg.fgItemId, lines.filter((l) => n(l.requiredQty) > 0));
+      await bom.refreshComposite(catalyst, orgId, fg.fgItemId);
+    } catch (err) {
+      console.error("composite push before assembly failed:", err && err.message);
+    }
   }
 
-  const wh = await warehouses(catalyst, orgId);
-  const seq = (await byOrg(catalyst, orgId, "WoAssembly", `workOrderFgId = ${zStr(String(fg.ROWID))}`)).length + 1;
-  const referenceNumber = `${wo.woNumber}-A${seq}`;
+  const wh = await warehouses(catalyst, orgId, wo); // FG lands at the WO's Main (CR-249)
+  // Reference = WO-nnnn-A<seq>, counted per WO (the number names the WO, so two
+  // FGs on one WO must not both get A1). A deleted assembly leaves no row but
+  // Zoho still holds its number (36642 "already used", CR-225): bump and retry.
+  let seq = (await byOrg(catalyst, orgId, "WoAssembly", `workOrderId = ${zStr(String(wo.ROWID))}`)).length + 1;
   const { serials, commit } = await nextSerials(catalyst, orgId, prefix, qty);
 
-  let bundle;
-  try {
-    bundle = await createBundle(catalyst, {
-      date: today(),
-      referenceNumber,
-      compositeItemId: fg.fgItemId,
-      compositeItemName: fg.fgName,
-      compositeItemSku: fg.fgSku,
-      qty,
-      components,
-      finishedSerials: serials,
-      fromWarehouseId: wh.issue,
-      description: `Assembly for ${wo.woNumber} / ${wo.salesOrderNumber || "SO"}`,
-    });
-  } catch (err) {
-    const e = new Error(`Zoho could not create the assembly: ${err.message}`);
-    e.status = err.status || 502; throw e;
+  let bundle, referenceNumber;
+  for (let tries = 0; ; tries++, seq++) {
+    referenceNumber = `${wo.woNumber}-A${seq}`;
+    try {
+      bundle = await createBundle(catalyst, {
+        date: today(),
+        referenceNumber,
+        compositeItemId: fg.fgItemId,
+        compositeItemName: fg.fgName,
+        compositeItemSku: fg.fgSku,
+        qty,
+        components,
+        finishedSerials: serials,
+        fromWarehouseId: wh.issue,
+        description: `Assembly for ${wo.woNumber} / ${wo.salesOrderNumber || "SO"}`,
+      });
+      break;
+    } catch (err) {
+      if (err.zohoCode === 36642 && tries < 20) continue;
+      const e = new Error(`Zoho could not create the assembly: ${err.message}`);
+      e.status = err.status || 502; throw e;
+    }
   }
   await commit(); // numbers are spent only once Zoho has them
 
@@ -173,7 +172,7 @@ async function assembleFg(catalyst, orgId, workOrderId, fgId, qty, userId, prefi
   // transfer is reported, not thrown, and the stock waits in Issue.
   // ponytail: a batch-tracked FG gets FIFO auto-pick at Issue (no batch_id
   // comes back from the bundle); pass the bundle's batch if that ever matters.
-  let transferOrderNumber = null, transferWarning = null;
+  let transferOrderId = null, transferOrderNumber = null, transferWarning = null;
   try {
     const to = await createTransferOrder(catalyst, {
       date: today(),
@@ -183,6 +182,7 @@ async function assembleFg(catalyst, orgId, workOrderId, fgId, qty, userId, prefi
       numberHint: referenceNumber,
       lines: [{ rmItemId: fg.fgItemId, name: fg.fgName, qty, ...(serials.length ? { tracking: { serials } } : {}) }],
     });
+    transferOrderId = to.transfer_order_id ? String(to.transfer_order_id) : null;
     transferOrderNumber = to.transfer_order_number || null;
   } catch (err) {
     console.error("FG transfer after assembly failed:", err && err.message);
@@ -197,6 +197,9 @@ async function assembleFg(catalyst, orgId, workOrderId, fgId, qty, userId, prefi
     qty,
     zohoBundleId: String(bundle.bundle_id || ""),
     zohoBundleNumber: String(bundle.transaction_number || referenceNumber),
+    // CR-202: kept so Delete assembly can remove the TO too.
+    zohoTransferOrderId: transferOrderId || "",
+    zohoTransferOrderNumber: transferOrderNumber || "",
     serialNumbers: JSON.stringify(serials),
     createdBy: userId ? String(userId) : "",
   });
@@ -228,20 +231,115 @@ async function assembleFg(catalyst, orgId, workOrderId, fgId, qty, userId, prefi
 const serialRange = (s) => (s.length > 1 ? `${s[0]}–${s[s.length - 1]}` : s[0] || "");
 const parseSerials = (json) => { try { return JSON.parse(json || "[]"); } catch { return []; } };
 
-// Prior assemblies of a work order, newest first — for the Items tab cards.
+// Prior assemblies of a work order, newest first — for the Items tab cards
+// and the Assembly tab (CR-202: full serial list, TO number).
 async function listAssemblies(catalyst, orgId, workOrderId) {
   return (await byOrg(catalyst, orgId, "WoAssembly", `workOrderId = ${zStr(String(workOrderId))}`, "CREATEDTIME DESC"))
-    .map((a) => ({
-      id: String(a.ROWID),
-      workOrderFgId: String(a.workOrderFgId),
-      qty: n(a.qty),
-      bundleNumber: a.zohoBundleNumber || null,
-      serialRange: serialRange(parseSerials(a.serialNumbers)),
-      createdAt: a.CREATEDTIME,
-    }));
+    .map((a) => {
+      const serials = parseSerials(a.serialNumbers);
+      return {
+        id: String(a.ROWID),
+        workOrderFgId: String(a.workOrderFgId),
+        qty: n(a.qty),
+        bundleNumber: a.zohoBundleNumber || null,
+        transferOrderNumber: a.zohoTransferOrderNumber || null,
+        serials,
+        serialRange: serialRange(serials),
+        createdAt: a.CREATEDTIME,
+      };
+    });
 }
 
-module.exports = { assembleFg, previewAssembly, listAssemblies, componentQtys, applyPicks };
+// Undo one assembly (CR-202). Zoho first, like purchase.deletePo: the Transfer
+// Order (FG back to Issue), then the bundle (FG stock gone, raw material back
+// at Issue). If Zoho refuses — the FG was invoiced or moved on — nothing
+// changes locally and the message surfaces. Serials are NOT reclaimed: the
+// year counter keeps moving, the deleted numbers are simply never reused.
+async function deleteAssembly(catalyst, orgId, workOrderId, assemblyId, userId, reason) {
+  const [row] = await byOrg(catalyst, orgId, "WoAssembly",
+    `ROWID = ${zStr(String(assemblyId))} AND workOrderId = ${zStr(String(workOrderId))}`);
+  if (!row) { const e = new Error("Assembly not found"); e.status = 404; throw e; }
+  const { wo, fg } = await loadContext(catalyst, orgId, workOrderId, row.workOrderFgId);
+  if (!ASSEMBLABLE.includes(String(wo.status))) {
+    const e = new Error(`${wo.woNumber} is ${wo.status} — assemblies can only be deleted while it is on the shop floor`);
+    e.status = 409; throw e;
+  }
+  const bundleNumber = row.zohoBundleNumber || null;
+  let transferOrderNumber = row.zohoTransferOrderNumber || null;
+  let transferOrderId = row.zohoTransferOrderId || null;
+  let toWarning = null;
+  // Rows from before CR-212 have a blank bundle id (the API envelope was stored):
+  // find the bundle by its number, and refuse rather than leave Zoho untouched.
+  let bundleId = row.zohoBundleId || null;
+  if (!bundleId) {
+    try { bundleId = await findBundleByNumber(catalyst, bundleNumber); } catch (err) {
+      const e = new Error(`Could not look up assembly ${bundleNumber || ""} in Zoho Inventory: ${err.message}`);
+      e.status = err.status || 502; throw e;
+    }
+    if (!bundleId) {
+      const e = new Error(`Assembly ${bundleNumber || row.ROWID} was not found in Zoho Inventory — nothing was changed. Delete it in Zoho first if it exists under another number.`);
+      e.status = 409; throw e;
+    }
+  }
+  // Assemblies from before CR-202 stored neither TO id nor number — the number
+  // is in the fg.assemble History entry, and Zoho resolves it to an id (CR-212).
+  if (!transferOrderId) {
+    if (!transferOrderNumber) {
+      const logs = await byOrg(catalyst, orgId, "ActivityLog",
+        `entityId = ${zStr(String(wo.ROWID))} AND action = 'fg.assemble'`);
+      for (const l of logs) {
+        let d = null;
+        try { d = JSON.parse(l.detail || "{}"); } catch { /* skip */ }
+        if (d && bundleNumber && String(d.bundleNumber) === String(bundleNumber) && d.transferOrderNumber) {
+          transferOrderNumber = String(d.transferOrderNumber); break;
+        }
+      }
+    }
+    try {
+      transferOrderId = await findTransferOrderByNumber(catalyst, transferOrderNumber);
+    } catch (err) {
+      console.error("transfer order lookup failed:", err && err.message);
+    }
+  }
+  if (transferOrderId) {
+    try {
+      await deleteTransferOrder(catalyst, transferOrderId);
+    } catch (err) {
+      const e = new Error(`Zoho could not delete transfer order ${transferOrderNumber || transferOrderId}: ${err.message}`);
+      e.status = err.status || 502; throw e;
+    }
+  } else {
+    toWarning = transferOrderNumber
+      ? `Transfer order ${transferOrderNumber} was not found in Zoho Inventory — delete it there if it still exists.`
+      : "This assembly's transfer order could not be identified — check History and delete it in Zoho Inventory if it exists.";
+  }
+  {
+    try {
+      await deleteBundle(catalyst, bundleId);
+    } catch (err) {
+      const e = new Error(
+        `Zoho could not delete assembly ${bundleNumber || bundleId}: ${err.message}`
+        + (transferOrderId ? ` (its transfer order ${transferOrderNumber || transferOrderId} is already deleted — the finished good is back in Issue)` : ""),
+      );
+      e.status = err.status || 502; throw e;
+    }
+  }
+  await catalyst.datastore().table("WoAssembly").deleteRow(String(row.ROWID));
+  const fgQty = n(fg.fgQty);
+  const newAssembled = Math.max(0, n(fg.assembledQty) - n(row.qty));
+  const fgStatus = newAssembled >= fgQty ? "Closed" : "";
+  await catalyst.datastore().table("WorkOrderFG").updateRow({
+    ROWID: String(fg.ROWID), assembledQty: newAssembled, status: fgStatus,
+  });
+  const serials = parseSerials(row.serialNumbers);
+  await logActivity(catalyst, orgId, "WorkOrder", wo.ROWID, "fg.assemble.delete", userId, {
+    fgName: fg.fgName, qty: n(row.qty), bundleNumber, transferOrderNumber, serials: serialRange(serials), toWarning,
+    reason: reason || "",
+  });
+  return { deleted: true, assembledQty: newAssembled, fgStatus: fgStatus || null, toWarning };
+}
+
+module.exports = { assembleFg, previewAssembly, listAssemblies, deleteAssembly, componentQtys, applyPicks };
 
 // ponytail self-check: `node functions/skuapi/workorder/assembly.js --selftest`
 if (require.main === module && process.argv.includes("--selftest")) {

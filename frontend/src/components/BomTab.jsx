@@ -235,19 +235,28 @@ export default function BomTab({ workOrderId, fgs, revision, onChanged }) {
             <button onClick={() => apply(false)} disabled={busy || !preview.changeCount} style={btn}>
               Apply here only
             </button>
-            <button
-              onClick={() => apply(true)}
-              disabled={busy || !preview.changeCount || preview.blocked?.length}
-              style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}
-            >
-              Apply &amp; update Zoho
-            </button>
+            {/* A configured valve's BOM comes from its quote — the shared Zoho composite is never updated from it. */}
+            {preview.source !== 'quote' && (
+              <button
+                onClick={() => apply(true)}
+                disabled={busy || !preview.changeCount || preview.blocked?.length}
+                style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}
+              >
+                Apply &amp; update Zoho
+              </button>
+            )}
           </div>
 
           {preview.blocked?.length > 0 && (
             <Banner tone="warn">
               <b>Cannot apply:</b>
               <ul style={{ margin: '4px 0 0 16px' }}>{preview.blocked.map((b, i) => <li key={i}>{b}</li>)}</ul>
+            </Banner>
+          )}
+          {preview.problems?.length > 0 && (
+            <Banner tone="warn">
+              <b>Not resolved from the quote configuration:</b>
+              <ul style={{ margin: '4px 0 0 16px' }}>{preview.problems.map((b, i) => <li key={i}>{b}</li>)}</ul>
             </Banner>
           )}
           {preview.unmatched?.length > 0 && (

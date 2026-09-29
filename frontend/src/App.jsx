@@ -2,6 +2,7 @@ import { HashRouter, Routes, Route, Navigate, NavLink, useLocation, useNavigate,
 import { useState, useEffect, lazy, Suspense } from 'react';
 import toast from 'react-hot-toast';
 import GlobalSearch from './components/GlobalSearch.jsx';
+import TabBar from './components/TabBar.jsx';
 // Auth-flow pages stay eager — they render before anything else and are tiny.
 import ZohoConnectPage from './pages/ZohoConnectPage.jsx';
 import OrgSelectPage from './pages/OrgSelectPage.jsx';
@@ -10,6 +11,7 @@ import LoginPage from './pages/LoginPage.jsx';
 const BooksLinkedValuesPage = lazy(() => import('./pages/BooksLinkedValuesPage.jsx'));
 const SKUGeneratorPage = lazy(() => import('./pages/SKUGeneratorPage.jsx'));
 const SKUItemsPage = lazy(() => import('./pages/SKUItemsPage.jsx'));
+const SKUItemPage = lazy(() => import('./pages/SKUItemPage.jsx'));
 const ImportItemsPage = lazy(() => import('./pages/ImportItemsPage.jsx'));
 const ReservePage = lazy(() => import('./pages/ReservePage.jsx'));
 const EstimatePage = lazy(() => import('./pages/EstimatePage.jsx'));
@@ -17,6 +19,7 @@ const WorkOrderListPage = lazy(() => import('./pages/WorkOrderListPage.jsx'));
 const WorkOrderNewPage = lazy(() => import('./pages/WorkOrderNewPage.jsx'));
 const WorkOrderPage = lazy(() => import('./pages/WorkOrderPage.jsx'));
 const WorkOrderReportsPage = lazy(() => import('./pages/WorkOrderReportsPage.jsx'));
+const WoDefectsPage = lazy(() => import('./pages/WoDefectsPage.jsx'));
 const CompositeBomPage = lazy(() => import('./pages/CompositeBomPage.jsx'));
 const WorkOrderPurchasePage = lazy(() => import('./pages/WorkOrderPurchasePage.jsx'));
 const RecipeWizardPage = lazy(() => import('./pages/RecipeWizardPage.jsx'));
@@ -25,10 +28,17 @@ const RecipeSnapshotPage = lazy(() => import('./pages/RecipeSnapshotPage.jsx'));
 const RecipeMfgPage = lazy(() => import('./pages/RecipeMfgPage.jsx'));
 const RecipeListPage = lazy(() => import('./pages/RecipeListPage.jsx'));
 const RecipeBuilderPage = lazy(() => import('./pages/RecipeBuilderPage.jsx'));
+const RecipeNewPage = lazy(() => import('./pages/RecipeNewPage.jsx'));
 const RecipeMaterialsPage = lazy(() => import('./pages/RecipeMaterialsPage.jsx'));
 const RecipeCostMasterPage = lazy(() => import('./pages/RecipeCostMasterPage.jsx'));
 const RecipeSizingModelsPage = lazy(() => import('./pages/RecipeSizingModelsPage.jsx'));
 const RecipeComponentMapPage = lazy(() => import('./pages/RecipeComponentMapPage.jsx'));
+// Master details pages (CR-233): each master file also exports its Detail page.
+const MaterialDetail = lazy(() => import('./pages/RecipeMaterialsPage.jsx').then(m => ({ default: m.Detail })));
+const CostElementDetail = lazy(() => import('./pages/RecipeCostMasterPage.jsx').then(m => ({ default: m.Detail })));
+const SizingModelDetail = lazy(() => import('./pages/RecipeSizingModelsPage.jsx').then(m => ({ default: m.Detail })));
+const ComponentMapDetail = lazy(() => import('./pages/RecipeComponentMapPage.jsx').then(m => ({ default: m.Detail })));
+const ComponentEditPage = lazy(() => import('./pages/ComponentEditPage.jsx'));
 // Settings hub: one chunk holding all settings pages (see SettingsLayout.jsx).
 const SettingsLayout = lazy(() => import('./pages/SettingsLayout.jsx'));
 
@@ -241,6 +251,7 @@ const NAV_LINKS = [
     children: [
       { to: '/wo', label: 'Work Orders', perm: 'wo.orders' },
       { to: '/wo/purchase', label: 'Purchase Request', perm: 'wo.purchase' },
+      { to: '/wo/defects', label: 'Store issues', perm: 'wo.defects' },
       { to: '/wo/reports', label: 'Reports', perm: 'wo.reports' },
     ] },
   { to: '/reserve', addon: 'reserve', perm: 'reserve', label: 'Reserve / De-reserve', icon: <><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></> },
@@ -251,9 +262,9 @@ const NAV_LINKS = [
       { to: '/recipe/materials', label: 'Materials', perm: 'recipe.materials' },
       { to: '/recipe/costs', label: 'Cost Master', perm: 'recipe.costs' },
       { to: '/recipe/sizing', label: 'Sizing Models', perm: 'recipe.sizing' },
-      { to: '/recipe/component-map', label: 'Component Map', perm: 'recipe.sizing' },
-      { to: '/recipe/configure', label: 'Configure & Quote', perm: 'recipe.configure' },
-      { to: '/recipe/quotations', label: 'Quotations', perm: 'recipe.quotations' },
+      { to: '/recipe/component-map', label: 'Components', perm: 'recipe.sizing' },
+      // Configure & Quote (/recipe/configure) and Quotations (/recipe/quotations)
+      // are deep-link only (CR-229): quoting happens in the CRM widgets.
     ] },
   // Users & Roles, org settings and add-on admin live in the Settings hub
   // (header gear → /settings).
@@ -264,32 +275,11 @@ const NAV_LINKS = [
 // combined items-list + generator page (/sku/generator is its "New" sub-page,
 // kept as a route for permalinks).
 const SKU_TABS = [
-  { to: '/sku/books-items', label: 'Books Items' },
   { to: '/sku/items', label: 'SKU Generator' },
+  { to: '/sku/books-items', label: 'Books Items' },
   { to: '/sku/bom', label: 'BOM' }, // moved from the Order Management submenu (CR-127 follow-up)
   { to: '/sku/import', label: 'Import' },
 ];
-
-function TabBar({ tabs }) {
-  return (
-    <div style={{
-      display: 'flex', gap: 2, padding: '0 20px', flexShrink: 0,
-      background: 'var(--bg-card)', borderBottom: '1px solid var(--border)',
-    }}>
-      {tabs.map(t => (
-        <NavLink key={t.to} to={t.to} end={t.end} style={({ isActive }) => ({
-          padding: '10px 14px', fontSize: 13, textDecoration: 'none',
-          color: isActive ? 'var(--blue)' : 'var(--text-secondary)',
-          fontWeight: isActive ? 500 : 400,
-          borderBottom: isActive ? '2px solid var(--blue)' : '2px solid transparent',
-        })}>
-          {t.label}
-        </NavLink>
-      ))}
-      <GlobalSearch />
-    </div>
-  );
-}
 
 // The Order Management module: second-level nav lives in the sidebar submenu
 // (Work Orders / Reports); Settings live in the hub (/settings/wo).
@@ -301,8 +291,10 @@ function WorkOrderLayout({ user, hasPerm }) {
         <Routes>
           <Route index element={g('wo.orders', <WorkOrderListPage />)} />
           <Route path="new" element={g('wo.orders', <WorkOrderNewPage />)} />
+          <Route path=":id/edit" element={g('wo.orders', <WorkOrderNewPage />)} />
           <Route path="bom" element={<Navigate to="/sku/bom" replace />} />
           <Route path="purchase" element={g('wo.purchase', <WorkOrderPurchasePage />)} />
+          <Route path="defects" element={g('wo.defects', <WoDefectsPage />)} />
           <Route path="reports" element={g('wo.reports', <WorkOrderReportsPage />)} />
           <Route path=":id" element={g('wo.orders', <WorkOrderPage user={user} />)} />
           <Route path="*" element={<Navigate to="/wo" replace />} />
@@ -323,11 +315,19 @@ function RecipeLayout({ hasPerm }) {
         <Route path="quotations/:id" element={g('recipe.quotations', <RecipeSnapshotPage />)} />
         <Route path="quotations/:id/mfg" element={g('recipe.quotations', <RecipeMfgPage />)} />
         <Route path="recipes" element={g('recipe.recipes', <RecipeListPage />)} />
+        <Route path="recipes/new" element={g('recipe.recipes', <RecipeNewPage />)} />
+        <Route path="recipes/:id/edit" element={g('recipe.recipes', <RecipeNewPage />)} />
         <Route path="recipes/:id" element={g('recipe.recipes', <RecipeBuilderPage />)} />
         <Route path="materials" element={g('recipe.materials', <RecipeMaterialsPage />)} />
+        <Route path="materials/:id" element={g('recipe.materials', <MaterialDetail />)} />
         <Route path="costs" element={g('recipe.costs', <RecipeCostMasterPage />)} />
+        <Route path="costs/:id" element={g('recipe.costs', <CostElementDetail />)} />
         <Route path="sizing" element={g('recipe.sizing', <RecipeSizingModelsPage />)} />
+        <Route path="sizing/:id" element={g('recipe.sizing', <SizingModelDetail />)} />
         <Route path="component-map" element={g('recipe.sizing', <RecipeComponentMapPage />)} />
+        <Route path="component-map/new" element={g('recipe.sizing', <ComponentEditPage />)} />
+        <Route path="component-map/edit" element={g('recipe.sizing', <ComponentEditPage />)} />
+        <Route path="component-map/:id" element={g('recipe.sizing', <ComponentMapDetail />)} />
         <Route path="*" element={<Navigate to="recipes" replace />} />
       </Routes>
     </div>
@@ -337,11 +337,12 @@ function RecipeLayout({ hasPerm }) {
 function SkuLayout() {
   return (
     <>
-      <TabBar tabs={SKU_TABS} />
+      <TabBar tabs={SKU_TABS} right={<GlobalSearch />} />
       <div style={{ flex: 1, minHeight: 0 }}>
         <Routes>
           <Route path="generator" element={<SKUGeneratorPage />} />
           <Route path="items" element={<SKUItemsPage />} />
+          <Route path="items/:id" element={<SKUItemPage />} />
           <Route path="import" element={<ImportItemsPage />} />
           <Route path="books-items" element={<BooksLinkedValuesPage />} />
           <Route path="bom" element={<CompositeBomPage />} />
@@ -352,7 +353,7 @@ function SkuLayout() {
   );
 }
 
-function Sidebar({ addons, isAdmin, hasPerm }) {
+function Sidebar({ addons, isAdmin, hasPerm, badges = {} }) {
   const { pathname } = useLocation();
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === '1');
   // Logo file is dropped by the user at frontend/public/octfis-logo.png; until
@@ -433,6 +434,12 @@ function Sidebar({ addons, isAdmin, hasPerm }) {
                   <NavLink key={c.to} to={c.to}
                     style={() => ({ ...navItemStyle({ isActive: c === activeChild }, false), padding: '6px 10px 6px 36px', fontSize: 12.5 })}>
                     {c.label}
+                    {/* CR-203: pending store issues, fetched on navigation (no timer) */}
+                    {badges[c.to] > 0 && (
+                      <span style={{ marginLeft: 'auto', minWidth: 18, padding: '0 6px', borderRadius: 9, fontSize: 10.5, fontWeight: 700, textAlign: 'center', background: '#dc2626', color: '#fff' }}>
+                        {badges[c.to]}
+                      </span>
+                    )}
                   </NavLink>
                 ))}
               </div>
@@ -461,6 +468,21 @@ function AppShell({ user, refreshUser, onLogout }) {
     if (zohoParam) refreshUser();
   }, [zohoParam]);
 
+  // Sidebar badges (CR-203): pending store issues for the Store Issue Manager.
+  // Re-read on every navigation — no timer (see memory: no unnecessary polling).
+  const [badges, setBadges] = useState({});
+  useEffect(() => {
+    const perms = user.perms ?? ['*'];
+    const may = user.orgId && user.zohoConnected && (user.addons ?? []).includes('work-order')
+      && (perms.includes('*') || perms.includes('wo.defects'));
+    if (!may) return;
+    // open = disposition pending or replacement still awaiting the manager (CR-244)
+    fetch(`${API}/api/wo/defects?status=open`, { credentials: 'same-origin' })
+      .then(r => (r.ok ? r.json() : []))
+      .then(list => setBadges({ '/wo/defects': Array.isArray(list) ? list.length : 0 }))
+      .catch(() => {});
+  }, [location.pathname, user.orgId]);
+
   if (!user.zohoConnected) {
     return <ZohoConnectPage error={errorParam} />;
   }
@@ -479,9 +501,12 @@ function AppShell({ user, refreshUser, onLogout }) {
   const zoho = { connected: true, orgId: user.orgId, orgName: user.orgName };
   const addons = user.addons ?? ['sku-generator']; // until /auth/me sends addons
   const hasPerm = makeHasPerm(user.perms ?? ['*']); // until /auth/me sends perms
+  // Settings hub replaces the module nav with its own section panel (Zoho
+  // Setup style, CR-229); the header bar stays.
+  const inSettings = location.pathname.startsWith('/settings');
   return (
     <>
-      <Sidebar addons={addons} isAdmin={user.isAdmin} hasPerm={hasPerm} />
+      {!inSettings && <Sidebar addons={addons} isAdmin={user.isAdmin} hasPerm={hasPerm} badges={badges} />}
       {/* key on orgId: switching org remounts the pages so they refetch the new
           org's catalog instead of showing the previous org's data. */}
       <div style={S.main} key={user.orgId}>

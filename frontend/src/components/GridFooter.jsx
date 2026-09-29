@@ -1,16 +1,22 @@
 import { useState } from 'react';
 
+export { matches } from './gridCols.js';
+
 /**
  * The standard record-grid controls (see memory: record-grid-pattern):
  * - usePager: client-side pagination, default 25/page
  * - <GridFooter>: pinned page-level footer — record count, page-size select
  *   (10/25/50/100), First/Prev/Next/Last
  * - <FilterSelect>: column filter fed by the distinct values present in the grid
+ * - <SearchInput> + matches(): free-text search over the loaded rows
  */
 export function usePager(rows, defaultSize = 25) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(defaultSize);
   const total = rows.length;
+  // A search or filter changed the row count — start again from the first page.
+  const [prevTotal, setPrevTotal] = useState(total);
+  if (prevTotal !== total) { setPrevTotal(total); setPage(0); }
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const curPage = Math.min(page, pageCount - 1);
   const pageRows = rows.slice(curPage * pageSize, (curPage + 1) * pageSize);
@@ -81,6 +87,24 @@ export function FilterSelect({ label, value, onChange, options, style }) {
       <option value="">All {label}</option>
       {options.map(o => <option key={o} value={o}>{o}</option>)}
     </select>
+  );
+}
+
+// Free-text search box; pair with matches() in the page's filter.
+export function SearchInput({ value, onChange, placeholder = 'Search…', style }) {
+  return (
+    <input
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      placeholder={placeholder}
+      aria-label={placeholder}
+      style={{
+        padding: '6px 10px', fontSize: 12, border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-md)', background: 'var(--bg-card)',
+        color: 'var(--text-primary)', width: 200,
+        ...style,
+      }}
+    />
   );
 }
 

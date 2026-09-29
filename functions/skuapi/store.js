@@ -14,6 +14,7 @@ const NUM_COLS = new Set([
   "qty", "sequence", "rate", "castWeight", "version", "recipeVersion",
   "marginPct", "discountPct", "gstPct", "unitCost", "unitPrice", "orderValue",
   "capacity", // SizingModel (CR-181)
+  "capMin", "capMax", // PropertyValue auto-pick band (CR-228)
 ]);
 // Columns that must surface as JS booleans (Data Store may hand them back as "true"/"false").
 const BOOL_COLS = new Set([

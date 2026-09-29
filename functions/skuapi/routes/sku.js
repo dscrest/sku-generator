@@ -5,6 +5,16 @@ const { saveItemValues, deleteItemValues, missingRequired } = require("../itemVa
 const { applySeries, stripSuffix, seriesConfig } = require("../skuSeries");
 const { assemble } = require("../skuBuild");
 const { pushToZoho } = require("../zoho/push");
+const { normUom, uomsOf } = require("../recipe/componentMap");
+const { settings, logActivity } = require("../workorder/store");
+const { enabledKeys, pickItemFields, itemFieldError, mergeBooksData } = require("../itemFields");
+
+// Org-enabled extra item fields (CR-209) from the request body → booksData
+// patch, or the rule they break (CR-231: HSN 4/6/8 digits) — check before any write.
+async function itemFieldsPatch(req, existingJson) {
+  const picked = pickItemFields(enabledKeys(await settings(req.catalyst, req.orgId)), req.body.fields);
+  return { error: itemFieldError(picked), booksData: mergeBooksData(existingJson, picked) };
+}
 
 const router = express.Router();
 
@@ -65,7 +75,7 @@ router.post("/generate", async (req, res) => {
 });
 
 router.post("/create-item", async (req, res) => {
-  const { name, sku, description, type, industryId, selectedValues } = req.body;
+  const { name, sku, description, type, industryId, selectedValues, uom } = req.body;
   if (!name || !sku || !type || !industryId)
     return res.status(400).json({ error: "name, sku, type, industryId are required" });
   if (!["Trading", "Manufacturing"].includes(type))
@@ -99,18 +109,26 @@ router.post("/create-item", async (req, res) => {
     if (await findSkuRowId(req.catalyst, finalSku)) {
       return res.status(409).json({ error: "SKU already exists" });
     }
+    const { error: fieldError, booksData } = await itemFieldsPatch(req, null);
+    if (fieldError) return res.status(400).json({ error: fieldError });
     const row = await req.catalyst.datastore().table("SKUItem").insertRow({
       name,
       sku: finalSku,
       description: description || null,
       type,
       industryId: String(industryId),
+      // Configurator widget sends the UOM (CR-206); the SKU Generator page does
+      // not → null, and the Books push keeps its "pcs" default.
+      ...(uom ? { uom: normUom(uom, uomsOf(await settings(req.catalyst, req.orgId))) } : {}),
+      // Org-enabled extra fields (HSN, Manufacturer…) ride in booksData (CR-209).
+      ...(booksData ? { booksData } : {}),
       orgId: req.orgId,
     });
     const item = out(row);
 
     // Persist structured selections so the item is searchable by property.
     await saveItemValues(req.catalyst, item.id, industryId, selectedValues);
+    await logActivity(req.catalyst, req.orgId, "SKUItem", item.id, "sku.create", req.userId, { sku: item.sku, via: "generator" });
 
     // Zoho Books sync is manual only — user clicks "Push" on the SKU Items page
     // (POST /sku-items/:id/push-zoho). No automatic push on create (CR-021).
@@ -143,13 +161,15 @@ router.post("/update-item", async (req, res) => {
       return res.status(409).json({ error: "SKU already exists" });
     }
 
-    await req.catalyst.datastore().table("SKUItem").updateRow({
-      ROWID: itemId, name, sku, description: description || null,
-    });
+    const { error: fieldError, booksData } = await itemFieldsPatch(req, existing.booksData);
+    if (fieldError) return res.status(400).json({ error: fieldError });
+    const patch = { name, sku, description: description || null, ...(booksData !== undefined ? { booksData } : {}) };
+    await req.catalyst.datastore().table("SKUItem").updateRow({ ROWID: itemId, ...patch });
     await deleteItemValues(req.catalyst, itemId);
     await saveItemValues(req.catalyst, itemId, existing.industryId, selectedValues);
+    await logActivity(req.catalyst, req.orgId, "SKUItem", itemId, "sku.update", req.userId, { sku, via: "generator" });
 
-    const item = { ...existing, name, sku, description: description || null };
+    const item = { ...existing, ...patch };
     let zohoWarning;
     if (existing.zohoItemId) {
       try {

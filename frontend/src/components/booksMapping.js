@@ -11,8 +11,18 @@ export const normHeader = (h) =>
   String(h || '').replace(CF_SUFFIX, '').replace(CF_PREFIX, '').trim().toLowerCase();
 
 // Books exports name some columns differently from the field they feed:
-// the item's category arrives as "Category Name", not a "Category" custom field.
-const ALIASES = { category: ['category name'] };
+// the item's category arrives as "Category Name", not a "Category" custom field,
+// and the fixed columns differ from the import sheet's (Rate vs Selling Price).
+// The field's own name still wins when the file has it.
+const ALIASES = {
+  category: ['category name'],
+  'selling price': ['rate'],
+  'purchase price': ['purchase rate'],
+  'sales description': ['description'],
+  'reorder level': ['reorder point'],
+  'preferred vendor': ['vendor'],
+  'warehouse name': ['location name'],
+};
 
 // booksFields → matching CSV header (case/CF-suffix-insensitive), '' when none.
 export function autoMap(booksFields, csvHeaders) {

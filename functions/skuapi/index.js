@@ -159,6 +159,10 @@ app.use("/api/crm", require("./routes/crm"));
 // "/api" sku mounts below (their requireAddon would swallow it).
 app.use("/api/grid-prefs", require("./routes/gridPrefs"));
 
+// Audit trail (History tab on every record type, CR-233). Same placement
+// reasons as grid-prefs: any authed org user, before the bare "/api" mounts.
+app.use("/api/activity", require("./routes/activity"));
+
 // Packing list (Books widget on Invoice/SO pages). Any Books-connected org; no
 // addon gate — must also mount before the bare "/api" sku mounts.
 app.use("/api/packing", require("./routes/packing"));

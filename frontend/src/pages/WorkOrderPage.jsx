@@ -6,10 +6,13 @@ import MaterialsGrid, { Empty, Banner, ReceiptChip } from '../components/Materia
 import WoItemsTab from '../components/WoItemsTab.jsx';
 import PurchaseTab from '../components/PurchaseTab.jsx';
 import Modal, { ModalFooter, ModalBtn, CloseX } from '../components/Modal.jsx';
-import { FilterSelect, distinct } from '../components/GridFooter.jsx';
-import { StatusChip, NextStage, ProcChip, DueDays, AccessNotice, can, spaced, btn, thStyle, cell, WO_PRIORITIES } from '../components/woCommon.jsx';
+import { FilterSelect, matches, distinct } from '../components/GridFooter.jsx';
+import { StatusChip, NextStage, ProcChip, DueDays, AccessNotice, can, spaced, btn, thStyle, cell } from '../components/woCommon.jsx';
 import { fmtDate, dueDays } from '../format.js';
 import DateInput from '../components/DateInput.jsx';
+import RowMenu from '../components/RowMenu.jsx';
+import Menu from '../components/Menu.jsx';
+import { AuditList } from '../components/HistoryTab.jsx';
 import { combineIssued } from '../components/woIssueCopy.js';
 
 /**
@@ -18,7 +21,7 @@ import { combineIssued } from '../components/woIssueCopy.js';
  * ⋯) and per-order sub-tabs. BOM and Purchase live on their own sidebar
  * pages now — this page is the order itself.
  */
-const TABS = ['Details', 'Item List', 'Purchase', 'Approvals', 'History'];
+const TABS = ['Details', 'Item List', 'Purchase', 'Show Completed Items', 'Approvals', 'History'];
 
 export default function WorkOrderPage({ user }) {
   const { id } = useParams();
@@ -27,20 +30,29 @@ export default function WorkOrderPage({ user }) {
   const [wo, setWo] = useState(null);
   const [list, setList] = useState(null);
   const [blocked, setBlocked] = useState(null);
-  const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [printBom, setPrintBom] = useState(null);
   const [printTxn, setPrintTxn] = useState(null); // material txn → issue slip print
-  // Company block + warehouse names for printed documents (CR-122).
+  // Company block for printed documents (CR-122).
   const [printCfg, setPrintCfg] = useState(null);
   useEffect(() => {
     axios.get('/api/wo/settings').then(({ data }) => {
       const v = data.values || {};
       setPrintCfg({
         company: { name: v.companyName, address: v.companyAddress, gstin: v.companyGstin, logoUrl: v.companyLogoUrl },
-        whNames: Object.fromEntries((data.warehouses || []).map(w => [String(w.id), w.name])),
       });
     }).catch(() => {});
+  }, []);
+  // Warehouse names + the org Main (CR-249). Own endpoint, not /settings, so
+  // the header and issue slip name them without wo.settings (CR-259).
+  const [whs, setWhs] = useState(null);
+  useEffect(() => {
+    axios.get('/api/wo/warehouses')
+      .then(({ data }) => setWhs({
+        names: Object.fromEntries((data.warehouses || []).map(w => [String(w.id), w.name])),
+        orgMain: data.orgMain || '',
+      }))
+      .catch(() => setWhs({ names: {}, orgMain: '' }));
   }, []);
   const [busy, setBusy] = useState(false);
   const [qcPrompt, setQcPrompt] = useState(null); // pending status awaiting QC answer
@@ -176,7 +188,7 @@ export default function WorkOrderPage({ user }) {
       <div style={{ width: 260, flexShrink: 0, borderRight: '1px solid var(--border)', overflowY: 'auto', background: 'var(--bg-card)' }}>
         <div style={{ position: 'sticky', top: 0, zIndex: 1, background: 'var(--bg-card)', padding: 8, borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 6 }}>
           <input
-            value={railQ} onChange={e => setRailQ(e.target.value)} placeholder="Search WO…"
+            value={railQ} onChange={e => setRailQ(e.target.value)} placeholder="Search WO, SO, customer…"
             aria-label="Search work orders"
             style={{ padding: '5px 8px', fontSize: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)' }}
           />
@@ -188,7 +200,7 @@ export default function WorkOrderPage({ user }) {
         {!list ? <Empty>Loading…</Empty> : list.filter(w =>
           (!railStatus || w.status === railStatus) &&
           (!railPri || w.priority === railPri) &&
-          (!railQ || String(w.woNumber || '').toLowerCase().includes(railQ.toLowerCase())),
+          matches(railQ, w.woNumber, w.salesOrderNumber, w.customerName),
         ).map(w => (
           <div
             key={w.id}
@@ -201,6 +213,10 @@ export default function WorkOrderPage({ user }) {
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {w.attention && <span title="New progress — a PO receipt landed since this was last opened" style={{ width: 8, height: 8, borderRadius: '50%', background: '#dc2626', flexShrink: 0 }} />}
+              {/* CR-245: same red ▲/▼ as the list grid */}
+              {w.soQtyChange && <span title={`Sales order qty ${w.soQtyChange.from} → ${w.soQtyChange.to} (${w.soQtyChange.fgName})`} style={{ color: '#dc2626', fontSize: 11, lineHeight: 1, flexShrink: 0 }}>{w.soQtyChange.to > w.soQtyChange.from ? '▲' : '▼'}</span>}
+              {/* CR-250: Sales added an SO line — red ＋ */}
+              {w.soNewLine && <span title={`Sales order has a new line: ${w.soNewLine.name} × ${w.soNewLine.qty}`} style={{ color: '#dc2626', fontSize: 12, fontWeight: 700, lineHeight: 1, flexShrink: 0 }}>＋</span>}
               <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{w.woNumber}</span>
               <StatusChip status={w.status} />
             </div>
@@ -253,7 +269,8 @@ export default function WorkOrderPage({ user }) {
                   </button>
                 ))}
                 <button onClick={load} disabled={busy} title="Refresh — re-pulls SO fields and stock from Zoho Books" style={btn}>⟳</button>
-                <button onClick={() => setEditing(true)} disabled={busy} style={btn}>✎ Edit</button>
+                {/* Edit = the two-step create/edit page (Selection · Properties). */}
+                <button onClick={() => navigate(`/wo/${id}/edit`)} disabled={busy} style={btn}>✎ Edit</button>
                 <Menu
                   trigger="⋯"
                   triggerStyle={{ ...btn, fontWeight: 700 }}
@@ -293,6 +310,8 @@ export default function WorkOrderPage({ user }) {
                   ['WO Due Date', <span style={{ color: dueDays(wo.dueDate) !== null && dueDays(wo.dueDate) < 4 ? '#dc2626' : undefined }}>{fmtDate(wo.dueDate)}</span>],
                   ['WO Due Days', <DueDays date={wo.dueDate} />],
                   ['Priority', wo.priority || '—'],
+                  // Main warehouse this WO reads stock from / reserves out of (CR-249).
+                  ['Main Warehouse', whs ? (whs.names[wo.mainWarehouseId || whs.orgMain] || '—') : '…'],
                   // Logistics CFs from the SO, TC flag and QC result (CR-161).
                   ['Freight Charge', wo.freightCharge || '—'],
                   ['Delivery', wo.delivery || '—'],
@@ -325,14 +344,14 @@ export default function WorkOrderPage({ user }) {
             </div>
 
             <div style={{ flex: 1, minHeight: 0 }}>
-              {tab === 'Details' && <MaterialsGrid workOrderId={id} fgs={wo.fgs} status={wo.status} onChanged={load} user={user} />}
+              {/* CR-251: applying an SO qty / line change opens the Edit page so the dates can move with it. */}
+              {tab === 'Details' && <MaterialsGrid workOrderId={id} fgs={wo.fgs} status={wo.status} mainWarehouseId={wo.mainWarehouseId} soNewLines={wo.soNewLines} onChanged={load} onSoApplied={hint => navigate(`/wo/${id}/edit`, { state: { hint } })} user={user} />}
               {tab === 'Item List' && <WoItemsTab workOrderId={id} fgs={wo.fgs} status={wo.status} onChanged={load} user={user} />}
               {tab === 'Purchase' && <PurchaseTab workOrderId={id} wo={wo} onChanged={load} user={user} />}
+              {tab === 'Show Completed Items' && <AssemblyTab workOrderId={id} wo={wo} onChanged={load} user={user} />}
               {tab === 'Approvals' && <ApprovalsTab workOrderId={id} wo={wo} onChanged={load} />}
               {tab === 'History' && <HistoryTab workOrderId={id} wo={wo} onPrintTxn={printTxnSlip} />}
             </div>
-
-            {editing && <EditModal wo={wo} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); load(); }} />}
 
             {qcPrompt && (
               <Modal title="Quality check" onClose={() => setQcPrompt(null)} width={440}>
@@ -420,7 +439,7 @@ export default function WorkOrderPage({ user }) {
             )}
 
             {printTxn
-              ? <IssueSlip wo={wo} txn={printTxn} company={printCfg?.company} whNames={printCfg?.whNames} />
+              ? <IssueSlip wo={wo} txn={printTxn} company={printCfg?.company} whNames={whs?.names} />
               : <WoPrintSheet wo={wo} lines={printBom} company={printCfg?.company} />}
           </>
         )}
@@ -430,42 +449,6 @@ export default function WorkOrderPage({ user }) {
 }
 
 // ---- tiny dropdown (HeaderBar pattern: open state + click-away overlay) ----
-
-function Menu({ trigger, triggerStyle, items, align = 'left' }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div style={{ position: 'relative', display: 'inline-block' }}>
-      <button onClick={() => setOpen(o => !o)} style={triggerStyle}>{trigger}</button>
-      {open && (
-        <>
-          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
-          <div style={{
-            position: 'absolute', top: '100%', [align === 'right' ? 'right' : 'left']: 0, marginTop: 4, zIndex: 41,
-            background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
-            boxShadow: '0 8px 24px rgba(0,0,0,.14)', minWidth: 200, padding: 4,
-          }}>
-            {items.map(it => (
-              <button
-                key={it.label}
-                disabled={it.disabled}
-                title={it.title}
-                onClick={() => { setOpen(false); it.onClick(); }}
-                style={{
-                  display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', fontSize: 13,
-                  background: 'none', border: 'none', borderRadius: 'var(--radius-sm)',
-                  cursor: it.disabled ? 'default' : 'pointer',
-                  color: it.tone || 'inherit', opacity: it.disabled ? 0.45 : 1, whiteSpace: 'nowrap',
-                }}
-              >
-                {it.label}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
 
 // ---- reason modal: reopen (admin only, CR-080) + hold (CR-160) ---------------
 
@@ -511,61 +494,6 @@ function DateModal({ fields, busy, onClose, onSubmit }) {
       <ModalFooter>
         <ModalBtn onClick={onClose}>Cancel</ModalBtn>
         <ModalBtn variant="primary" disabled={busy || !ok} onClick={submit}>{busy ? 'Saving…' : 'Save and continue'}</ModalBtn>
-      </ModalFooter>
-    </Modal>
-  );
-}
-
-// ---- edit ------------------------------------------------------------------
-
-function EditModal({ wo, onClose, onSaved }) {
-  // Due date is the SO's Expected Shipment (CR-159) — edit it in Books, not here.
-  const [f, setF] = useState({ woDate: wo.woDate || '', notes: wo.notes || '', priority: wo.priority || '', tcRequired: wo.tcRequired || '' });
-  const [busy, setBusy] = useState(false);
-  const set = k => e => setF(v => ({ ...v, [k]: e.target.value }));
-  const field = { width: '100%', padding: '8px 11px', fontSize: 13, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)' };
-  const label = { fontSize: 12, color: 'var(--text-secondary)', display: 'block', margin: '10px 0 4px' };
-
-  async function save() {
-    setBusy(true);
-    try {
-      await axios.put(`/api/wo/${wo.id}`, f);
-      toast.success('Work order updated');
-      onSaved();
-    } catch (err) {
-      toast.error(err.response?.data?.error || 'Could not save the changes');
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal title={`Edit ${wo.woNumber}`} onClose={onClose} onSubmit={save} width={460}>
-      <div style={{ display: 'flex', gap: 10 }}>
-        <div style={{ flex: 1 }}>
-          <label style={{ ...label, marginTop: 0 }}>Date</label>
-          <DateInput value={f.woDate} onChange={set('woDate')} style={field} />
-        </div>
-        <div style={{ flex: 1 }}>
-          <label style={{ ...label, marginTop: 0 }}>Priority</label>
-          <select value={f.priority} onChange={set('priority')} style={field}>
-            <option value=""></option>
-            {WO_PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
-        </div>
-        <div style={{ flex: 1 }}>
-          <label style={{ ...label, marginTop: 0 }}>TC Required</label>
-          <select value={f.tcRequired} onChange={set('tcRequired')} style={field}>
-            <option value=""></option>
-            <option value="Yes">Yes</option>
-            <option value="No">No</option>
-          </select>
-        </div>
-      </div>
-      <label style={label}>Special Instruction</label>
-      <textarea value={f.notes} onChange={set('notes')} rows={3} style={{ ...field, resize: 'vertical', fontFamily: 'inherit' }} />
-      <ModalFooter>
-        <ModalBtn onClick={onClose}>Cancel</ModalBtn>
-        <ModalBtn variant="primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</ModalBtn>
       </ModalFooter>
     </Modal>
   );
@@ -730,6 +658,90 @@ function IssueSlip({ wo, txn, company, whNames }) {
   );
 }
 
+// ---- Show Completed Items (CR-202, renamed CR-208) -------------------------
+// Every assembly of the work order with its full serial list — copy-paste
+// for the invoice — and a ⋮ Delete that undoes it (Zoho TO + bundle, then
+// the local row). Assembling itself stays on Details → Make Assembly.
+
+function AssemblyTab({ workOrderId, wo, onChanged, user }) {
+  const [confirm, setConfirm] = useState(null); // assembly row awaiting delete confirmation
+  const [busy, setBusy] = useState(false);
+  const rows = (wo.fgs || [])
+    .flatMap(f => (f.assemblies || []).map(a => ({ ...a, fg: f })))
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  const canDelete = can(user, 'wo.action.assemble');
+
+  async function del(reason) {
+    setBusy(true);
+    try {
+      const { data } = await axios.delete(`/api/wo/${workOrderId}/assembly/${confirm.id}`, { data: { reason } });
+      toast.success(`Assembly ${confirm.bundleNumber || ''} deleted — ${data.assembledQty}/${confirm.fg.qty} assembled`);
+      if (data.toWarning) toast.error(data.toWarning, { duration: 12000 });
+      setConfirm(null);
+      onChanged();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not delete the assembly', { duration: 8000 });
+    } finally { setBusy(false); }
+  }
+
+  // The card stretches to the bottom of the tab (user rule: tables fill to the
+  // footer); the card, not the table, carries the border/radius — .grid-table's
+  // clip-path would clip the fixed-position ⋮ dropdown on the last row.
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '14px 20px 20px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+      {!rows.length ? <Empty>Nothing assembled yet.</Empty> : (
+        <table className="grid-table" style={{ width: '100%', border: 'none', borderRadius: 0, clipPath: 'none' }}>
+          <thead>
+            <tr>{['Item', 'Assembly #', 'Qty', 'Transfer Order', 'Serials', 'When', ''].map((h, i) => (
+              <th key={h || 'x'} style={{ ...thStyle, textAlign: i === 2 || i > 4 ? 'right' : 'left' }}>{h}</th>
+            ))}</tr>
+          </thead>
+          <tbody>
+            {rows.map(a => (
+              <tr key={a.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                <td style={cell}>
+                  {a.fg.name}
+                  {a.fg.sku && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{a.fg.sku}</div>}
+                </td>
+                <td style={{ ...cell, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{a.bundleNumber || '—'}</td>
+                <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{a.qty}</td>
+                <td style={{ ...cell, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{a.transferOrderNumber || '—'}</td>
+                <td style={{ ...cell, fontFamily: 'var(--font-mono)', fontSize: 12, whiteSpace: 'normal', maxWidth: 420 }}>
+                  {a.serials?.length ? (
+                    /* One serial per line (CR-208): a click selects just that serial for Ctrl+C,
+                       a drag selects a run. The Copy-all button was dropped on request. */
+                    <div style={{ lineHeight: 1.6 }}>
+                      {a.serials.map(s => <div key={s} style={{ userSelect: 'all', cursor: 'text' }}>{s}</div>)}
+                    </div>
+                  ) : '—'}
+                </td>
+                <td style={{ ...cell, textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>{fmtDate(a.createdAt)}</td>
+                <td style={{ ...cell, textAlign: 'right', width: 40 }}>
+                  {canDelete && <RowMenu deleteLabel="Delete assembly" onDelete={() => setConfirm(a)} />}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      </div>
+
+      {confirm && (
+        <ReasonModal
+          title={`Delete assembly ${confirm.bundleNumber || ''}?`}
+          blurb={`The Zoho transfer order${confirm.transferOrderNumber ? ` ${confirm.transferOrderNumber}` : ''} and the assembly are deleted: `
+            + `${confirm.qty} × ${confirm.fg.name} stock is removed and the raw material is back in the Issue warehouse.`
+            + (confirm.serialRange ? ` Serials ${confirm.serialRange} are discarded and not reused.` : '')
+            + ' The reason is recorded in the audit trail.'}
+          label="Reason for deleting" cta="Delete assembly" busyCta="Deleting…"
+          busy={busy} onClose={() => setConfirm(null)} onSubmit={del}
+        />
+      )}
+    </div>
+  );
+}
+
 // ---- Approvals ------------------------------------------------------------
 
 function ApprovalsTab({ workOrderId, wo, onChanged }) {
@@ -787,50 +799,6 @@ function ApprovalsTab({ workOrderId, wo, onChanged }) {
 }
 
 // ---- History --------------------------------------------------------------
-
-// Raw ActivityLog codes → plain-language labels for the audit trail.
-const ACTION_LABELS = {
-  'txn.confirm.reserve': 'Material reserved',
-  'txn.confirm.dereserve': 'Reservation released',
-  'txn.confirm.issue': 'Material issued',
-  'txn.confirm.return': 'Material returned',
-  'txn.draft.reserve': 'Reserve draft created',
-  'txn.draft.dereserve': 'Dereserve draft created',
-  'txn.draft.issue': 'Issue draft created',
-  'txn.draft.return': 'Return draft created',
-  'txn.cancel': 'Movement cancelled',
-  'wo.create': 'Work order created',
-  'wo.update': 'Work order updated',
-  'wo.delete': 'Work order deleted',
-  'wo.status': 'Status changed',
-  'wo.hold': 'Put on hold',
-  'wo.resume': 'Resumed from hold',
-  'wo.qc': 'Quality check recorded',
-  'wo.reopen': 'Work order reopened',
-  'bom.revise': 'BOM revised',
-  'pr.create': 'Purchase request raised',
-  'pr.line.add': 'Purchase request line added',
-  'pr.delete': 'Purchase request deleted',
-  'pr.line.delete': 'Purchase request line removed',
-  'pr.confirm': 'Purchase request confirmed',
-  'pr.raise': 'Purchase order raised',
-  'pr.raise.fail': 'Purchase order raise failed',
-  'po.delete': 'Purchase order deleted',
-  'po.edit': 'Purchase order edited',
-  'po.sync.deleted': 'Purchase order deleted in Books',
-  'po.sync.cancelled': 'Purchase order voided in Books',
-  'po.sync.lineRemoved': 'Purchase order line removed in Books',
-  'po.sync.qtyChanged': 'Purchase order quantity changed in Books',
-  'fg.assemble': 'Assembly created',
-};
-function friendlyAction(action = '') {
-  if (ACTION_LABELS[action]) return ACTION_LABELS[action];
-  const m = action.match(/^approval\.l(\d+)\.(\w+)$/);
-  if (m) return `Level ${m[1]} ${m[2].toLowerCase()}`;
-  if (action.startsWith('po.')) return `Purchase order ${spaced(action.slice(3)).toLowerCase()}`;
-  if (action.startsWith('webhook.')) return 'Zoho sync';
-  return spaced(action.replace(/\./g, ' '));
-}
 
 function HistoryTab({ workOrderId, wo, onPrintTxn }) {
   const [log, setLog] = useState(null);
@@ -897,18 +865,7 @@ function HistoryTab({ workOrderId, wo, onPrintTxn }) {
       )}
 
       <h3 style={{ fontSize: 13, fontWeight: 600, margin: '20px 0 8px' }}>Audit trail</h3>
-      {!log ? <Empty>Loading…</Empty> : !log.length ? <Empty>Nothing recorded yet.</Empty> : (
-        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
-          {log.map((e, i) => (
-            <div key={i} style={{ padding: '8px 14px', borderBottom: '1px solid var(--border)', fontSize: 12, display: 'flex', gap: 12 }}>
-              <span style={{ color: 'var(--text-muted)', minWidth: 150 }}>{e.at}</span>
-              <b style={{ minWidth: 200 }}>{friendlyAction(e.action)}</b>
-              <span style={{ minWidth: 140 }}>{e.userName || 'System'}</span>
-              <span style={{ color: 'var(--text-muted)' }}>{e.entityType}</span>
-            </div>
-          ))}
-        </div>
-      )}
+      <AuditList log={log} />
     </div>
   );
 }

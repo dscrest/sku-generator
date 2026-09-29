@@ -38,6 +38,14 @@ function Btn({ onClick, disabled, title, danger, children }) {
   );
 }
 
+// `+ New` is the labelled primary button at the right end of the bar — the
+// same control the Work Orders and BOM bars use, so every grid reads alike.
+const newBtn = {
+  padding: '6px 11px', fontSize: 12, fontWeight: 600, marginLeft: 8, flexShrink: 0,
+  background: 'var(--blue)', color: '#fff', border: '1px solid var(--blue)',
+  borderRadius: 'var(--radius-md)', cursor: 'pointer',
+};
+
 export default function Toolbar({ onAdd, onEdit, onClone, onDelete, onRefresh, selectedCount = 0, right }) {
   return (
     <div style={{
@@ -46,13 +54,6 @@ export default function Toolbar({ onAdd, onEdit, onClone, onDelete, onRefresh, s
       borderBottom: '1px solid var(--border)',
       background: 'var(--bg-secondary)',
     }}>
-      {onAdd && (
-        <Btn onClick={onAdd} title="Add">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-        </Btn>
-      )}
       {onEdit && (
         <Btn onClick={onEdit} disabled={selectedCount !== 1} title="Edit">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -74,7 +75,7 @@ export default function Toolbar({ onAdd, onEdit, onClone, onDelete, onRefresh, s
           </svg>
         </Btn>
       )}
-      {(onAdd || onEdit || onDelete || onClone) && onRefresh && (
+      {(onEdit || onDelete || onClone) && onRefresh && (
         <div style={{ width: 1, height: 18, background: 'var(--border-mid)', margin: '0 2px' }} />
       )}
       {onRefresh && (
@@ -86,6 +87,7 @@ export default function Toolbar({ onAdd, onEdit, onClone, onDelete, onRefresh, s
       )}
       <div style={{ flex: 1 }} />
       {right}
+      {onAdd && <button onClick={onAdd} style={newBtn}>+ New</button>}
     </div>
   );
 }

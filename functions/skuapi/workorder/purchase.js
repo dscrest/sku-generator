@@ -435,7 +435,7 @@ async function confirmPR(catalyst, orgId, prId, userId) {
 
   const wos = await byOrg(catalyst, orgId, "WorkOrder", `ROWID = ${zStr(String(pr.workOrderId))}`);
   const wo = wos[0] || {};
-  const wh = await warehouses(catalyst, orgId);
+  const wh = await warehouses(catalyst, orgId, wo); // PO delivers to the WO's Main (CR-249)
   const created = [];
   const failed = [];
 
@@ -562,6 +562,8 @@ async function raiseItemPO(catalyst, orgId, { vendorId, vendorName, items }, use
   }
   if (!localLines.length) { const e = new Error("Nothing to order — every selected quantity was zero"); e.status = 400; throw e; }
 
+  // ponytail: a consolidated PO spans work orders, so it delivers to the org
+  // Main; split the PO per WO Main if Ricon ever raises item-wise across factories.
   const wh = await warehouses(catalyst, orgId);
   let poNumber;
   try {

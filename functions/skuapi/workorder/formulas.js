@@ -33,14 +33,29 @@ const ROUTES = {
 };
 const TXN_TYPES = Object.keys(ROUTES);
 
+// Pure: what `qty` assembled units consume per BOM line. Per-unit × qty; fall
+// back to requiredQty/fgQty for lines imported without perUnitQty (excel/manual
+// rows). Rounded to 4 dp so 0.1 × 3 is 0.3 everywhere (picker, pick check, Zoho).
+function componentQtys(lines, qty, fgQty) {
+  return lines
+    .filter((l) => n(l.requiredQty) > 0)
+    .map((l) => ({
+      rmItemId: String(l.rmItemId),
+      name: l.rmName,
+      qty: Math.round((n(l.perUnitQty) > 0 ? n(l.perUnitQty) * qty : fgQty > 0 ? (n(l.requiredQty) / fgQty) * qty : 0) * 1e4) / 1e4,
+    }))
+    .filter((c) => c.qty > 0);
+}
+
 /**
  * One grid row. Inputs are the raw parts; everything derived is computed here.
- *   line  { rmItemId, rmName, rmSku, requiredQty }
- *   stock { stockOnHand }                       — Main warehouse snapshot
- *   bal   { reservedQty, issuedQty, returnedQty } — our ReservationLine
- *   po    { poQty, receivedQty, billedQty }      — summed PurchaseRequestLines
+ *   line     { rmItemId, rmName, rmSku, requiredQty }
+ *   stock    { stockOnHand }                       — Main warehouse snapshot
+ *   bal      { reservedQty, issuedQty, returnedQty } — our ReservationLine
+ *   po       { poQty, receivedQty, billedQty }      — summed PurchaseRequestLines
+ *   consumed qty already turned into FG stock by assemblies (componentQtys)
  */
-function gridRow(line, stock, bal, po) {
+function gridRow(line, stock, bal, po, consumed = 0) {
   const A = n(line.requiredQty);
   const B = n(stock && stock.stockOnHand);
   const C = n(bal && bal.reservedQty);
@@ -72,6 +87,10 @@ function gridRow(line, stock, bal, po) {
     reservable: H,
     extraReserved: I,
     needed,
+    // Assembled units took their material out of the Issue warehouse; D stays
+    // (fullyIssued / needed depend on it) but only the rest can come back.
+    consumed: n(consumed),
+    returnable: Math.max(0, D - n(consumed)),
     // Red row: what is still needed cannot be covered from stock → reorder.
     short: H < needed,
     // Pre-filled quantity for the Purchase Request when the row is short.
@@ -93,7 +112,7 @@ function cap(type, row) {
     case "reserve": return row.reservable;                 // ≤ H          FR-RES-001
     case "dereserve": return row.reserved;                 // ≤ C
     case "issue": return row.reserved;                     // ≤ C          FR-ISS-001
-    case "return": return row.issued;                      // ≤ D (net)    FR-RET-001
+    case "return": return row.returnable;                  // ≤ D − consumed  FR-RET-001
     default: throw new Error(`Unknown transaction type "${type}"`);
   }
 }
@@ -111,7 +130,7 @@ function validateLine(type, row, qty) {
       reserve: `only ${limit} can be reserved (stock on hand ${row.stock}, already reserved ${row.reserved})`,
       dereserve: `only ${limit} is reserved for this work order`,
       issue: `only ${limit} is reserved — reserve ${q - limit} more first`,
-      return: `only ${limit} has been issued and not yet returned`,
+      return: `only ${limit} has been issued and not yet returned or assembled`,
     }[type];
     return `${row.name || "Item"}: ${q} exceeds what is available — ${why}`;
   }
@@ -141,7 +160,7 @@ function fullyIssued(rows) {
   return rows.some((r) => r.bom > 0) && rows.every((r) => r.bom <= 0 || r.issued >= r.bom);
 }
 
-module.exports = { ROUTES, TXN_TYPES, gridRow, cap, validateLine, applyToBalance, fullyIssued };
+module.exports = { ROUTES, TXN_TYPES, componentQtys, gridRow, cap, validateLine, applyToBalance, fullyIssued };
 
 // ponytail self-check: `node functions/skuapi/workorder/formulas.js --selftest`
 if (require.main === module && process.argv.includes("--selftest")) {
@@ -190,6 +209,21 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(cap("issue", r7), 4, "issue is capped at reserved");
   assert.strictEqual(cap("return", r7), 2, "return is capped at issued net of returns");
   assert.throws(() => cap("teleport", r7), /Unknown transaction type/);
+
+  // Assembled material is gone from the Issue warehouse: return/replace cap at D − consumed.
+  const r8 = gridRow({ rmItemId: "1", requiredQty: 10 }, { stockOnHand: 6 },
+    { reservedQty: 0, issuedQty: 5, returnedQty: 0 }, {}, 3);
+  assert.strictEqual(r8.issued, 5, "D untouched by assembly");
+  assert.strictEqual(r8.returnable, 2, "5 issued − 3 consumed = 2 returnable");
+  assert.strictEqual(cap("return", r8), 2);
+  assert.strictEqual(r7.returnable, r7.issued, "no consumed arg → returnable = issued");
+  assert.strictEqual(gridRow({ rmItemId: "1", requiredQty: 2 }, {}, { issuedQty: 1 }, {}, 5).returnable, 0, "never negative");
+  assert.match(validateLine("return", r8, 3), /not yet returned or assembled/);
+  assert.deepStrictEqual(
+    componentQtys([{ rmItemId: "1", rmName: "Shaft", requiredQty: 4, perUnitQty: 2 }, { rmItemId: "2", requiredQty: 3 }, { rmItemId: "3", requiredQty: 0 }], 1, 3),
+    [{ rmItemId: "1", name: "Shaft", qty: 2 }, { rmItemId: "2", name: undefined, qty: 1 }],
+    "per-unit × qty, requiredQty/fgQty fallback, zero lines dropped",
+  );
 
   // Validation messages.
   assert.strictEqual(validateLine("issue", r7, 4), null, "at the cap is allowed");

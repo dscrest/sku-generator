@@ -109,14 +109,37 @@ function computeQuote({ components, options, materials, costElements, selections
 }
 
 /**
+ * Selections for computeQuote from free-text answers (CR-211): per
+ * configurable component, the enabled option whose materialCode matches any
+ * answer (case-insensitive), else its only enabled option. Throws {status:400}
+ * naming the first component nothing fits.
+ */
+function selectByMaterial(components, options, answers) {
+  const want = new Set((answers || []).map((a) => String(a).trim().toLowerCase()).filter(Boolean));
+  const selections = {};
+  for (const c of components) {
+    if (!c.allowMaterial) continue;
+    const opts = options.filter((o) => String(o.componentId) === String(c.id) && o.enabled !== false);
+    const hit = opts.find((o) => want.has(String(o.materialCode || "").trim().toLowerCase())) || (opts.length === 1 ? opts[0] : null);
+    if (!hit) throw Object.assign(new Error(`No ${c.name || c.code} material for these answers`), { status: 400 });
+    selections[String(c.id)] = String(hit.id);
+  }
+  return selections;
+}
+
+/**
  * Books composite BOM from a recipe (CR-143). Default material = first
  * enabled option per component (the calc.js opts[0] rule, applied to
  * configurable components too — recipe-level push ignores per-order picks).
  * perUnitQty = component.qty × option.castWeight (material consumed per one
  * finished unit). Lines deduped by zohoItemId (Zoho rejects duplicates).
+ * Services (CR-254): a component with no material but a linked SKU-master
+ * item (`skuItemId`, `items` map id -> {zohoItemId}) is a line of its own qty —
+ * Books files a service item under the composite's Associated Services.
  */
-function bomLines({ components, options, materials }) {
+function bomLines({ components, options, materials, items }) {
   const matById = new Map(materials.map((m) => [String(m.id), m]));
+  const itemById = items instanceof Map ? items : new Map();
   const optsByComp = new Map();
   for (const o of options) {
     if (o.enabled === false) continue;
@@ -128,8 +151,19 @@ function bomLines({ components, options, materials }) {
   const unlinked = new Map(); // material id -> {code, name}
   const skipped = [];
   const sorted = [...components].sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+  const add = (key, qty, c, materialCode) => {
+    const line = byItem.get(key);
+    if (line) line.perUnitQty = round2(line.perUnitQty + qty);
+    else byItem.set(key, { rmItemId: key, perUnitQty: qty, materialCode, componentName: c.name || "" });
+  };
   for (const c of sorted) {
     const opt = (optsByComp.get(String(c.id)) || [])[0] || null;
+    if (!opt && c.skuItemId && itemById.has(String(c.skuItemId))) {
+      const it = itemById.get(String(c.skuItemId));
+      if (!it.zohoItemId) { unlinked.set(`item:${c.skuItemId}`, { code: it.sku || String(c.skuItemId), name: it.name || "" }); continue; }
+      add(String(it.zohoItemId), round2(Number(c.qty) || 1), c, "");
+      continue;
+    }
     const qty = round2((Number(c.qty) || 1) * (opt ? Number(opt.castWeight) || 0 : 0));
     if (!opt || qty <= 0) { skipped.push(c.name || c.code || String(c.id)); continue; }
     const material = matById.get(String(opt.materialId)) || null;
@@ -140,15 +174,12 @@ function bomLines({ components, options, materials }) {
       });
       continue;
     }
-    const key = String(material.zohoItemId);
-    const line = byItem.get(key);
-    if (line) line.perUnitQty = round2(line.perUnitQty + qty);
-    else byItem.set(key, { rmItemId: key, perUnitQty: qty, materialCode: material.code || "", componentName: c.name || "" });
+    add(String(material.zohoItemId), qty, c, material.code || "");
   }
   return { lines: [...byItem.values()], unlinked: [...unlinked.values()], skipped };
 }
 
-module.exports = { optionCost, computeQuote, bomLines, round2 };
+module.exports = { optionCost, computeQuote, selectByMaterial, bomLines, round2 };
 
 // ponytail self-check: `node recipe/calc.js --selftest` — RAVS150 costing-sheet figures.
 if (require.main === module && process.argv.includes("--selftest")) {
@@ -256,5 +287,28 @@ if (require.main === module && process.argv.includes("--selftest")) {
     materials: [{ id: "m1", code: "WCB", zohoItemId: "z-100" }],
   });
   console.assert(dis.lines.length === 0 && dis.skipped.length === 1, "disabled option contributes nothing");
+  // selectByMaterial: answer text picks the option; a lone option needs no answer; no fit -> 400.
+  const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const sbComps = [{ id: "1", name: "Casing", allowMaterial: true }, { id: "2", name: "Gland", allowMaterial: true }, { id: "3", name: "Bolts", allowMaterial: false }];
+  const sbOpts = [
+    { id: "o1", componentId: "1", materialCode: "CI", enabled: true }, { id: "o2", componentId: "1", materialCode: "WCB", enabled: true },
+    { id: "o3", componentId: "2", materialCode: "CI", enabled: true },
+  ];
+  console.assert(eq(selectByMaterial(sbComps, sbOpts, ["Sanitary", "wcb"]), { 1: "o2", 2: "o3" }), "answer picks WCB, lone option auto");
+  let sbThrew = false;
+  try { selectByMaterial(sbComps, sbOpts, ["CF8"]); } catch (e) { sbThrew = e.status === 400 && /Casing/.test(e.message); }
+  console.assert(sbThrew, "no matching material -> 400 naming the component");
+  // bomLines: material line = qty × castWeight; service = linked item × qty; unlinked item reported; no option and no item = skipped
+  const bl = bomLines({
+    components: [
+      { id: "1", name: "Casing", qty: 1, sequence: 1 }, { id: "2", name: "Coating", qty: 1, sequence: 2, skuItemId: "s1", allowMaterial: false },
+      { id: "3", name: "Assembly", qty: 2, sequence: 3, skuItemId: "s2", allowMaterial: false }, { id: "4", name: "Gland", qty: 1, sequence: 4 },
+    ],
+    options: [{ componentId: "1", materialId: "m1", castWeight: 55, enabled: true }],
+    materials: [{ id: "m1", code: "CI", zohoItemId: "z1" }],
+    items: new Map([["s1", { sku: "COAT", name: "Coating service", zohoItemId: "z9" }], ["s2", { sku: "ASM", name: "Assembly", zohoItemId: null }]]),
+  });
+  console.assert(eq(bl.lines, [{ rmItemId: "z1", perUnitQty: 55, materialCode: "CI", componentName: "Casing" }, { rmItemId: "z9", perUnitQty: 1, materialCode: "", componentName: "Coating" }]), "material + service lines");
+  console.assert(eq(bl.unlinked, [{ code: "ASM", name: "Assembly" }]) && eq(bl.skipped, ["Gland"]), "unlinked service, skipped bare component");
   console.log("recipe/calc.js self-check passed");
 }

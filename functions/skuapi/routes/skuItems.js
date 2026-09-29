@@ -1,17 +1,22 @@
 "use strict";
 const express = require("express");
 const { rowList, out, idOk, zStr, orgClause, ownsRow, findSkuRowId } = require("../store");
-const { pushToZoho } = require("../zoho/push");
-const { listStockAccounts } = require("../zoho/booksApi");
-const { importFromBooks } = require("../zoho/import");
+const { pushToZoho, deleteFromZoho } = require("../zoho/push");
+const { listStockAccounts, listManufacturers } = require("../zoho/booksApi");
+const { importFromBooks, refreshFromBooks } = require("../zoho/import");
 const { searchItemIds, deleteItemValues, backfillItemValues } = require("../itemValues");
 const { processImport } = require("../importItems");
 const { processBooksImport } = require("../booksImport");
 // Generic OrgSetting helpers (not work-order-specific despite the home).
-const { settings, setSetting } = require("../workorder/store");
+const { settings, setSetting, logActivity } = require("../workorder/store");
+const { ITEM_FIELDS, enabledKeys, pickItemFields, itemFieldError, mergeBooksData } = require("../itemFields");
+const { parseLadder } = require("../recipe/ladder");
+const { parseUoms, uomsOf } = require("../recipe/componentMap");
 
 const router = express.Router();
 const TABLE = "SKUItem";
+// Audit trail (CR-233) for the SKU item History tab.
+const log = (req, id, action, detail) => logActivity(req.catalyst, req.orgId, TABLE, id, action, req.userId, detail);
 
 // Attach { industry: { name } } to each item (replaces Prisma's include).
 async function withIndustry(catalyst, items) {
@@ -51,6 +56,16 @@ router.get("/stock-accounts", async (req, res) => {
   }
 });
 
+// Books Manufacturer master for the Manufacturer field dropdown (CR-210);
+// fetched only by orgs that enabled the field (ITEM_FIELDS.source).
+router.get("/manufacturers", async (req, res) => {
+  try {
+    res.json(await listManufacturers(req.catalyst));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // SKU module org settings: auto-push imported items to Books + numerical
 // series (CR-136: skuSeriesMode/skuSeriesPad OrgSettings; empty mode =
 // legacy per-industry seriesStart fallback, see skuSeries.js).
@@ -78,6 +93,19 @@ function settingsOut(s) {
     // decides whether it is also pushed to Books at once (else later, from the
     // SKU Items page). Stored inverted so blank = on.
     widgetAutoPush: s.cfgNoAutoPush !== "true",
+    // Product Configurator (CR-211): fill the widget's Rate from the picked
+    // model's product-design costing (SizingModel.recipeCode → computeQuote).
+    designRate: s.cfgDesignRate === "true",
+    // Price ladder % sets per line class (CR-220): Base → OH → Margin → P&F →
+    // Other → Disc, each step ÷ (1 − pct). Always both classes, zeros when unset.
+    priceLadder: parseLadder(s.priceLadder),
+    // Units of measure (CR-216): the org's list for every UOM select (template
+    // builder, Component Map, CRM Product Configurator); blank = default list.
+    uoms: uomsOf(s),
+    // Extra item fields (CR-209): the catalogue every org can pick from, and
+    // the keys this org switched on. Forms render only the enabled ones.
+    itemFieldCatalog: ITEM_FIELDS,
+    itemFields: enabledKeys(s),
   };
 }
 
@@ -125,6 +153,24 @@ router.put("/settings", async (req, res) => {
     if (b.widgetAutoPush !== undefined) {
       await setSetting(req.catalyst, req.orgId, "cfgNoAutoPush", b.widgetAutoPush ? "" : "true");
     }
+    if (b.designRate !== undefined) {
+      await setSetting(req.catalyst, req.orgId, "cfgDesignRate", b.designRate ? "true" : "");
+    }
+    if (b.priceLadder !== undefined) {
+      // ~110 chars of JSON — fits settingValue (varchar 255); parse clamps 0 ≤ pct < 100.
+      await setSetting(req.catalyst, req.orgId, "priceLadder", JSON.stringify(parseLadder(b.priceLadder)));
+    }
+    if (b.uoms !== undefined) {
+      // Stored comma-joined in settingValue (varchar 255): ≤20 chars per unit,
+      // so ~12+ units fit; blank = default list. Saved list is the cleaned one.
+      const text = Array.isArray(b.uoms) ? b.uoms.join(",") : String(b.uoms || "");
+      const value = text.trim() ? parseUoms(text).join(",") : "";
+      if (value.length > 255) return res.status(400).json({ error: "Too many units — keep the list under 255 characters" });
+      await setSetting(req.catalyst, req.orgId, "uomList", value);
+    }
+    if (Array.isArray(b.itemFields)) {
+      await setSetting(req.catalyst, req.orgId, "skuItemFields", enabledKeys({ skuItemFields: b.itemFields.join(",") }).join(","));
+    }
     res.json(settingsOut(await settings(req.catalyst, req.orgId)));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -152,21 +198,35 @@ router.post("/import-zoho", async (req, res) => {
   }
 });
 
+// Re-sync the SKU master from Zoho Books (CR-226): names / SKUs / composite type
+// updated in place, new Books items created in { industryId }. Books is the truth.
+router.post("/refresh-zoho", async (req, res) => {
+  const { industryId } = req.body || {};
+  if (!idOk(industryId)) return res.status(400).json({ error: "Invalid industryId" });
+  try {
+    res.json(await refreshFromBooks(req.catalyst, industryId));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Bulk import: create local SKU items from a parsed sheet (one row per item).
 // Body: { industryId, rows } where rows = [{ "<Property caption>": "<cell>", ...,
 // "Item Type": "Trading"|"Manufacturing" }] (the sheet is parsed to objects in the
 // browser). Runs each row through the same engine as the manual generator (assemble
 // → series → dup check → saveItemValues). Per-row results; one bad row never aborts
 // the batch. format: "books" switches to the Zoho Books item-sheet columns
-// (booksImport.js). Push to Books stays manual unless the org's
+// (booksImport.js); there industryId may be left out — each row then takes the
+// product type named like its Category Name. Push to Books stays manual unless the org's
 // skuAutoPushImport setting is on — then each created row is pushed here.
 router.post("/import", async (req, res) => {
   const { industryId, rows, format } = req.body || {};
-  if (!idOk(industryId)) return res.status(400).json({ error: "Invalid industryId" });
+  const byCategory = format === "books" && (industryId === undefined || industryId === null || industryId === "");
+  if (!byCategory && !idOk(industryId)) return res.status(400).json({ error: "Invalid industryId" });
   if (!Array.isArray(rows) || !rows.length) return res.status(400).json({ error: "rows required" });
   try {
     const result = format === "books"
-      ? await processBooksImport(req.catalyst, industryId, rows)
+      ? await processBooksImport(req.catalyst, byCategory ? null : industryId, rows)
       : await processImport(req.catalyst, industryId, rows);
     const s = await settings(req.catalyst, req.orgId);
     if (s.skuAutoPushImport === "true") {
@@ -270,6 +330,7 @@ router.post("/", async (req, res) => {
       orgId: req.orgId,
     });
     const item = out(row);
+    await log(req, item.id, "sku.create", { sku });
     // Zoho Books sync is manual only (CR-021) — user clicks Push (/:id/push-zoho).
     const [withInd] = await withIndustry(req.catalyst, [item]);
     res.status(201).json(withInd);
@@ -281,7 +342,9 @@ router.post("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
-  const { name, sku, description, type } = req.body;
+  const { name, description, type, fields } = req.body;
+  // ponytail: SKU code = Name for now (CR-237); revert to body sku when the generator/series owns edits again
+  const sku = name;
   const data = { ROWID: id };
   if (name !== undefined) data.name = name;
   if (sku !== undefined) data.sku = sku;
@@ -302,8 +365,17 @@ router.put("/:id", async (req, res) => {
     if (sku !== undefined && (await findSkuRowId(req.catalyst, sku, id))) {
       return res.status(409).json({ error: "SKU already exists" });
     }
+    // Org-enabled extra fields (CR-209) merge into booksData; sheet-import keys stay.
+    if (fields !== undefined) {
+      const picked = pickItemFields(enabledKeys(await settings(req.catalyst, req.orgId)), fields);
+      const fieldError = itemFieldError(picked); // CR-231: HSN 4/6/8 digits
+      if (fieldError) return res.status(400).json({ error: fieldError });
+      const bd = mergeBooksData(existing.booksData, picked);
+      if (bd !== undefined) data.booksData = bd;
+    }
     const row = await req.catalyst.datastore().table(TABLE).updateRow(data);
     const item = out(row);
+    await log(req, id, "sku.update", { keys: Object.keys(data).filter((k) => k !== "ROWID") });
     // Zoho Books sync is manual only (CR-021) — user clicks Push (/:id/push-zoho).
     const [withInd] = await withIndustry(req.catalyst, [item]);
     res.json(withInd);
@@ -315,13 +387,19 @@ router.put("/:id", async (req, res) => {
 router.delete("/:id", async (req, res) => {
   const id = req.params.id;
   if (!idOk(id)) return res.status(400).json({ error: "Invalid id" });
-  if (!(await ownsRow(req.catalyst, TABLE, id))) return res.status(404).json({ error: "Not found" });
   try {
+    const rows = rowList(
+      await req.catalyst.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE ROWID = ${id} AND ${orgClause(req.catalyst)}`),
+    );
+    if (!rows.length) return res.status(404).json({ error: "Not found" });
+    // CR-223: the Books/Inventory item goes first; a refusal leaves everything as is.
+    const { zohoDeleted } = await deleteFromZoho(req.catalyst, out(rows[0]));
     await deleteItemValues(req.catalyst, id);
     await req.catalyst.datastore().table(TABLE).deleteRow(id);
-    res.status(204).end();
+    await log(req, id, "sku.delete", { sku: out(rows[0]).sku, zohoDeleted });
+    res.json({ deleted: true, zohoDeleted });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 
@@ -363,8 +441,10 @@ router.post("/:id/push-zoho", async (req, res) => {
     const result = await pushToZoho(req.catalyst, item, item.description, {
       tracking: TRACKING.includes(tracking) ? tracking : d.pushTracking,
       inventoryAccountId: inventoryAccountId ? String(inventoryAccountId) : (d.pushAccountId || undefined),
+      plainIfNoBom: true, // a single-item sync must not fail on a short BOM — lands as a plain item (CR-242)
     });
     const updated = rowList(await req.catalyst.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE ROWID = ${id}`));
+    await log(req, id, "sku.push_zoho", { zohoItemId: out(updated[0]).zohoItemId });
     res.json({ success: true, zohoItemId: out(updated[0]).zohoItemId, item: result });
   } catch (err) {
     console.error("[Zoho] manual push error:", err.message);

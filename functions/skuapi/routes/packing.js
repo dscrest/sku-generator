@@ -15,6 +15,7 @@ const express = require("express");
 const { rowList, zStr } = require("../store");
 const { settings, byOrg } = require("../workorder/store");
 const booksApi = require("../zoho/booksApi");
+const { loadToken } = require("../zoho/auth");
 
 const router = express.Router();
 
@@ -76,17 +77,52 @@ function weightKg(item) {
   return (Number(pd.weight) || 0) * (KG_PER[String(pd.weight_unit || "").toLowerCase()] || 1);
 }
 
-// Fill line.weightPc from each line's Books item. Sequential on purpose (Dev
-// FUNCTIONS concurrency cap); a failed lookup leaves 0 so the user types it.
+// Fill line.weightPc from each line's Books item, one GET per distinct item in
+// parallel (outbound Zoho calls from one invocation — the Dev FUNCTIONS
+// concurrency cap is about fan-out into our own function, CR-205). A failed
+// lookup leaves 0 so the user types it.
 async function fillWeights(catalyst, lines) {
-  const seen = {};
-  for (const l of lines) {
-    if (!l.itemId) { l.weightPc = 0; continue; }
-    if (!(l.itemId in seen)) {
-      try { seen[l.itemId] = weightKg(await booksApi.getItem(catalyst, l.itemId)); } catch { seen[l.itemId] = 0; }
+  const kg = {};
+  const ids = [...new Set(lines.map((l) => l.itemId).filter(Boolean))];
+  await Promise.all(ids.map((id) => booksApi.getItem(catalyst, id)
+    .then((item) => { kg[id] = weightKg(item); })
+    .catch(() => { kg[id] = 0; })));
+  for (const l of lines) l.weightPc = kg[l.itemId] || 0;
+}
+
+// Header fields carried by Books custom fields on the SO, invoice and org
+// profile, matched by label (lowercased, non-alphanumerics stripped — the org
+// profile's fields have no api_name). Later docs override earlier ones. MSUN
+// keeps Buyer Order No and Buyer Order Date as two fields → "no | dd-mm-yyyy".
+const normLabel = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const CF_KEYS = {
+  portLoading: ["portofloading"],
+  placeReceipt: ["placeofreceiptby", "placeofreceipt"],
+  portDischarge: ["portofdischarge"],
+  preCarriage: ["precarriage", "precarriageby"],
+  incoTerms: ["incoterms"],
+  buyerOrderNoDate: ["buyerordernodate", "buyerordernoanddate"],
+  workorderNoDate: ["workordernodate", "workordernoanddate", "workorderno"],
+  adCode: ["adcodeno", "adcode"],
+  lcNo: ["lcno"],
+  countryOrigin: ["countryoriginofgoods", "countryandoriginofgoods", "countryoforigin"],
+  exporterRef: ["exportersrefno", "exporterrefno", "exportersreferenceno"],
+};
+const fmtDmy = (s) => { const p = String(s || "").split("-"); return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : String(s || ""); };
+function headerFromCustomFields(docs) {
+  const out = {};
+  for (const d of docs) {
+    const by = {};
+    for (const c of (d && d.custom_fields) || []) {
+      if (c && c.value != null && String(c.value).trim() !== "") by[normLabel(c.label)] = String(c.value).trim();
     }
-    l.weightPc = seen[l.itemId];
+    for (const [key, aliases] of Object.entries(CF_KEYS)) {
+      const hit = aliases.find((a) => by[a]);
+      if (hit) out[key] = by[hit];
+    }
+    if (by.buyerorderno) out.buyerOrderNoDate = [by.buyerorderno, fmtDmy(by.buyerorderdate)].filter(Boolean).join(" | ");
   }
+  return out;
 }
 
 async function loadSaved(catalyst, orgId, docKey) {
@@ -114,11 +150,12 @@ async function loadSaved(catalyst, orgId, docKey) {
 }
 
 // GET /api/packing/doc?invoiceId=<id> | ?soId=<id> | ?woId=<id>
-// → { docKey, source, company, saved | null, prefillHeader | null }
+// → { docKey, source, company, docHeader, saved | null, prefillHeader | null, me }
 router.get("/doc", async (req, res, next) => {
   try {
     const { invoiceId, soId, woId } = req.query;
     if (!/^\d+$/.test(String(woId || invoiceId || soId || ""))) return res.status(400).json({ error: "invoiceId, soId or woId required" });
+    const t0 = Date.now();
 
     let so = null;
     let invoice = null;
@@ -176,15 +213,27 @@ router.get("/doc", async (req, res, next) => {
         lines: (src.line_items || []).map(toLine),
       };
     }
-    await fillWeights(req.catalyst, source.lines);
+    const t1 = Date.now();
 
-    // Consignor block: Company-details settings first, Zoho Books organization
-    // profile for whatever is blank (req.orgId IS the Books organization_id).
-    const cfg = await settings(req.catalyst, req.orgId);
-    let org = {};
-    if (!cfg.companyName || !cfg.companyAddress || !cfg.companyEmail) {
-      try { org = (await booksApi.apiRequest(req.catalyst, "GET", `/organizations/${req.orgId}`)).organization || {}; } catch { /* settings only */ }
-    }
+    // Everything below is independent — in parallel. Sequential, this leg alone
+    // took 3.5–6.8 s in the Dev access logs (CR-205). The org profile
+    // (req.orgId IS the Books organization_id) is always read: it carries the
+    // consignor fallback AND the Exporter's Ref. No. custom field.
+    const [, cfg, org, saved, prefillRows, token] = await Promise.all([
+      fillWeights(req.catalyst, source.lines),
+      settings(req.catalyst, req.orgId),
+      booksApi.apiRequest(req.catalyst, "GET", `/organizations/${req.orgId}`).then((d) => d.organization || {}).catch(() => ({})),
+      loadSaved(req.catalyst, req.orgId, docKey),
+      // Newest saved list in the org seeds the export header fields no Books
+      // custom field supplies (AD code, LC no…). Used only when nothing is saved.
+      // ponytail: OrgSetting keys if admin-controlled defaults are ever needed.
+      req.catalyst.zcql().executeZCQLQuery(
+        `SELECT header FROM PackingList WHERE orgId = ${zStr(req.orgId)} ORDER BY MODIFIEDTIME DESC LIMIT 1`,
+      ).then(rowList).catch(() => []),
+      loadToken(req.catalyst, req.userId).catch(() => null),
+    ]);
+
+    // Consignor block: Company-details settings first, org profile for whatever is blank.
     const a = org.address || {};
     const company = {
       name: cfg.companyName || org.name || "",
@@ -192,18 +241,16 @@ router.get("/doc", async (req, res, next) => {
       email: cfg.companyEmail || org.email || "",
       gstin: cfg.companyGstin || "", logoUrl: cfg.companyLogoUrl || "",
     };
+    const docHeader = headerFromCustomFields([so, invoice, org]);
 
-    const saved = await loadSaved(req.catalyst, req.orgId, docKey);
     let prefillHeader = null;
-    if (!saved) {
-      // Newest saved list in the org seeds the export header (ports, AD code…).
-      // ponytail: OrgSetting keys if admin-controlled defaults are ever needed.
-      const rows = rowList(await req.catalyst.zcql().executeZCQLQuery(
-        `SELECT header FROM PackingList WHERE orgId = ${zStr(req.orgId)} ORDER BY MODIFIEDTIME DESC LIMIT 1`,
-      ));
-      try { prefillHeader = rows.length && rows[0].header ? JSON.parse(rows[0].header) : null; } catch { /* skip */ }
+    if (!saved && prefillRows.length && prefillRows[0].header) {
+      try { prefillHeader = JSON.parse(prefillRows[0].header); } catch { /* skip */ }
     }
-    res.json({ docKey, source, company, saved, prefillHeader });
+    // me: the widget's org-mismatch banner, so it needs no separate /auth/me round trip.
+    const me = { orgId: req.orgId, orgName: (token && token.orgName) || null };
+    console.log(`[packing/doc] ${docKey} lines=${source.lines.length} resolve=${t1 - t0}ms parallel=${Date.now() - t1}ms`);
+    res.json({ docKey, source, company, docHeader, saved, prefillHeader, me });
   } catch (err) { next(err); }
 });
 
@@ -277,5 +324,19 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(weightKg({ custom_fields: [{ label: "Weight (kg)", value: 12 }] }), 12);
   assert.strictEqual(weightKg({ custom_fields: [{ label: "Weight", value: "500 g" }], package_details: { weight: 9 } }), 0.5);
   assert.strictEqual(weightKg({ custom_fields: [{ label: "Weight", value: "" }], package_details: { weight: 9 } }), 9);
+  // Header from Books custom fields: label match, invoice overrides SO, org supplies Exporter's Ref, blanks skipped.
+  const hdr = headerFromCustomFields([
+    { custom_fields: [{ label: "Port of Loading", value: "Mundra" }, { label: "Work Order No and Date", value: "WO-0026 | 01-09-2026" }] },
+    { custom_fields: [{ label: "Port of Loading", value: "Hazira" }, { label: "Port of Discharge", value: "" }, { label: "Inco Terms", value: "Ex Works" },
+      { label: "Buyer Order No", value: "88888" }, { label: "Buyer Order Date", value: "2026-09-15" }] },
+    null,
+    { custom_fields: [{ label: "Exporter's Ref. No.", value: "AAQCM4066R" }, { label: "", value: "" }] },
+  ]);
+  assert.deepStrictEqual(hdr, {
+    portLoading: "Hazira", workorderNoDate: "WO-0026 | 01-09-2026", incoTerms: "Ex Works",
+    buyerOrderNoDate: "88888 | 15-09-2026", exporterRef: "AAQCM4066R",
+  });
+  assert.strictEqual(headerFromCustomFields([{ custom_fields: [{ label: "Buyer Order No. & Date", value: "PO-1 | 01-01-2026" }] }]).buyerOrderNoDate, "PO-1 | 01-01-2026");
+  assert.deepStrictEqual(headerFromCustomFields([{}]), {});
   console.log("packing selftest ok");
 }

@@ -2,9 +2,10 @@
 const { isConfigured, dsDate } = require("./auth");
 const { createItem, updateItem, findItemByName, getItem, deleteItem, getGstTaxId } = require("./booksApi");
 const { pushableBooksFields } = require("../booksImport");
-const { createCompositeItem, updateCompositeItemFields, getCompositeItem, updateCompositeItem } = require("./inventoryApi");
+const { catalogueFields } = require("../itemFields");
+const { createCompositeItem, updateCompositeItemFields, getCompositeItem, updateCompositeItem, deleteCompositeItem } = require("./inventoryApi");
 const { rowList, out, orgClause, zStr, isActive, idOk } = require("../store");
-const { matchComponents } = require("../recipe/componentMap");
+const { matchComponents, selectedFromValues } = require("../recipe/componentMap");
 
 // Books says the linked item no longer exists (deleted in Books):
 // GET → code 1002 (HTTP 404), PUT → code 2006 (HTTP 400). Composite endpoints
@@ -39,6 +40,13 @@ async function buildAssociatedItems(catalyst, item) {
   // Only list-value selections can be Books items (a Range number can't).
   const selected = flagged.filter((p) => idOk((valByProp[String(p.id)] || {}).valueId));
 
+  // ponytail: a value item has no HSN of its own, so it inherits the parent
+  // composite's catalogue fields (HSN, Manufacturer) — an HSN-mandatory Books
+  // org rejects an item without one (code 2207). Add a PropertyValue.hsn column
+  // when a client needs per-value codes.
+  let extra = {};
+  try { extra = catalogueFields(JSON.parse(item.booksData || "{}")); } catch { extra = {}; }
+
   const mapped = [];
   for (const prop of selected) {
     const sel = valByProp[String(prop.id)];
@@ -46,7 +54,13 @@ async function buildAssociatedItems(catalyst, item) {
       await zcql.executeZCQLQuery(`SELECT * FROM PropertyValue WHERE ROWID = ${sel.valueId} AND ${orgClause(catalyst)}`),
     ).map(out);
     if (!pvs.length) throw new Error(`${prop.caption}: value "${sel.valueText}" no longer exists`);
-    const resolved = await pushValueToZoho(catalyst, pvs[0]);
+    let resolved;
+    try {
+      resolved = await pushValueToZoho(catalyst, pvs[0], extra);
+    } catch (e) {
+      // Name the value item — Books' message alone reads as if the composite failed.
+      throw new Error(`Books item "${sel.valueText}" (${prop.caption}): ${e.message}`);
+    }
     if (!resolved || !resolved.item_id) {
       throw new Error(`${prop.caption}: "${sel.valueText}" could not be resolved to a Zoho Books item`);
     }
@@ -77,10 +91,51 @@ async function componentItems(catalyst, ids) {
   const items = [];
   for (let i = 0; i < ids.length; i += 200) {
     items.push(...rowList(await catalyst.zcql().executeZCQLQuery(
-      `SELECT ROWID, sku, name, zohoItemId FROM SKUItem WHERE ROWID IN (${ids.slice(i, i + 200).join(",")}) AND ${orgClause(catalyst)}`,
+      `SELECT ROWID, sku, name, zohoItemId, uom, booksData FROM SKUItem WHERE ROWID IN (${ids.slice(i, i + 200).join(",")}) AND ${orgClause(catalyst)}`,
     )).map(out));
   }
   return items;
+}
+
+// service = Books product_type kept in booksData (CR-127 / CR-254).
+const isServiceItem = (it) => { try { return JSON.parse(it.booksData || "{}").product_type === "service"; } catch { return false; } };
+
+// Pure: matched map lines + their SKU items → BOM lines keyed by Books item id.
+// Separate-line components (CR-195) are their own quote/SO lines, never BOM
+// lines; two components may share one Books item → one line, summed qty. A
+// line that cannot be resolved is named in `problems`, never silently dropped.
+function bomFromMatch(lines, items) {
+  const byId = new Map((items || []).map((it) => [String(it.id), it]));
+  const merged = new Map();
+  const problems = [];
+  for (const l of (lines || []).filter((x) => !x.asQuoteLine)) {
+    const it = byId.get(String(l.skuItemId));
+    if (!it) { problems.push(`${l.component}: the mapped item no longer exists`); continue; }
+    if (!it.zohoItemId) { problems.push(`${l.component}: item ${it.sku || it.name} is not in Zoho Books yet — push it first`); continue; }
+    const id = String(it.zohoItemId);
+    const cur = merged.get(id);
+    if (cur) cur.perUnitQty += l.qty;
+    else merged.set(id, { rmItemId: id, rmName: it.name || "", rmSku: it.sku || "", uom: it.uom || l.uom || "", perUnitQty: l.qty, service: isServiceItem(it) });
+  }
+  return { lines: [...merged.values()], problems };
+}
+
+/**
+ * Answers → BOM lines with Books item ids, from the Component Map (CR-261). Shared by
+ * the Books composite push (componentLines) and the work order, which seeds a
+ * configured valve's BOM from the quote's answers instead of the composite.
+ * `sel` = the matcher's selectedValues ({ propertyId: valueId | text }).
+ */
+async function resolveBomLines(catalyst, industryId, sel) {
+  const rows = await componentMapRows(catalyst, industryId);
+  const { lines, missing } = matchComponents(rows, sel || {});
+  // matchComponents defaults a blank row unit to "Nos" — a guess the WO must not show as fact.
+  const unitSet = new Set(rows.filter((r) => String(r.uom || "").trim()).map((r) => `${r.component}|${r.skuItemId}`));
+  const keep = lines.map((l) => (unitSet.has(`${l.component}|${l.skuItemId}`) ? l : { ...l, uom: "" }));
+  const ids = [...new Set(keep.filter((l) => !l.asQuoteLine).map((l) => l.skuItemId))].filter(idOk);
+  const res = bomFromMatch(keep, ids.length ? await componentItems(catalyst, ids) : []);
+  if (missing.length) res.problems.unshift(`Component Map has no matching row for: ${missing.join(", ")}`);
+  return { ...res, mapped: rows.length > 0 };
 }
 
 /**
@@ -92,21 +147,9 @@ async function componentItems(catalyst, ids) {
  * item, so map conditions can only use SKU-active questions.
  */
 async function componentLines(catalyst, item, vals) {
-  const rows = await componentMapRows(catalyst, item.industryId);
-  if (!rows.length) return [];
-  const selected = Object.fromEntries(vals.map((v) => [String(v.propertyId), idOk(v.valueId) ? String(v.valueId) : v.valueText]));
-  const { lines, missing } = matchComponents(rows, selected);
-  if (missing.length) throw new Error(`Component Map has no matching row for: ${missing.join(", ")}`);
-  const byId = new Map((await componentItems(catalyst, [...new Set(lines.map((l) => l.skuItemId))].filter(idOk))).map((it) => [String(it.id), it]));
-  const merged = new Map(); // two components may share one Books item → one line, summed qty
-  for (const l of lines) {
-    const it = byId.get(l.skuItemId);
-    if (!it) throw new Error(`${l.component}: the mapped item no longer exists`);
-    if (!it.zohoItemId) throw new Error(`${l.component}: item ${it.sku || it.name} is not in Zoho Books yet — push it first`);
-    const id = String(it.zohoItemId);
-    merged.set(id, (merged.get(id) || 0) + l.qty);
-  }
-  return [...merged].map(([rmItemId, perUnitQty]) => ({ rmItemId, perUnitQty }));
+  const { lines, problems } = await resolveBomLines(catalyst, item.industryId, selectedFromValues(vals));
+  if (problems.length) throw new Error(problems[0]);
+  return lines.map((l) => ({ rmItemId: l.rmItemId, perUnitQty: l.perUnitQty }));
 }
 
 // Outbound half of the Property.zohoCfApiName mapping: every selected value
@@ -192,33 +235,84 @@ function requireBomLines(mapped) {
   );
 }
 
+// Trading → plain Books inventory item: update the linked item, or (no link /
+// link dead) create and store the id.
+async function pushPlain(catalyst, item, description, opts = {}, customFields = []) {
+  // Imported Books-sheet fields (CR: books import) ride along on the push.
+  // "_" reference keys stay local; a stored GST rate resolves to a tax_id.
+  let stored = {};
+  try { stored = item.booksData ? JSON.parse(item.booksData) : {}; } catch { stored = {}; }
+  let extraCreate, extraUpdate;
+  if (Object.keys(stored).length) {
+    extraCreate = pushableBooksFields(stored);
+    extraUpdate = pushableBooksFields(stored, { update: true });
+    if (stored._gstRate) {
+      const taxId = await getGstTaxId(catalyst, stored._gstRate, { interState: true });
+      if (taxId) extraCreate.tax_id = extraUpdate.tax_id = taxId;
+    }
+  }
+  // Item UOM (CR-206, configurator) beats the sheet's unit; null keeps "pcs".
+  if (item.uom) {
+    extraCreate = { ...(extraCreate || {}), unit: item.uom };
+    extraUpdate = { ...(extraUpdate || {}), unit: item.uom };
+  }
+  if (item.zohoItemId) {
+    try {
+      return await updateItem(catalyst, item.zohoItemId, item.name, item.sku, description, customFields, extraUpdate);
+    } catch (e) {
+      if (!isGone(e)) throw e; // stale link: item was deleted in Books → re-create below
+    }
+  }
+  const result = await createItem(catalyst, item.name, item.sku, description, opts, customFields, extraCreate);
+  if (result && result.item_id) {
+    await catalyst.datastore().table("SKUItem").updateRow({ ROWID: item.id, zohoItemId: String(result.item_id) });
+  }
+  return result;
+}
+
 // Manufacturing → Books composite (assembly) item. Same self-heal shape as the
 // plain path, plus the legacy case: an item pushed before CR-029 holds a
 // plain-item id, so the composite update 404s — if that plain item still
 // exists, delete it first or the composite create collides on SKU. Books
 // refuses to delete an item with transactions; that error surfaces verbatim.
 async function pushManufacturing(catalyst, item, description, opts = {}, customFields = []) {
+  // ponytail: only the ITEM_FIELDS catalogue (HSN, Manufacturer) rides onto a
+  // composite; carry full booksData if a sheet import ever yields Manufacturing.
+  let extra = {};
+  try { extra = catalogueFields(JSON.parse(item.booksData || "{}")); } catch { extra = {}; }
+  const mapped = await buildAssociatedItems(catalyst, item);
   if (item.zohoItemId) {
     try {
       const updated = await updateCompositeItemFields(catalyst, item.zohoItemId, {
         name: item.name,
         sku: item.sku,
+        ...extra,
+        ...(item.uom ? { unit: item.uom } : {}),
         ...(description !== undefined ? { description, purchase_description: description } : {}),
         ...(customFields.length ? { custom_fields: customFields } : {}),
       });
-      await syncMappedItems(catalyst, item, await buildAssociatedItems(catalyst, item));
+      await syncMappedItems(catalyst, item, mapped);
       return updated;
     } catch (e) {
       if (!isGone(e)) throw e;
-      let plain = null;
-      try { plain = await getItem(catalyst, item.zohoItemId); } catch (e2) { if (!isGone(e2)) throw e2; }
-      if (plain) await deleteItem(catalyst, item.zohoItemId);
     }
   }
-  const mappedItems = requireBomLines(await buildAssociatedItems(catalyst, item));
+  // A single-item sync from the SKU Items page (opts.plainIfNoBom) with a BOM
+  // Books would refuse (< 2 lines, code 2056) lands as a plain inventory item
+  // instead of failing — it updates the plain item it already is, or creates
+  // one. The next push with ≥ 2 lines upgrades it: the legacy branch below
+  // deletes the plain item and creates the composite. Widget/generator pushes
+  // keep failing loudly (CR-184).
+  if (mapped.length < 2 && opts.plainIfNoBom) return pushPlain(catalyst, item, description, opts, customFields);
+  if (item.zohoItemId) {
+    let plain = null;
+    try { plain = await getItem(catalyst, item.zohoItemId); } catch (e2) { if (!isGone(e2)) throw e2; }
+    if (plain) await deleteItem(catalyst, item.zohoItemId);
+  }
+  const mappedItems = requireBomLines(mapped);
   const comp = await createCompositeItem(catalyst, {
-    name: item.name, sku: item.sku, description, mappedItems, customFields,
-    tracking: opts.tracking, inventoryAccountId: opts.inventoryAccountId,
+    name: item.name, sku: item.sku, description, mappedItems, customFields, unit: item.uom,
+    tracking: opts.tracking, inventoryAccountId: opts.inventoryAccountId, extra,
   });
   const compId = comp && (comp.composite_item_id || comp.item_id);
   if (compId) {
@@ -242,38 +336,10 @@ async function pushToZoho(catalyst, item, description, opts = {}) {
     console.log("[Zoho] skipped (not configured) — sku:", item.sku);
     return null;
   }
-  let result;
   const customFields = await buildCustomFields(catalyst, item);
-  if (item.type === "Manufacturing") {
-    result = await pushManufacturing(catalyst, item, description, opts, customFields);
-  } else {
-    // Imported Books-sheet fields (CR: books import) ride along on the push.
-    // "_" reference keys stay local; a stored GST rate resolves to a tax_id.
-    let stored = {};
-    try { stored = item.booksData ? JSON.parse(item.booksData) : {}; } catch { stored = {}; }
-    let extraCreate, extraUpdate;
-    if (Object.keys(stored).length) {
-      extraCreate = pushableBooksFields(stored);
-      extraUpdate = pushableBooksFields(stored, { update: true });
-      if (stored._gstRate) {
-        const taxId = await getGstTaxId(catalyst, stored._gstRate, { interState: true });
-        if (taxId) extraCreate.tax_id = extraUpdate.tax_id = taxId;
-      }
-    }
-    if (item.zohoItemId) {
-      try {
-        result = await updateItem(catalyst, item.zohoItemId, item.name, item.sku, description, customFields, extraUpdate);
-      } catch (e) {
-        if (!isGone(e)) throw e; // stale link: item was deleted in Books → re-create below
-      }
-    }
-    if (result === undefined) {
-      result = await createItem(catalyst, item.name, item.sku, description, opts, customFields, extraCreate);
-      if (result && result.item_id) {
-        await catalyst.datastore().table("SKUItem").updateRow({ ROWID: item.id, zohoItemId: String(result.item_id) });
-      }
-    }
-  }
+  const result = item.type === "Manufacturing"
+    ? await pushManufacturing(catalyst, item, description, opts, customFields)
+    : await pushPlain(catalyst, item, description, opts, customFields);
   // Stamp when the push landed — the grid's stale-sync badge compares this to
   // the row's MODIFIEDTIME. Best-effort: a failed stamp must not fail the push.
   if (result) {
@@ -282,6 +348,28 @@ async function pushToZoho(catalyst, item, description, opts = {}) {
       .catch((e) => console.error("lastPushedAt stamp failed:", e && e.message));
   }
   return result;
+}
+
+/**
+ * CR-223: remove the Books/Inventory counterpart of a SKU item before the
+ * local row goes — Zoho first, like assembly.deleteAssembly. `item.type`
+ * picks the API (composite for Manufacturing, plain item otherwise), same
+ * lock as pushToZoho. Already gone in Books → fine, the caller proceeds.
+ * Any other refusal (item has transactions) → 409 with Zoho's message, and
+ * the caller must leave the local row alone.
+ */
+async function deleteFromZoho(catalyst, item) {
+  if (!isConfigured() || !item.zohoItemId) return { zohoDeleted: false };
+  try {
+    if (item.type === "Manufacturing") await deleteCompositeItem(catalyst, item.zohoItemId);
+    else await deleteItem(catalyst, item.zohoItemId);
+    return { zohoDeleted: true };
+  } catch (e) {
+    if (isGone(e)) return { zohoDeleted: false, gone: true };
+    const err = new Error(`Zoho Books refused to delete item ${item.sku || item.zohoItemId}: ${e.message}`);
+    err.status = 409;
+    throw err;
+  }
 }
 
 /**
@@ -296,7 +384,9 @@ async function pushToZoho(catalyst, item, description, opts = {}) {
 // "Cotton : Silk" → "COTTON-SILK". Pure — exported for the self-check.
 const valueItemSku = (name) => String(name).toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 100);
 
-async function pushValueToZoho(catalyst, value) {
+// `extra` (optional): Books item fields (hsn_or_sac, manufacturer…) the value
+// item carries on create/update — the parent composite's when pushed as a BOM line.
+async function pushValueToZoho(catalyst, value, extra) {
   if (!isConfigured()) {
     console.log("[Zoho] value push skipped (not configured) —", value.displayValue);
     return null;
@@ -307,7 +397,7 @@ async function pushValueToZoho(catalyst, value) {
   // (a) already linked → keep Books in sync; a dead link falls through to re-create
   if (value.zohoItemId) {
     try {
-      return await updateItem(catalyst, value.zohoItemId, name, undefined, description);
+      return await updateItem(catalyst, value.zohoItemId, name, undefined, description, undefined, extra);
     } catch (e) {
       if (!isGone(e)) throw e;
       value.zohoItemId = null;
@@ -342,7 +432,7 @@ async function pushValueToZoho(catalyst, value) {
   // 2112 (CR-163). The value's own code (HM, CN) is too short to be unique
   // across properties; the name already is — (b)/(c) dedupe on it.
   if (!zohoItemId) {
-    const zohoItem = await createItem(catalyst, name, valueItemSku(name), description);
+    const zohoItem = await createItem(catalyst, name, valueItemSku(name), description, undefined, undefined, extra);
     if (zohoItem && zohoItem.item_id) zohoItemId = String(zohoItem.item_id);
   }
 
@@ -352,4 +442,7 @@ async function pushValueToZoho(catalyst, value) {
   return zohoItemId ? { item_id: zohoItemId } : null;
 }
 
-module.exports = { pushToZoho, pushValueToZoho, buildAssociatedItems, mergeMappedLines, valueItemSku, requireBomLines };
+module.exports = {
+  pushToZoho, deleteFromZoho, pushValueToZoho, buildAssociatedItems, mergeMappedLines, valueItemSku, requireBomLines,
+  bomFromMatch, resolveBomLines,
+};

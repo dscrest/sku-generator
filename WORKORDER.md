@@ -16,7 +16,7 @@ Per raw material of the selected finished good:
 | Col | Meaning | Source |
 |-----|---------|--------|
 | A | BOM / required | `WorkOrderLine.requiredQty` = per-unit qty × FG qty |
-| B | Stock on Hand | `ItemStockSnapshot`, **Main warehouse** row |
+| B | Stock on Hand | `ItemStockSnapshot`, **Main warehouse** row — the WO's own `mainWarehouseId` when set (CR-249), else the org setting |
 | C | Reserved | `ReservationLine.reservedQty` — sitting in the Reserve warehouse |
 | D | Issued | `issuedQty − returnedQty` |
 | E | PO | Σ `PurchaseRequestLine.purchaseQty` (ordered) |
@@ -39,7 +39,9 @@ Self-check: `node functions/skuapi/workorder/formulas.js --selftest`.
 
 ## 2. Warehouse map
 
-Fixed by the BRD; only the warehouse *ids* are per-org (`OrgSetting`).
+Fixed by the BRD; only the warehouse *ids* are per-org (`OrgSetting`). Main is
+the org default and can be overridden per work order (`WorkOrder.mainWarehouseId`,
+CR-249); Reserve and Issue are always org-wide.
 
 | Action | From | To | Document |
 |--------|------|----|----------|
@@ -72,7 +74,7 @@ are not re-asked. Completed onwards, Draft and Approved never step back.
 | Hold | Reason required; nothing moves; resumes to the prior status | — |
 | Cancelled | De-reserves (Reserve → Main); issued material stays | — |
 
-Assembly (Details → **Assembly** action, CR-172) is allowed at any shop-floor
+Assembly (Details → **Make Assembly** action, CR-172; renamed CR-208) is allowed at any shop-floor
 stage (Ready For Machining … Ready For Dispatch) once every BOM line of the
 finished good is fully issued. The tab has two sections (CR-174): **Ready for
 assembly** (fully issued FGs, an *Assemble now* quantity per row for partial
@@ -83,7 +85,10 @@ server re-checks fully-issued on Proceed.
 Proceed Assembly (CR-176) first looks up the batch/serial pool of every raw
 material at the Issue warehouse; tracked lines open the same picker as
 Issue/Return (FIFO prefilled, each line must be covered exactly) and the picks
-go into the Zoho bundle lines — untracked lines are consumed silently. Each
+go into the Zoho bundle lines — untracked lines are consumed silently.
+Confirming the picker (or Proceed on an FG with no tracked lines) closes the
+modal at once; the Ready row shows *Assembling…* with its count locked until
+Zoho answers, then refreshes (CR-243). Each
 produced unit gets a serial `PREFIX + YYYY + NNN` (CR-150); the prefix prefill
 order is the FG item's `cf_valve_type` code before the dash (CR-177) → the SKU
 item's "Valve Type" property code → the SKU's leading letters → typed in the
@@ -113,7 +118,10 @@ so the reconcile is **mandatory, not optional**.
 2. **Reconnect Zoho** once if the token predates the Inventory scope (the UI
    offers this; endpoints return `409 reauth_required` until then).
 3. **Set the warehouses** — Work Order → Settings. Main, Reserve and Issue are
-   required before any material can move; the page blocks and says so.
+   required before any material can move; the page blocks and says so. Main
+   here is the default — an org with several factories picks the Main
+   warehouse on each work order (CR-249). Turn on **Pick Main warehouse on
+   every work order** there to make that pick mandatory (CR-260).
 4. **Set the alert recipients** — purchase team email, approver L1/L2, shortfall
    days (default 4), cost threshold % (default 80).
 5. **Register the cron** — Catalyst console → Cron → URL type, nightly:
@@ -127,6 +135,14 @@ so the reconcile is **mandatory, not optional**.
    without one or the other the endpoint returns 401. Enabling these makes stock
    changes push in real time (one item each), so the manual sync is only a
    backstop.
+
+   Books webhook form (verified on MSUN, CR-245): Authorization = *Self
+   Authorization*, leave "secure this webhook" unticked, Body = **Raw** JSON,
+   e.g. `{"salesorder_id": "${SalesOrder.SalesOrder ID}"}` via *Insert
+   Placeholders*. The function parses JSON only — *Default Payload*, form-data
+   and urlencoded bodies arrive empty and the event is silently ignored. The
+   rule itself is *Edited · any field*: the sink diffs quantities, so no field
+   condition is needed.
 
    | Rule on | `type=` | Fires when |
    |---------|---------|-----------|
@@ -149,8 +165,14 @@ Everything in the module is **Draft → Confirm → a Zoho document appears**. T
 only thing that changes between jobs is which column you type in.
 
 ### Production / Planning
-1. Work Order → **+ New work order** → pick the sales order → tick the finished
-   goods → Create. Each FG's BOM is pulled from its Zoho composite item.
+1. Work Order → **+ New** → one form laid out like the Books Sales Order page
+   (CR-252): pick the sales order — Customer, SO Date, Expected Shipment, Buyer
+   Order, Freight, Delivery, Booking and Transporter fill in read-only — set the
+   Main warehouse, WO / Machining / Fitting dates, priority and TC Required,
+   tick the finished goods in the item table (quantities editable), add a
+   Special Instruction → Create. Each FG's BOM is pulled from its Zoho composite
+   item. ✎ **Edit** on a work order opens the same page (`/wo/:id/edit`) with
+   the sales order and finished goods read-only.
 2. **BOM tab** — upload the engineering BOM (Excel/CSV or paste from a sheet).
    Review the colours: green = new, amber = qty changed, red = removed.
    *Apply & update Zoho* writes the revision back to the composite item.
@@ -164,6 +186,80 @@ only thing that changes between jobs is which column you type in.
    **Confirm**. One Transfer Order is created and its number is shown.
 4. The bold column is your limit for the action you picked. Typing over it turns
    the box red and Confirm explains exactly what to do.
+5. **Replace** (defective issued material): type the defective quantity, Proceed
+   → give the reason and add a photo (click the dashed box or drop the image on
+   it; on a phone it opens the camera or gallery) → pick the defective
+   batch/serial numbers → the units go back to Main and are **blocked** (they
+   never show in a picker again until the store manager clears them). That is
+   all the shop floor does — the request now waits in **Store issues** for the
+   store manager's decision on the replacement.
+   Return and Replace only cover material **not yet assembled** — once a unit
+   is made, its parts have left the Issue warehouse. Found a defect after
+   assembly? Assembly tab → ⋮ **Delete assembly** first, then Replace.
+
+### Store Issue Manager
+1. Settings → Work Order → Alerts → **Store issue email** receives every defect;
+   the sidebar shows a red count next to **Store issues** while any row is
+   still open (replacement undecided or units not yet dealt with).
+2. Order Management → **Store issues** (filter **Open** by default): each row is
+   one defective line with its photo, batch/serials and reason. Two decisions
+   per row, each with a reason, both in the work order's History:
+   - **Replacement** — ⋮ → **Replace — Reserve & Issue**: optionally pick a
+     different Books item (the BOM is swapped), the dialog shows what Main can
+     supply now and what will be purchase-requested, pick the batch/serial
+     numbers, Proceed → Transfer Orders Main → Reserve → Issue for the in-stock
+     part and one purchase request for the rest. **Replace — Raise PR** skips
+     the stock move and requests the whole quantity. The Replacement column
+     shows the outcome and the TO / PR numbers.
+   - **Defective units** — ⋮ → **Restock — repaired** (usable again),
+     **Trash — write off** (Zoho inventory adjustment at Main), or **Return to
+     vendor** (marked; stays blocked — adjust the stock in Books when the
+     vendor credits it).
+   A row leaves the Open view once both decisions are made.
+
+### Valves configured on a CRM quote (CR-261)
+A valve quoted through the Product Configurator is one Books item per model;
+its Books BOM holds placeholder raw material. When its sales order carries the
+quote number, **New Work Order** shows a **Configuration** column (quote no ·
+MOC and the other answers) and the WO's raw material is the items mapped for
+those answers in *Product Configurator → Components* — Casing CI, Gland CI … for
+MOC = CI — not the composite's lines.
+
+- A part with no item for that MOC, or an item not yet in Books, is named in a
+  message after Create; the other parts are seeded. Add the missing one on the
+  **Items** tab, or map it in Components and use **BOM → Compare** to pull it in.
+- No Configuration shown = the SO did not name a saved quote; the BOM is the
+  composite's, as for any other item.
+- The valve's Books composite is never updated from such a work order: the BOM
+  tab offers *Apply here only*, and assembly consumes the WO's items without
+  rewriting the composite.
+- The configuration is frozen on the work order — a later edit of the quote
+  does not change it.
+
+### Sales Order quantity changes
+When Sales edits a line quantity in Books, the work order list (and the WO page
+side list) shows a red **▲** (qty went up) / **▼** (went down) before the WO
+number — hover for "qty 3 → 4 (FG)" — and Details shows a banner per finished
+good ("now 4 — this work order is for 3"). **Apply** rescales the BOM lines (refused if that would
+go below what is already reserved/issued); **Dismiss** just acknowledges it.
+Both are in History. The hint also arrives without opening the work order when
+the Sales Order workflow rule (§4) posts to the webhook sink.
+
+### Dates after a Sales Order change (CR-251)
+Applying a quantity change or adding a new line opens the **Edit page** straight
+away (step 2, Properties) with a note saying what changed, so the WO Date,
+Machining Date and Fitting Date can move with it. The same three dates are
+editable any time from ✎ Edit; the status gates still ask for them when a stage
+is entered with the date blank.
+
+### Sales Order new lines (CR-250)
+When Sales adds a line to the SO after the work order was raised, the list and
+side list show a red **＋** before the WO number (hover names the line) and
+Details shows a banner "Sales order now has X × N — not on this work order".
+**Add to work order** creates the finished good with its BOM seeded exactly as
+at create (one BOM revision); **Dismiss** just acknowledges it. Lines the
+planner left out at create never show — only lines added afterwards. Both are
+in History.
 
 ### Purchase
 1. Red rows on Materials = short. Open the **Purchase tab**.

@@ -309,13 +309,25 @@ async function handleZohoEvent(catalyst, orgId, type, body) {
     const soId = body && (body.salesorder_id || (body.salesorder && body.salesorder.salesorder_id));
     // Order changes (BRD FR-ADO-005) are flagged for the planner rather than
     // applied: quantity changes have to be re-costed and re-reserved by a human.
+    // CR-204: the changed line qty is recorded on the FG (badge + History) so
+    // the planner can apply it with one click.
     const wos = soId
       ? await byOrg(catalyst, orgId, "WorkOrder", `salesOrderId = ${zStr(String(soId))}`)
       : [];
+    const so = wos.length ? await require("../zoho/booksApi").getSalesOrder(catalyst, soId).catch(() => null) : null;
+    let qtyChanges = 0;
+    let newLines = 0;
     for (const wo of wos) {
       await logActivity(catalyst, orgId, "WorkOrder", wo.ROWID, "webhook.salesorder.changed", null, { soId });
+      if (so && !OPEN_WO.includes(String(wo.status))) {
+        const fgs = await byOrg(catalyst, orgId, "WorkOrderFG", `workOrderId = ${zStr(String(wo.ROWID))}`);
+        const soFields = require("./soFields");
+        qtyChanges += await soFields.syncSoQty(catalyst, orgId, wo, fgs, so);
+        // CR-250: lines Sales added after the WO was raised.
+        newLines += await soFields.syncSoLines(catalyst, orgId, wo, fgs, so);
+      }
     }
-    return { handled: kind, workOrdersFlagged: wos.length };
+    return { handled: kind, workOrdersFlagged: wos.length, qtyChanges, newLines };
   }
 
   return { handled: false, type: kind };

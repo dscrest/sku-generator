@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
 import Modal, { ModalFooter, ModalBtn, ConfirmModal } from '../components/Modal.jsx';
 import RowMenu from '../components/RowMenu.jsx';
-import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
+import GridFooter, { usePager, FilterSelect, SearchInput, matches, distinct } from '../components/GridFooter.jsx';
 import DataTable, { useGridColumns, ColumnChooser } from '../components/DataTable.jsx';
 
 const inputStyle = {
@@ -26,6 +26,7 @@ export default function IndustriesPage() {
   const [form, setForm] = useState({ name: '', skuSeparator: '' });
   const [sortCol, setSortCol] = useState('name');
   const [sortDir, setSortDir] = useState('asc');
+  const [q, setQ] = useState('');
   const [fName, setFName] = useState('');
   const [fSep, setFSep] = useState('');
   const [confirmDel, setConfirmDel] = useState(null);
@@ -41,7 +42,7 @@ export default function IndustriesPage() {
   useEffect(() => { load(); }, [load]);
 
   const filtered = industries.filter(i =>
-    (!fName || i.name === fName) && (!fSep || i.skuSeparator === fSep));
+    matches(q, i.name, i.skuSeparator) && (!fName || i.name === fName) && (!fSep || i.skuSeparator === fSep));
   const sorted = [...filtered].sort((a, b) => {
     const v = a[sortCol] < b[sortCol] ? -1 : a[sortCol] > b[sortCol] ? 1 : 0;
     return sortDir === 'asc' ? v : -v;
@@ -133,6 +134,7 @@ export default function IndustriesPage() {
             right={
               <div style={{ display: 'flex', gap: 8 }}>
                 <ColumnChooser chooser={chooser} />
+                <SearchInput value={q} onChange={setQ} placeholder="Search industries…" />
                 <FilterSelect label="names" value={fName} onChange={setFName} options={distinct(industries, 'name')} />
                 <FilterSelect label="separators" value={fSep} onChange={setFSep} options={distinct(industries, 'skuSeparator')} />
               </div>
@@ -152,7 +154,7 @@ export default function IndustriesPage() {
       <GridFooter pager={pager} />
 
       {showAdd && (
-        <Modal title="Add Industry" onClose={() => setShowAdd(false)} onSubmit={handleAdd}>
+        <Modal title="New" onClose={() => setShowAdd(false)} onSubmit={handleAdd}>
           <div>
             <label style={labelStyle}>Name <span style={{ color: '#e11d48' }}>*</span></label>
             <input style={inputStyle} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Valve" autoFocus onFocus={focusIn} onBlur={focusOut} />
@@ -169,7 +171,7 @@ export default function IndustriesPage() {
       )}
 
       {showEdit && selected && (
-        <Modal title="Edit Industry" onClose={() => setShowEdit(false)} onSubmit={handleEdit}>
+        <Modal title="Edit" onClose={() => setShowEdit(false)} onSubmit={handleEdit}>
           <div>
             <label style={labelStyle}>Name <span style={{ color: '#e11d48' }}>*</span></label>
             <input style={inputStyle} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} autoFocus onFocus={focusIn} onBlur={focusOut} />

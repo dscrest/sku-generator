@@ -15,3 +15,9 @@ export function orderCols(columns, prefs) {
   const hidden = new Set(prefs?.hidden || []);
   return ordered.filter(c => c.lock || !hidden.has(c.key));
 }
+
+// Free-text grid search: true when any value contains q. Blank q matches everything.
+export function matches(q, ...values) {
+  const s = String(q || '').trim().toLowerCase();
+  return !s || values.some(v => String(v ?? '').toLowerCase().includes(s));
+}

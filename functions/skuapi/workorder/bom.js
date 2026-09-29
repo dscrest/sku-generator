@@ -266,9 +266,94 @@ async function balancesFor(catalyst, orgId, workOrderId, workOrderFgId) {
   return new Map(rows.map((r) => [String(r.componentItemId), r]));
 }
 
+/**
+ * Single-line item edit during production (CR-031; lifted from the route in
+ * CR-203 so defect replacement can reuse it). Internal to the work order only:
+ * never pushes to the Zoho composite item and never touches the Sales Order.
+ * A removed/replaced line with material already reserved or issued is kept at
+ * requiredQty 0 — the stock goes back to Main when the work order completes.
+ *
+ * op: { action: 'add'|'setQty'|'remove'|'replace', rmItemId?, qty?, item?: {id,name,sku,unit}, reason? }
+ * → { revision, note }
+ */
+async function applyLineOp(catalyst, orgId, wo, fg, op, userId) {
+  const action = String((op || {}).action || "");
+  const fgQty = n(fg.fgQty);
+  const current = await currentLines(catalyst, orgId, wo.ROWID, fg.ROWID);
+  const byItem = new Map(current.map((l) => [String(l.rmItemId), l]));
+  const balances = await balancesFor(catalyst, orgId, wo.ROWID, fg.ROWID);
+  const committed = (itemId) => {
+    const b = balances.get(String(itemId));
+    return b ? n(b.reservedQty) + n(b.issuedQty) - n(b.returnedQty) : 0;
+  };
+  const bad = (msg) => { const e = new Error(msg); e.status = 400; throw e; };
+  const label = (l) => `${l.rmName || l.rmItemId}${l.rmSku ? ` (${l.rmSku})` : ""}`;
+
+  const addEntry = (item, qty) => {
+    if (!item || !item.id) bad("Pick an item from Zoho Books");
+    if (byItem.has(String(item.id))) bad(`${item.name} is already on this BOM — edit its quantity instead`);
+    if (!(n(qty) > 0)) bad("Quantity must be greater than zero");
+    return {
+      diffStatus: "new", rmItemId: String(item.id), rmName: item.name || "", rmSku: item.sku || "",
+      uom: item.unit || "", perUnitQty: fgQty ? n(qty) / fgQty : n(qty), requiredQty: n(qty),
+      source: "manual", prevQty: null,
+    };
+  };
+  const dropEntry = (line) => committed(line.rmItemId) > 0
+    // Material already moved: keep the line at 0 so the grid still shows it and
+    // completion knows to send the stock back.
+    ? { ...line, rmItemId: String(line.rmItemId), diffStatus: "qtyChanged", prevQty: n(line.requiredQty), requiredQty: 0, perUnitQty: 0 }
+    : { ...line, rmItemId: String(line.rmItemId), diffStatus: "removed", prevQty: n(line.requiredQty), requiredQty: 0 };
+  const mustFind = (rmItemId) => {
+    const line = byItem.get(String(rmItemId || ""));
+    if (!line) bad("That item is not on this BOM");
+    return line;
+  };
+
+  const entries = [];
+  let note = "";
+  if (action === "add") {
+    const entry = addEntry(op.item, op.qty);
+    entries.push(entry);
+    note = `${label({ rmName: entry.rmName, rmSku: entry.rmSku })} added manually — not part of the composite item`;
+  } else if (action === "setQty") {
+    const line = mustFind(op.rmItemId);
+    const qty = n(op.qty);
+    if (qty < 0) bad("Quantity cannot be negative");
+    entries.push({
+      ...line, rmItemId: String(line.rmItemId), diffStatus: "qtyChanged",
+      prevQty: n(line.requiredQty), requiredQty: qty, perUnitQty: fgQty ? qty / fgQty : qty,
+    });
+    note = `${label(line)} quantity changed from ${n(line.requiredQty)} to ${qty}`;
+  } else if (action === "remove") {
+    const line = mustFind(op.rmItemId);
+    entries.push(dropEntry(line));
+    note = `${label(line)} removed`;
+  } else if (action === "replace") {
+    const line = mustFind(op.rmItemId);
+    const entry = addEntry(op.item, op.qty === undefined || op.qty === null ? n(line.requiredQty) : op.qty);
+    entries.push(dropEntry(line), entry);
+    note = `${label(line)} replaced by ${label({ rmName: entry.rmName, rmSku: entry.rmSku })}`;
+  } else {
+    bad("Unknown action — use add, setQty, remove or replace");
+  }
+  if (op.reason) note += ` — ${String(op.reason).trim()}`;
+
+  const summary = {
+    added: entries.filter((l) => l.diffStatus === "new").map((l) => ({ rmItemId: l.rmItemId, name: l.rmName, qty: l.requiredQty })),
+    removed: entries.filter((l) => l.diffStatus === "removed" || (l.diffStatus === "qtyChanged" && n(l.requiredQty) === 0))
+      .map((l) => ({ rmItemId: l.rmItemId, name: l.rmName, qty: n(l.prevQty) })),
+    changed: entries.filter((l) => l.diffStatus === "qtyChanged" && n(l.requiredQty) > 0)
+      .map((l) => ({ rmItemId: l.rmItemId, name: l.rmName, from: n(l.prevQty), to: n(l.requiredQty) })),
+    note,
+  };
+  const applied = await applyBom(catalyst, orgId, wo, fg, entries, summary, userId);
+  return { revision: applied.revision, note };
+}
+
 module.exports = {
   CACHE_TTL_MS, refreshComposite, getComposite, linesFromComposite, itemSize, selfLine, requirementLines, matchUpload,
-  diffBom, guardAgainstCommitted, currentLines, applyBom, balancesFor, safeParse, inList,
+  diffBom, guardAgainstCommitted, currentLines, applyBom, applyLineOp, balancesFor, safeParse, inList,
 };
 
 // ponytail self-check: `node functions/skuapi/workorder/bom.js --selftest`

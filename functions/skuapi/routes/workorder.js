@@ -16,21 +16,23 @@ const {
 } = require("../zoho/booksApi");
 const { getUserById, requireAdmin } = require("../session");
 const { assertAction } = require("../perms");
+const { isService, updateCompositeItem, listCompositeItems, createCompositeItem } = require("../zoho/inventoryApi");
 const {
-  isService, updateCompositeItem, listCompositeItems, createCompositeItem,
-  getItemStock, listSerialsBatches, pickSerialsBatches, withBatchFallback,
-} = require("../zoho/inventoryApi");
-const {
-  SETTING_KEYS, settings, setSetting, nextNumber, logActivity, byOrg, inList, creatableSalesOrders, requiredLevelsMet, approvalLevelCount, routeFor,
+  SETTING_KEYS, settings, setSetting, nextNumber, logActivity, byOrg, inList, creatableSalesOrders, requiredLevelsMet, approvalLevelCount, warehouses, mainChanged, needsMainPick,
 } = require("../workorder/store");
 const bom = require("../workorder/bom");
+const quoteBom = require("../workorder/quoteBom");
 const { buildGrid, buildGridsBulk } = require("../workorder/grid");
 const txn = require("../workorder/txn");
 const purchase = require("../workorder/purchase");
 const reports = require("../workorder/reports");
 const { warehouseOptions, reconcileOrg, syncItem } = require("../workorder/sync");
 const assembly = require("../workorder/assembly");
-const { soFields, woHeaderFields, USER_OWNED, soWoStamp } = require("../workorder/soFields");
+const defects = require("../workorder/defects");
+const {
+  soFields, woHeaderFields, USER_OWNED, soWoStamp, syncSoQty, soQtyPending, soQtyChange,
+  parseSoLines, soNewLines, soLinesJson, syncSoLines,
+} = require("../workorder/soFields");
 // Status lifecycle lives in workorder/status.js (CR-159).
 const { DONE, EDIT_LOCKED, DATE_GATE, nextStatuses, prevStatuses } = require("../workorder/status");
 
@@ -56,6 +58,16 @@ async function loadWo(req) {
   const rows = await byOrg(req.catalyst, req.orgId, "WorkOrder", `ROWID = ${zStr(req.params.id)}`);
   if (!rows.length) { const e = new Error("Work order not found"); e.status = 404; throw e; }
   return rows[0];
+}
+
+// One FG of this work order, or 404.
+async function loadFg(req, wo, fgId) {
+  const fgs = idOk(fgId) ? await byOrg(
+    req.catalyst, req.orgId, "WorkOrderFG",
+    `ROWID = ${zStr(String(fgId))} AND workOrderId = ${zStr(String(wo.ROWID))}`,
+  ) : [];
+  if (!fgs.length) { const e = new Error("Finished good not found on this work order"); e.status = 404; throw e; }
+  return fgs[0];
 }
 
 // Items are editable until production is done (CR-031).
@@ -87,6 +99,23 @@ router.put("/settings", ok(async (req, res) => {
   }
   await logActivity(req.catalyst, req.orgId, "OrgSetting", req.orgId, "settings.update", req.userId, { saved });
   res.json({ ok: true, saved });
+}));
+
+// Warehouse list + org Main for the per-WO Main picker. Separate from
+// /settings so a WO user without wo.settings still gets the picker (CR-259).
+router.get("/warehouses", ok(async (req, res) => {
+  const values = await settings(req.catalyst, req.orgId);
+  let list = [];
+  let warehouseError = null;
+  try { list = await warehouseOptions(req.catalyst); } catch (err) { warehouseError = err.message; }
+  res.json({
+    warehouses: list,
+    orgMain: values.mainWarehouseId || "",
+    // CR-260: the org picks the Main on every WO; Reserve / Issue are never a Main.
+    pickMain: values.pickMainPerWo === "true",
+    notMain: [values.reserveWarehouseId, values.issueWarehouseId].filter(Boolean).map(String),
+    warehouseError,
+  });
 }));
 
 // ---- Zoho pickers (the only live reads outside a refresh) ------------------
@@ -125,6 +154,8 @@ router.get("/next-number", ok(async (req, res) => {
 router.get("/so/:soId", ok(async (req, res) => {
   const so = await getSalesOrder(req.catalyst, req.params.soId);
   const f = soFields(so);
+  // The quote each valve was configured on; a failed lookup never blocks the form.
+  const configs = await quoteBom.configsForSo(req.catalyst, req.orgId, so).catch(() => new Map());
   res.json({
     id: String(so.salesorder_id),
     number: so.salesorder_number,
@@ -135,10 +166,20 @@ router.get("/so/:soId", ok(async (req, res) => {
     lineItems: (so.line_items || []).map((l) => ({
       itemId: String(l.item_id), name: l.name, sku: l.sku || null, quantity: n(l.quantity),
       productType: l.product_type || null,
+      config: quoteBom.display(configs.get(String(l.line_item_id))),
     })),
     // Create-page prefill: due date = SO Expected Shipment (read-only, CR-159); priority editable.
     dueDate: f.dueDate || null,
     priority: f.woPriority || null,
+    // Read-only SO header fields for the create / edit page (CR-252) — same names as GET /wo/:id.
+    soDate: f.soDate || null,
+    shipmentDate: f.shipmentDate || null,
+    buyerOrderNo: f.buyerOrderNo || null,
+    buyerOrderDate: f.buyerOrderDate || null,
+    freightCharge: f.freightCharge || null,
+    delivery: f.delivery || null,
+    booking: f.booking || null,
+    transporter: f.transporter || null,
   });
 }));
 
@@ -155,37 +196,58 @@ router.get("/items", ok(async (req, res) => {
   })));
 }));
 
+// ---- Store issues: defective material (CR-203). Static paths — above /:id.
+
+// Photo of the defect, raw image body (the global JSON parser ignores image/*).
+router.post("/defects/photo", express.raw({ type: "image/*", limit: "6mb" }), ok(async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || !req.body.length) { const e = new Error("Send the image as the request body with its image/* content type"); e.status = 400; throw e; }
+  res.json(await defects.savePhoto(req.catalyst, req.body, req.get("content-type") || "image/jpeg"));
+}));
+
+router.get("/defects", ok(async (req, res) => {
+  res.json(await defects.list(req.catalyst, req.orgId, req.query.status ? String(req.query.status) : null));
+}));
+
+router.get("/defects/:id/photo", ok(async (req, res) => {
+  if (!idOk(req.params.id)) { const e = new Error("Not found"); e.status = 404; throw e; }
+  const { stream, type } = await defects.photoStream(req.catalyst, req.orgId, req.params.id);
+  res.type(type);
+  res.set("Cache-Control", "private, max-age=3600");
+  stream.on("error", (err) => { console.error("defect photo stream:", err && err.message); res.end(); });
+  stream.pipe(res);
+}));
+
+// Store Issue Manager decision: { action: repaired | adjusted | returned_to_vendor, reason }.
+// CR-244: the manager's replacement decision — what can be reserved now for the
+// chosen item (+ picker pool), then the reserve/issue/PR legs.
+router.get("/defects/:id/replacement-options", ok(async (req, res) => {
+  if (!idOk(req.params.id)) { const e = new Error("Defect not found"); e.status = 404; throw e; }
+  res.json(await defects.replacementOptions(req.catalyst, req.orgId, req.params.id, req.query.itemId));
+}));
+router.post("/defects/:id/replace", ok(async (req, res) => {
+  if (!idOk(req.params.id)) { const e = new Error("Defect not found"); e.status = 404; throw e; }
+  res.json(await defects.replace(req.catalyst, req.orgId, req.params.id, req.body || {}, req.userId));
+}));
+
+router.post("/defects/:id/action", ok(async (req, res) => {
+  if (!idOk(req.params.id)) { const e = new Error("Defect not found"); e.status = 404; throw e; }
+  res.json(await defects.action(req.catalyst, req.orgId, req.params.id, req.body || {}, req.userId));
+}));
+
 // Serial/batch pool + FIFO prefill for the picker dialog (CR-121). The source
 // warehouse comes from the movement type's route, so de-reserve/issue offer
 // what sits in Reserve and return offers what sits in Issue — or is given
 // outright (assembly passes the Issue warehouse, CR-176). Static path — must
 // stay above /:id.
 router.get("/tracking-options", ok(async (req, res) => {
-  const { itemId, type } = req.query;
-  const qty = n(req.query.qty);
-  if (!itemId || !(type || req.query.fromWarehouseId)) {
+  const { itemId, type, fromWarehouseId, qty, woId } = req.query;
+  if (!itemId || !(type || fromWarehouseId)) {
     const e = new Error("itemId and type (or fromWarehouseId) are required"); e.status = 400; throw e;
   }
-  const fromWarehouseId = req.query.fromWarehouseId
-    ? String(req.query.fromWarehouseId)
-    : (await routeFor(req.catalyst, req.orgId, String(type))).fromWarehouseId;
-  const item = await withBatchFallback(
-    req.catalyst, await getItemStock(req.catalyst, String(itemId)), String(itemId), fromWarehouseId,
-  );
-  const pool = listSerialsBatches(item, fromWarehouseId);
-  if (!pool.tracking) return res.json({ tracking: null });
-  // FIFO prefill — same picks the silent auto-pick would make; short stock is
-  // not an error here (the picker shows what exists, confirm re-validates).
-  let prefill = null;
-  try { prefill = qty > 0 ? pickSerialsBatches(item, fromWarehouseId, qty) : null; } catch { /* short */ }
-  res.json({
-    ...pool,
-    prefill: prefill
-      ? (prefill.serial_numbers
-        ? { serials: prefill.serial_numbers }
-        : { batches: (prefill.batches || []).map((b) => ({ batch_id: b.batch_id, batch_number: b.batch_number, qty: b.quantity_transfer })) })
-      : null,
-  });
+  // The WO's own Main warehouse routes the pool when it has one (CR-249).
+  const wo = idOk(woId) ? (await byOrg(req.catalyst, req.orgId, "WorkOrder", `ROWID = ${zStr(String(woId))}`))[0] : null;
+  // Pool + defective block + FIFO prefill live in txn.trackingPool (CR-244).
+  res.json(await txn.trackingPool(req.catalyst, req.orgId, { itemId, type, fromWarehouseId, qty, wo }));
 }));
 
 // ---- composite-item BOM (CR-028) ------------------------------------------
@@ -526,6 +588,11 @@ router.get("/", ok(async (req, res) => {
     qcStatus: w.qcStatus || null,
     revision: n(w.revision),
     bomImportedAt: w.bomImportedAt || null,
+    // Red ▲/▼ (CR-204/245): Sales changed an SO line qty that nobody has applied/dismissed yet.
+    soQtyChanged: fgs.some((f) => String(f.workOrderId) === String(w.ROWID) && soQtyPending(f)),
+    soQtyChange: soQtyChange(fgs.filter((f) => String(f.workOrderId) === String(w.ROWID))),
+    // Red ＋ (CR-250): Sales added an SO line nobody has added/dismissed yet — first one, for the tooltip.
+    soNewLine: (parseSoLines(w) || { pending: [] }).pending[0] || null,
     fgs: fgs.filter((f) => String(f.workOrderId) === String(w.ROWID))
       .map((f) => ({ id: String(f.ROWID), name: f.fgName, qty: n(f.fgQty) })),
   })));
@@ -543,8 +610,14 @@ router.post("/", ok(async (req, res) => {
     e.status = 400;
     throw e;
   }
-  const so = await getSalesOrder(req.catalyst, salesOrderId);
+  // Settings first: a missing Main pick is refused before the Books call (CR-260).
   const s = await settings(req.catalyst, req.orgId);
+  if (needsMainPick(s, req.body.mainWarehouseId)) {
+    const e = new Error("Select the Main warehouse for this work order");
+    e.status = 400;
+    throw e;
+  }
+  const so = await getSalesOrder(req.catalyst, salesOrderId);
   const woNumber = await nextNumber(req.catalyst, req.orgId, "WorkOrder", "woNumber", s.woNumberPrefix);
 
   const wo = await req.catalyst.datastore().table("WorkOrder").insertRow({
@@ -561,10 +634,14 @@ router.post("/", ok(async (req, res) => {
     bomImportedAt: null,
     notes: String(notes || ""),
     tcRequired: String(req.body.tcRequired || ""),
+    // Per-WO Main warehouse (CR-249); blank = the org setting.
+    mainWarehouseId: String(req.body.mainWarehouseId || ""),
+    // CR-250: every SO line counts as seen at create — only lines Sales adds
+    // later show up as "new" on the work order.
+    soLinesJson: soLinesJson(soNewLines([], so, null)),
     ...woHeaderFields(so, req.body),
   });
 
-  const fgTable = req.catalyst.datastore().table("WorkOrderFG");
   const seeded = [];
   const problems = [];
   // SO carries its active WO (CR-173); a Books failure is reported, never blocks.
@@ -573,52 +650,116 @@ router.post("/", ok(async (req, res) => {
   } catch (err) {
     problems.push(`Sales order not updated with the WO number (${err.message})`);
   }
+  const configs = await soConfigs(req, so, problems);
   for (const pick of fgLines) {
     const line = (so.line_items || []).find((l) => String(l.item_id) === String(pick.itemId));
     if (!line) { problems.push(`Item ${pick.itemId} is not on ${so.salesorder_number}`); continue; }
     if (isService(line)) { problems.push(`${line.name}: service item — not a finished good`); continue; }
-    const fgQty = n(pick.qty) || n(line.quantity);
-    // The Books item detail carries the "Size" custom field (list omits CFs) — one call per FG (CR-159).
-    const item = await getItem(req.catalyst, line.item_id).catch(() => null);
-    const fg = await fgTable.insertRow({
-      orgId: String(req.orgId),
-      workOrderId: String(wo.ROWID),
-      fgItemId: String(line.item_id),
-      fgName: line.name || "",
-      fgSku: line.sku || "",
-      fgSize: bom.itemSize(item),
-      fgQty,
-    });
-    try {
-      const comp = await bom.getComposite(req.catalyst, req.orgId, line.item_id, true);
-      // No material components → the item itself is the one line (CR-159).
-      const lines = bom.requirementLines(comp, line, fgQty);
-      const diff = bom.diffBom([], lines);
-      await bom.applyBom(req.catalyst, req.orgId, { ...wo, revision: 0 }, fg, diff.lines, diff.summary, req.userId);
-      seeded.push({ fgId: String(fg.ROWID), name: line.name, lines: lines.length });
-    } catch (err) {
-      // Zoho answered with a code (anything but 57 = auth) → the SO line is a
-      // plain item, not a composite. It IS the material: seed a one-line BOM of
-      // itself so it shows on the Details grid and reserves like any RM (CR-152).
-      if (err.zohoCode && err.zohoCode !== 57) {
-        try {
-          const diff = bom.diffBom([], [bom.selfLine(line, fgQty)]);
-          await bom.applyBom(req.catalyst, req.orgId, { ...wo, revision: 0 }, fg, diff.lines, diff.summary, req.userId);
-          seeded.push({ fgId: String(fg.ROWID), name: line.name, lines: 1 });
-          continue;
-        } catch (err2) {
-          problems.push(`${line.name}: BOM not seeded (${err2.message})`);
-          continue;
-        }
-      }
-      // Zoho unreachable/unauthorised — the FG stays on the work order with an
-      // empty BOM so the user can upload one instead.
-      problems.push(`${line.name}: BOM not seeded (${err.message})`);
-    }
+    await seedFg(req, wo, line, n(pick.qty) || n(line.quantity), seeded, problems, configs.get(String(line.line_item_id)));
   }
 
   await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.create", req.userId, { woNumber, seeded });
   res.status(201).json({ id: String(wo.ROWID), woNumber, status: "Draft", seeded, problems });
+}));
+
+// Quote configurations of an SO's lines; a failed lookup is reported, never blocks.
+async function soConfigs(req, so, problems) {
+  try {
+    return await quoteBom.configsForSo(req.catalyst, req.orgId, so);
+  } catch (err) {
+    problems.push(`Quote configuration not read (${err.message})`);
+    return new Map();
+  }
+}
+
+// One finished good from one SO line: the FG row + its BOM seeded from the
+// composite — or, for a valve configured on a quote, from that quote's answers
+// (CR-261: real items per MOC; the composite holds placeholders). Shared by create and
+// the CR-250 "SO has a new line → Add".
+async function seedFg(req, wo, line, fgQty, seeded, problems, config) {
+  // The Books item detail carries the "Size" custom field (list omits CFs) — one call per FG (CR-159).
+  const item = await getItem(req.catalyst, line.item_id).catch(() => null);
+  const fg = await req.catalyst.datastore().table("WorkOrderFG").insertRow({
+    orgId: String(req.orgId),
+    workOrderId: String(wo.ROWID),
+    fgItemId: String(line.item_id),
+    fgName: line.name || "",
+    fgSku: line.sku || "",
+    fgSize: bom.itemSize(item),
+    fgQty,
+    // CR-204: remember which SO line and what qty it carried, so a later
+    // Sales edit is detected; the create-time qty counts as acknowledged.
+    soLineItemId: String(line.line_item_id || ""),
+    soQty: n(line.quantity),
+    soAckQty: n(line.quantity),
+    configJson: config ? JSON.stringify(config) : "",
+  });
+  if (config) {
+    try {
+      const r = await quoteBom.linesFor(req.catalyst, config, fgQty);
+      problems.push(...r.problems.map((p) => `${line.name}: ${p}`));
+      if (r.lines.length) {
+        const diff = bom.diffBom([], r.lines);
+        await bom.applyBom(req.catalyst, req.orgId, wo, fg, diff.lines, { ...diff.summary, note: quoteBom.note(config) }, req.userId);
+        seeded.push({ fgId: String(fg.ROWID), name: line.name, lines: r.lines.length, source: "quote" });
+        return fg;
+      }
+      problems.push(`${line.name}: no items mapped for this configuration — BOM taken from the Books composite`);
+    } catch (err) {
+      problems.push(`${line.name}: quote configuration not used (${err.message})`);
+    }
+  }
+  try {
+    const comp = await bom.getComposite(req.catalyst, req.orgId, line.item_id, true);
+    // No material components → the item itself is the one line (CR-159).
+    const lines = bom.requirementLines(comp, line, fgQty);
+    const diff = bom.diffBom([], lines);
+    await bom.applyBom(req.catalyst, req.orgId, wo, fg, diff.lines, diff.summary, req.userId);
+    seeded.push({ fgId: String(fg.ROWID), name: line.name, lines: lines.length });
+  } catch (err) {
+    // Zoho answered with a code (anything but 57 = auth) → the SO line is a
+    // plain item, not a composite. It IS the material: seed a one-line BOM of
+    // itself so it shows on the Details grid and reserves like any RM (CR-152).
+    if (err.zohoCode && err.zohoCode !== 57) {
+      try {
+        const diff = bom.diffBom([], [bom.selfLine(line, fgQty)]);
+        await bom.applyBom(req.catalyst, req.orgId, wo, fg, diff.lines, diff.summary, req.userId);
+        seeded.push({ fgId: String(fg.ROWID), name: line.name, lines: 1 });
+      } catch (err2) {
+        problems.push(`${line.name}: BOM not seeded (${err2.message})`);
+      }
+      return fg;
+    }
+    // Zoho unreachable/unauthorised — the FG stays on the work order with an
+    // empty BOM so the user can upload one instead.
+    problems.push(`${line.name}: BOM not seeded (${err.message})`);
+  }
+  return fg;
+}
+
+// CR-250: a line Sales added to the SO after the WO was raised. `{ lineItemId }`
+// adds it as a finished good (BOM seeded exactly like create, one BomRevision);
+// `{ lineItemId, ack: true }` dismisses it. Either way the line leaves `pending`.
+router.post("/:id/so-line", ok(async (req, res) => {
+  const wo = await loadWo(req);
+  assertEditable(wo);
+  const { lineItemId, ack, qty } = req.body || {};
+  const state = parseSoLines(wo) || { seen: [], pending: [] };
+  const p = state.pending.find((x) => String(x.lineItemId) === String(lineItemId));
+  if (!p) { const e = new Error("That sales order line is no longer pending on this work order"); e.status = 404; throw e; }
+  const seeded = [];
+  const problems = [];
+  if (!ack) {
+    const so = await getSalesOrder(req.catalyst, wo.salesOrderId);
+    const line = (so.line_items || []).find((l) => String(l.line_item_id) === String(lineItemId));
+    if (!line) { const e = new Error(`${p.name} is no longer on ${wo.salesOrderNumber}`); e.status = 409; throw e; }
+    const configs = await soConfigs(req, so, problems);
+    await seedFg(req, wo, line, n(qty) || n(line.quantity), seeded, problems, configs.get(String(line.line_item_id)));
+  }
+  const next = { seen: [...new Set([...state.seen.map(String), String(lineItemId)])].sort(), pending: state.pending.filter((x) => x !== p) };
+  await req.catalyst.datastore().table("WorkOrder").updateRow({ ROWID: String(wo.ROWID), soLinesJson: soLinesJson(next) });
+  await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, ack ? "so.line.dismissed" : "wo.fg.added", req.userId, { ...p, seeded });
+  res.json({ ok: true, seeded, problems });
 }));
 
 router.get("/:id", ok(async (req, res) => {
@@ -657,6 +798,11 @@ router.get("/:id", ok(async (req, res) => {
     }
   }
   req.catalyst.datastore().table("WorkOrder").updateRow(patch).catch(() => {});
+  // SO line quantities (CR-204) + new SO lines (CR-250): a Sales edit is recorded here + History.
+  if (so && String(wo.status) !== "Cancelled") {
+    await syncSoQty(req.catalyst, req.orgId, wo, fgs, so);
+    await syncSoLines(req.catalyst, req.orgId, wo, fgs, so);
+  }
   // FGs created before CR-159 have no Size yet: fetch once per FG (sequential —
   // Dev concurrency cap), store "" when the item has none so it never re-fetches.
   for (const f of fgs) {
@@ -685,6 +831,7 @@ router.get("/:id", ok(async (req, res) => {
     booking: wo.booking || null,
     transporter: wo.transporter || null,
     tcRequired: wo.tcRequired || null,
+    mainWarehouseId: wo.mainWarehouseId || null,
     status: wo.status,
     heldFrom: wo.heldFrom || null,
     // Stage completion dates, captured by the status transition (CR-160).
@@ -698,9 +845,15 @@ router.get("/:id", ok(async (req, res) => {
     nextStatuses: nextStatuses(wo),
     // Subset of nextStatuses that steps back a stage (CR-171) — the menu shows these as "←".
     prevStatuses: prevStatuses(wo),
+    // CR-250: SO lines Sales added after create, awaiting Add / Dismiss on Details.
+    soNewLines: (parseSoLines(wo) || { pending: [] }).pending,
     fgs: fgs.map((f) => ({
       id: String(f.ROWID), fgItemId: String(f.fgItemId), name: f.fgName, sku: f.fgSku || null, qty: n(f.fgQty),
       size: f.fgSize || null,
+      config: quoteBom.display(quoteBom.fgConfig(f)),
+      // CR-204: SO line qty as last seen + whether it awaits Apply / Dismiss.
+      soQty: f.soQty === null || f.soQty === undefined || f.soQty === "" ? null : n(f.soQty),
+      soQtyChanged: soQtyPending(f),
       // Assembly progress (CR-126): Closed once assembledQty covers fgQty.
       assembledQty: n(f.assembledQty),
       status: f.status || null,
@@ -719,8 +872,23 @@ router.get("/:id", ok(async (req, res) => {
 router.put("/:id", ok(async (req, res) => {
   const wo = await loadWo(req);
   const fields = { ROWID: String(wo.ROWID) };
-  for (const k of ["notes", "woDate", "tcRequired"]) if (req.body[k] !== undefined) fields[k] = req.body[k] || "";
+  // Machining / Fitting dates are set by the stage gates (CR-160) but editable
+  // here too (CR-251): an SO qty / line change can move them.
+  for (const k of ["notes", "woDate", "tcRequired", "machiningDoneDate", "fittingDoneDate"]) if (req.body[k] !== undefined) fields[k] = req.body[k] || "";
   if (req.body.priority !== undefined) fields.woPriority = req.body.priority || "";
+  // Main warehouse can change only while nothing sits in Reserve / Issue —
+  // those balances were pulled from the old Main (CR-249). Compared on the
+  // effective warehouse: the form pre-fills a blank WO with the org Main (CR-259).
+  if (req.body.mainWarehouseId !== undefined
+    && mainChanged(wo, req.body.mainWarehouseId, (await settings(req.catalyst, req.orgId)).mainWarehouseId)) {
+    const resLines = await byOrg(req.catalyst, req.orgId, "ReservationLine", `workOrderId = ${zStr(String(wo.ROWID))}`);
+    if (resLines.some((l) => n(l.reservedQty) > 0 || n(l.issuedQty) - n(l.returnedQty) > 0)) {
+      const e = new Error(`${wo.woNumber} has reserved or issued material — return / de-reserve it before changing the Main warehouse`);
+      e.status = 409;
+      throw e;
+    }
+    fields.mainWarehouseId = String(req.body.mainWarehouseId || "");
+  }
   await req.catalyst.datastore().table("WorkOrder").updateRow(fields);
   await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.update", req.userId, fields);
   res.json({ ok: true });
@@ -977,6 +1145,7 @@ router.post("/:id/bom/preview", ok(async (req, res) => {
 
   let incoming;
   let unmatched = [];
+  let problems = [];
   if (source === "excel") {
     const comp = await bom.getComposite(req.catalyst, req.orgId, fg.fgItemId, false);
     // Known items = the composite's own components plus whatever is already on
@@ -989,9 +1158,18 @@ router.post("/:id/bom/preview", ok(async (req, res) => {
     incoming = matched.lines;
     unmatched = matched.unmatched;
   } else {
-    const comp = await bom.getComposite(req.catalyst, req.orgId, fg.fgItemId, true);
-    // Empty composite → the FG itself (CR-159); Refresh BOM heals WOs seeded before the fix.
-    incoming = bom.requirementLines(comp, { item_id: fg.fgItemId, name: fg.fgName, sku: fg.fgSku }, n(fg.fgQty));
+    // A configured valve refreshes from its quote answers — the composite's
+    // placeholders must never replace the real items.
+    const config = quoteBom.fgConfig(fg);
+    const fromQuote = config ? (await quoteBom.linesFor(req.catalyst, config, n(fg.fgQty))) : null;
+    if (fromQuote && fromQuote.lines.length) {
+      incoming = fromQuote.lines;
+      problems = fromQuote.problems;
+    } else {
+      const comp = await bom.getComposite(req.catalyst, req.orgId, fg.fgItemId, true);
+      // Empty composite → the FG itself (CR-159); Refresh BOM heals WOs seeded before the fix.
+      incoming = bom.requirementLines(comp, { item_id: fg.fgItemId, name: fg.fgName, sku: fg.fgSku }, n(fg.fgQty));
+    }
   }
 
   const diff = bom.diffBom(current.map((l) => ({ ...l, rmItemId: String(l.rmItemId) })), incoming);
@@ -1001,9 +1179,10 @@ router.post("/:id/bom/preview", ok(async (req, res) => {
   );
   res.json({
     fgId: String(fg.ROWID),
-    source: source === "excel" ? "excel" : "composite",
+    source: source === "excel" ? "excel" : (incoming.some((l) => l.source === "quote") ? "quote" : "composite"),
     ...diff,
     unmatched,
+    problems,
     blocked: bom.guardAgainstCommitted(diff.lines, balances),
   });
 }));
@@ -1030,9 +1209,10 @@ router.post("/:id/bom/apply", ok(async (req, res) => {
   const applied = await bom.applyBom(req.catalyst, req.orgId, wo, fg, lines, summary, req.userId);
 
   // Zoho stays the master: an accepted revision is pushed back to the composite
-  // item unless the user opted out.
+  // item unless the user opted out. A configured valve's composite is shared by
+  // every MOC — one order's items are never written into it.
   let pushed = false;
-  if (pushToZoho !== false) {
+  if (pushToZoho !== false && !quoteBom.fgConfig(fg)) {
     try {
       const keep = lines.filter((l) => l.diffStatus !== "removed");
       await updateCompositeItem(req.catalyst, fg.fgItemId, keep);
@@ -1059,84 +1239,68 @@ router.post("/:id/lines", ok(async (req, res) => {
   const wo = await loadWo(req);
   assertEditable(wo);
   const { fgId, op } = req.body || {};
-  const action = String((op || {}).action || "");
-  const fgs = await byOrg(
-    req.catalyst, req.orgId, "WorkOrderFG",
-    `ROWID = ${zStr(String(fgId))} AND workOrderId = ${zStr(String(wo.ROWID))}`,
-  );
-  if (!fgs.length) { const e = new Error("Finished good not found on this work order"); e.status = 404; throw e; }
-  const fg = fgs[0];
-  const fgQty = n(fg.fgQty);
-  const current = await bom.currentLines(req.catalyst, req.orgId, wo.ROWID, fg.ROWID);
-  const byItem = new Map(current.map((l) => [String(l.rmItemId), l]));
-  const balances = await bom.balancesFor(req.catalyst, req.orgId, wo.ROWID, fg.ROWID);
-  const committed = (itemId) => {
-    const b = balances.get(String(itemId));
-    return b ? n(b.reservedQty) + n(b.issuedQty) - n(b.returnedQty) : 0;
-  };
-  const bad = (msg) => { const e = new Error(msg); e.status = 400; throw e; };
-  const label = (l) => `${l.rmName || l.rmItemId}${l.rmSku ? ` (${l.rmSku})` : ""}`;
+  const fg = await loadFg(req, wo, fgId);
+  // The op itself lives in bom.applyLineOp (CR-203 shares it with defect replacement).
+  res.json(await bom.applyLineOp(req.catalyst, req.orgId, wo, fg, op || {}, req.userId));
+}));
 
-  const addEntry = (item, qty) => {
-    if (!item || !item.id) bad("Pick an item from Zoho Books");
-    if (byItem.has(String(item.id))) bad(`${item.name} is already on this BOM — edit its quantity instead`);
-    if (!(n(qty) > 0)) bad("Quantity must be greater than zero");
-    return {
-      diffStatus: "new", rmItemId: String(item.id), rmName: item.name || "", rmSku: item.sku || "",
-      uom: item.unit || "", perUnitQty: fgQty ? n(qty) / fgQty : n(qty), requiredQty: n(qty),
-      source: "manual", prevQty: null,
-    };
-  };
-  const dropEntry = (line) => committed(line.rmItemId) > 0
-    // Material already moved: keep the line at 0 so the grid still shows it and
-    // completion knows to send the stock back.
-    ? { ...line, rmItemId: String(line.rmItemId), diffStatus: "qtyChanged", prevQty: n(line.requiredQty), requiredQty: 0, perUnitQty: 0 }
-    : { ...line, rmItemId: String(line.rmItemId), diffStatus: "removed", prevQty: n(line.requiredQty), requiredQty: 0 };
-  const mustFind = (rmItemId) => {
-    const line = byItem.get(String(rmItemId || ""));
-    if (!line) bad("That item is not on this BOM");
-    return line;
-  };
+/**
+ * Replace defective material (CR-203): the units go back to Main via a
+ * `return` transaction, a DefectReturn row blocks them from reuse, and a
+ * different replacement item (optional, per line) is swapped onto the BOM.
+ * Body: { fgId, lines:[{ itemId, qty, tracking?, replacement? }], reason, photoFileId?, photoType? }
+ */
+router.post("/:id/replace", ok(async (req, res) => {
+  await assertAction(req.catalyst, req.orgId, req.userId, "wo.action.return");
+  const wo = await loadWo(req);
+  assertEditable(wo);
+  const { fgId, lines, reason, photoFileId, photoType } = req.body || {};
+  const fg = await loadFg(req, wo, fgId);
+  res.json(await defects.raise(req.catalyst, req.orgId, { wo, fg, lines, reason, photoFileId, photoType }, req.userId));
+}));
 
-  const entries = [];
-  let note = "";
-  if (action === "add") {
-    const entry = addEntry(op.item, op.qty);
-    entries.push(entry);
-    note = `${label({ rmName: entry.rmName, rmSku: entry.rmSku })} added manually — not part of the composite item`;
-  } else if (action === "setQty") {
-    const line = mustFind(op.rmItemId);
-    const qty = n(op.qty);
-    if (qty < 0) bad("Quantity cannot be negative");
-    entries.push({
-      ...line, rmItemId: String(line.rmItemId), diffStatus: "qtyChanged",
-      prevQty: n(line.requiredQty), requiredQty: qty, perUnitQty: fgQty ? qty / fgQty : qty,
-    });
-    note = `${label(line)} quantity changed from ${n(line.requiredQty)} to ${qty}`;
-  } else if (action === "remove") {
-    const line = mustFind(op.rmItemId);
-    entries.push(dropEntry(line));
-    note = `${label(line)} removed`;
-  } else if (action === "replace") {
-    const line = mustFind(op.rmItemId);
-    const entry = addEntry(op.item, op.qty === undefined || op.qty === null ? n(line.requiredQty) : op.qty);
-    entries.push(dropEntry(line), entry);
-    note = `${label(line)} replaced by ${label({ rmName: entry.rmName, rmSku: entry.rmSku })}`;
-  } else {
-    bad("Unknown action — use add, setQty, remove or replace");
+/**
+ * Apply (or dismiss) a Sales Order quantity change (CR-204).
+ * { qty } → every BOM line rescales by its stored perUnitQty (manual/excel
+ * lines survive; no Zoho call), guarded against committed stock, one
+ * BomRevision; fgQty + the acknowledged SO qty are updated.
+ * { ack: true } → only acknowledge the SO qty (badge clears, nothing rescales).
+ */
+router.post("/:id/fg/:fgId/qty", ok(async (req, res) => {
+  const wo = await loadWo(req);
+  assertEditable(wo);
+  const fg = await loadFg(req, wo, req.params.fgId);
+  const fgTable = req.catalyst.datastore().table("WorkOrderFG");
+  const soQty = fg.soQty === null || fg.soQty === undefined || fg.soQty === "" ? null : n(fg.soQty);
+  if ((req.body || {}).ack) {
+    await fgTable.updateRow({ ROWID: String(fg.ROWID), soAckQty: soQty === null ? n(fg.fgQty) : soQty });
+    await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "so.qty.dismissed", req.userId, { fgId: String(fg.ROWID), fgName: fg.fgName, soQty, fgQty: n(fg.fgQty) });
+    return res.json({ ok: true, fgQty: n(fg.fgQty) });
   }
-  if (op.reason) note += ` — ${String(op.reason).trim()}`;
-
-  const summary = {
-    added: entries.filter((l) => l.diffStatus === "new").map((l) => ({ rmItemId: l.rmItemId, name: l.rmName, qty: l.requiredQty })),
-    removed: entries.filter((l) => l.diffStatus === "removed" || (l.diffStatus === "qtyChanged" && n(l.requiredQty) === 0))
-      .map((l) => ({ rmItemId: l.rmItemId, name: l.rmName, qty: n(l.prevQty) })),
-    changed: entries.filter((l) => l.diffStatus === "qtyChanged" && n(l.requiredQty) > 0)
-      .map((l) => ({ rmItemId: l.rmItemId, name: l.rmName, from: n(l.prevQty), to: n(l.requiredQty) })),
-    note,
-  };
-  const applied = await bom.applyBom(req.catalyst, req.orgId, wo, fg, entries, summary, req.userId);
-  res.json({ revision: applied.revision, note });
+  const qty = n((req.body || {}).qty);
+  if (!(qty > 0)) { const e = new Error("Quantity must be greater than zero"); e.status = 400; throw e; }
+  const from = n(fg.fgQty);
+  const current = await bom.currentLines(req.catalyst, req.orgId, wo.ROWID, fg.ROWID);
+  const incoming = current.map((l) => ({
+    ...l, rmItemId: String(l.rmItemId),
+    // Lines removed during production sit at 0 (CR-031) — they stay at 0.
+    requiredQty: n(l.requiredQty) > 0 ? n(l.perUnitQty) * qty : 0,
+  }));
+  const diff = bom.diffBom(current.map((l) => ({ ...l, rmItemId: String(l.rmItemId) })), incoming);
+  const balances = await byOrg(
+    req.catalyst, req.orgId, "ReservationLine",
+    `workOrderId = ${zStr(String(wo.ROWID))} AND workOrderFgId = ${zStr(String(fg.ROWID))}`,
+  );
+  const blocked = bom.guardAgainstCommitted(diff.lines, balances);
+  if (blocked.length) { const e = new Error(blocked.join("\n")); e.status = 409; e.details = blocked; throw e; }
+  let revision = n(wo.revision);
+  if (diff.changeCount) {
+    const applied = await bom.applyBom(req.catalyst, req.orgId, wo, fg, diff.lines, { ...diff.summary, note: `Quantity changed ${from} → ${qty} (Sales Order)` }, req.userId);
+    revision = applied.revision;
+  }
+  await fgTable.updateRow({ ROWID: String(fg.ROWID), fgQty: qty, soAckQty: soQty === null ? qty : soQty });
+  await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.fgqty", req.userId, { fgId: String(fg.ROWID), fgName: fg.fgName, from, to: qty, soQty });
+  res.json({ revision, fgQty: qty, linesChanged: diff.changeCount });
 }));
 
 // ---- the grid + material actions ------------------------------------------
@@ -1196,6 +1360,16 @@ router.post("/:id/fg/:fgId/assemble", ok(async (req, res) => {
   const wo = await loadWo(req);
   const { qty, prefix, components } = req.body || {};
   res.json(await assembly.assembleFg(req.catalyst, req.orgId, wo.ROWID, req.params.fgId, qty, req.userId, prefix, components));
+}));
+
+// CR-202: undo one assembly — Zoho TO + bundle first, then the local row.
+// Body { reason } is required and lands in the audit trail.
+router.delete("/:id/assembly/:asmId", ok(async (req, res) => {
+  await assertAction(req.catalyst, req.orgId, req.userId, "wo.action.assemble");
+  const wo = await loadWo(req);
+  const reason = String((req.body || {}).reason || "").trim();
+  if (!reason) { const e = new Error("A reason is required to delete an assembly"); e.status = 400; throw e; }
+  res.json(await assembly.deleteAssembly(req.catalyst, req.orgId, wo.ROWID, req.params.asmId, req.userId, reason));
 }));
 
 router.post("/:id/recompute", ok(async (req, res) => {

@@ -88,6 +88,7 @@ function splitBooksRow(row) {
   let sku = "";
   let description = "";
   let zohoItemId = "";
+  let category = "";
   const booksData = {};
   const propRow = {};
   for (const [header, rawCell] of Object.entries(row)) {
@@ -102,6 +103,10 @@ function splitBooksRow(row) {
     // Books export's link id. Excel mangles a numeric 19-digit id to 1.2E+18 —
     // anything not all-digits is ignored rather than stored as a bogus link.
     if (key === "item id") { if (/^\d+$/.test(cell)) zohoItemId = cell; continue; }
+    // Picks the row's product type when the page says "From Category Name"
+    // (pickIndustry); no `continue` — the cell still reaches propRow for a
+    // property fed by this column.
+    if (key === "category name") category = cell;
     const f = BOOKS_FIELDS[key];
     if (!f) { propRow[stripped] = cell; continue; }
     let v = cell;
@@ -109,7 +114,9 @@ function splitBooksRow(row) {
       v = f.map[cell.toLowerCase()];
       if (v === undefined) throw new Error(`Unknown ${stripped}: ${cell}`);
     } else if (f.num) {
-      v = parseFloat(cell);
+      // Books exports money as "INR 1,200.00" — drop the currency prefix and
+      // thousands commas (bare parseFloat reads "1,200" as 1).
+      v = parseFloat(cell.replace(/^[^\d.-]+/, "").replace(/,/g, ""));
       if (isNaN(v)) throw new Error(`${stripped} must be a number: ${cell}`);
     } else if (f.bool) {
       v = /^(true|yes|1)$/i.test(cell);
@@ -119,7 +126,18 @@ function splitBooksRow(row) {
   }
   if (JSON.stringify(booksData).length > MAX_BOOKS_JSON)
     throw new Error("Books fields too large for one row");
-  return { name, sku, description, zohoItemId, booksData, propRow };
+  return { name, sku, description, zohoItemId, category, booksData, propRow };
+}
+
+/**
+ * The product type a row belongs to by its Books category: the industry named
+ * like it (trimmed, case-insensitive). Returns the industry id as a string, or
+ * null when the category is blank or matches none. Pure — the self-test shares it.
+ */
+function pickIndustry(industries, category) {
+  const want = norm(category).toLowerCase();
+  const hit = want && industries.find((i) => norm(i.name).toLowerCase() === want);
+  return hit ? String(hit.id) : null;
 }
 
 /**
@@ -139,10 +157,14 @@ function pushableBooksFields(booksData, { update = false } = {}) {
 
 /**
  * Import Zoho-Books-format sheet rows as local SKUItems (always Trading).
- * A row with an SKU keeps it verbatim (no series suffix) and property columns
- * resolve best-effort; a row without one must produce its SKU from the
- * industry's properties via the same assemble + series engine as the manual
- * generator. Rows run SEQUENTIALLY — the series max-scan is non-atomic.
+ * `industryId` is the product type picked on the page and applies to every
+ * row; without one ("From Category Name") each row goes to the product type
+ * named like its Category Name and fails when none is. A row with an SKU keeps it
+ * verbatim (no series suffix) and property columns resolve best-effort; a row
+ * without one builds its SKU from whichever of the product type's properties
+ * are filled, via the same assemble + series engine as the manual generator —
+ * blank required properties are reported as a warning, not a failure.
+ * Rows run SEQUENTIALLY — the series max-scan is non-atomic.
  */
 async function processBooksImport(catalyst, industryId, rows) {
   if (rows.length > MAX_ROWS) {
@@ -151,75 +173,91 @@ async function processBooksImport(catalyst, industryId, rows) {
     throw e;
   }
   const zcql = catalyst.zcql();
-  const inds = rowList(
-    await zcql.executeZCQLQuery(`SELECT * FROM Industry WHERE ROWID = ${industryId} AND ${orgClause(catalyst)}`),
-  );
-  if (!inds.length) {
+  const industries = rowList(
+    await zcql.executeZCQLQuery(`SELECT * FROM Industry WHERE ${orgClause(catalyst)}`),
+  ).map(out);
+  const industryById = new Map(industries.map((i) => [String(i.id), i]));
+  const forced = industryId ? String(industryId) : null;
+  if (forced && !industryById.has(forced)) {
     const e = new Error("Industry not found");
     e.status = 404;
     throw e;
   }
-  const industry = out(inds[0]);
-  const sep = industry.skuSeparator || "";
-
-  const properties = rowList(
-    await zcql.executeZCQLQuery(
-      `SELECT * FROM Property WHERE industryId = ${industryId} AND ${orgClause(catalyst)} ORDER BY skuPosition`,
-    ),
-  ).map(out).filter(isActive);
-
-  const pvByProp = {};
-  const pvById = new Map();
-  for (const p of properties) {
-    if (p.valueType === "Range") continue;
-    const vals = rowList(
-      await zcql.executeZCQLQuery(`SELECT * FROM PropertyValue WHERE propertyId = ${p.id} AND ${orgClause(catalyst)}`),
-    ).map(out);
-    pvByProp[p.id] = vals;
-    for (const v of vals) pvById.set(String(v.id), v);
-  }
-  const getPv = async (rowid) => pvById.get(String(rowid)) || null;
-  const resolveRow = buildResolver(properties, pvByProp);
   const table = catalyst.datastore().table(TABLE);
   const orgId = reqOrg(catalyst);
-
-  // Unknown list values (a new Category etc.) are registered instead of failing
-  // the row — same find-or-create + auto code as the Books API import.
-  // buildResolver holds pvByProp by reference, so it sees the new value.
-  // ponytail: values come from raw cells, a typo makes a junk value — fix/merge
-  // it in Property Manager.
-  const listPropByCaption = new Map(
-    properties.filter((p) => p.valueType !== "Range").map((p) => [norm(p.caption).toLowerCase(), p]),
-  );
   let valuesCreated = 0;
-  const ensureValues = async (propRow) => {
-    for (const [header, cell] of Object.entries(propRow)) {
-      const prop = listPropByCaption.get(header.toLowerCase());
-      if (!prop) continue;
-      const vals = pvByProp[prop.id];
-      const want = cell.toLowerCase();
-      if (vals.some((v) => norm(v.displayValue).toLowerCase() === want || norm(v.name).toLowerCase() === want)) continue;
-      const created = out(
-        await catalyst.datastore().table("PropertyValue").insertRow({
-          displayValue: cell,
-          name: cell,
-          sku: autoCode(cell, new Set(vals.map((v) => v.sku))),
-          description: null,
-          propertyId: String(prop.id),
-          orgId,
-        }),
-      );
-      vals.push(created);
-      pvById.set(String(created.id), created);
-      valuesCreated++;
+
+  // Per-product-type setup, loaded on first use — only the product types the
+  // rows actually reach are queried.
+  const ctxCache = new Map();
+  const ctxFor = async (id) => {
+    if (ctxCache.has(id)) return ctxCache.get(id);
+    const industry = industryById.get(id);
+    const properties = rowList(
+      await zcql.executeZCQLQuery(
+        `SELECT * FROM Property WHERE industryId = ${id} AND ${orgClause(catalyst)} ORDER BY skuPosition`,
+      ),
+    ).map(out).filter(isActive);
+
+    const pvByProp = {};
+    const pvById = new Map();
+    for (const p of properties) {
+      if (p.valueType === "Range") continue;
+      const vals = rowList(
+        await zcql.executeZCQLQuery(`SELECT * FROM PropertyValue WHERE propertyId = ${p.id} AND ${orgClause(catalyst)}`),
+      ).map(out);
+      pvByProp[p.id] = vals;
+      for (const v of vals) pvById.set(String(v.id), v);
     }
+
+    // Unknown list values (a new Category etc.) are registered instead of failing
+    // the row — same find-or-create + auto code as the Books API import.
+    // buildResolver holds pvByProp by reference, so it sees the new value.
+    // ponytail: values come from raw cells, a typo makes a junk value — fix/merge
+    // it in Property Manager.
+    const listPropByCaption = new Map(
+      properties.filter((p) => p.valueType !== "Range").map((p) => [norm(p.caption).toLowerCase(), p]),
+    );
+    const ensureValues = async (propRow) => {
+      for (const [header, cell] of Object.entries(propRow)) {
+        const prop = listPropByCaption.get(header.toLowerCase());
+        if (!prop) continue;
+        const vals = pvByProp[prop.id];
+        const want = cell.toLowerCase();
+        if (vals.some((v) => norm(v.displayValue).toLowerCase() === want || norm(v.name).toLowerCase() === want)) continue;
+        const created = out(
+          await catalyst.datastore().table("PropertyValue").insertRow({
+            displayValue: cell,
+            name: cell,
+            sku: autoCode(cell, new Set(vals.map((v) => v.sku))),
+            description: null,
+            propertyId: String(prop.id),
+            orgId,
+          }),
+        );
+        vals.push(created);
+        pvById.set(String(created.id), created);
+        valuesCreated++;
+      }
+    };
+
+    const ctx = {
+      industry,
+      sep: industry.skuSeparator || "",
+      properties,
+      getPv: async (rowid) => pvById.get(String(rowid)) || null,
+      resolveRow: buildResolver(properties, pvByProp),
+      ensureValues,
+    };
+    ctxCache.set(id, ctx);
+    return ctx;
   };
 
   const results = [];
   for (let i = 0; i < rows.length; i++) {
     const rowNum = i + 1;
     try {
-      const { name, sku, description, zohoItemId, booksData, propRow } = splitBooksRow(rows[i]);
+      const { name, sku, description, zohoItemId, category, booksData, propRow } = splitBooksRow(rows[i]);
       // Link priority matches zoho/import.js: Books item id first, then sku.
       if (zohoItemId) {
         const linked = rowList(
@@ -229,11 +267,20 @@ async function processBooksImport(catalyst, industryId, rows) {
         );
         if (linked.length) throw new Error(`Already imported (Item ID ${zohoItemId})`);
       }
+      const indId = forced || pickIndustry(industries, category);
+      if (!indId)
+        throw new Error(
+          category
+            ? `Category "${category}" matches no product type — pick the product type above`
+            : "Row has no Category Name — pick the product type above",
+        );
+      const { industry, sep, properties, getPv, resolveRow, ensureValues } = await ctxFor(indId);
       await ensureValues(propRow);
       let finalSku = sku;
       let finalName = name;
       let finalDesc = description;
       let selectedValues;
+      let warning;
 
       if (sku) {
         // SKU given: property cells are extra detail — a typo in one must not
@@ -244,13 +291,16 @@ async function processBooksImport(catalyst, industryId, rows) {
         }
         if (!finalName) throw new Error("Item Name is required");
       } else {
-        // No SKU: build it exactly like the manual generator would.
+        // No SKU: build it like the manual generator would, from the filled
+        // properties. Blank required ones don't fail the row here (the sheet
+        // is a Books export, not a filled template) — they come back as a warning.
         selectedValues = resolveRow(propRow).selectedValues;
         const asm = await assemble(properties, selectedValues, sep, getPv);
-        if (asm.missingRequired.length)
-          throw new Error(`Required fields missing: ${asm.missingRequired.join(", ")}`);
         if (!asm.sku)
-          throw new Error("No SKU produced — fill the SKU column or the custom-field columns");
+          throw new Error(
+            `No SKU produced — product type "${industry.name}" got no property values; fill the SKU column or set up its properties`,
+          );
+        if (asm.missingRequired.length) warning = `Required fields left blank: ${asm.missingRequired.join(", ")}`;
         finalSku = await applySeries(catalyst, industry, asm.sku, selectedValues);
         if (!finalName) finalName = asm.name;
         if (!finalDesc) finalDesc = asm.description;
@@ -265,14 +315,17 @@ async function processBooksImport(catalyst, industryId, rows) {
           sku: finalSku,
           description: finalDesc || null,
           type: "Trading", // Books simple-item sheets never carry composites
-          industryId: String(industryId),
+          industryId: String(industry.id),
           zohoItemId: zohoItemId || null,
           booksData: Object.keys(booksData).length ? JSON.stringify(booksData) : null,
           orgId,
         }),
       );
-      if (Object.keys(selectedValues).length) await saveItemValues(catalyst, item.id, industryId, selectedValues);
-      results.push({ row: rowNum, status: "success", sku: finalSku, name: finalName, itemId: item.id });
+      if (Object.keys(selectedValues).length) await saveItemValues(catalyst, item.id, industry.id, selectedValues);
+      results.push({
+        row: rowNum, status: "success", sku: finalSku, name: finalName, itemId: item.id,
+        productType: industry.name, ...(warning && { warning }),
+      });
     } catch (e) {
       results.push({ row: rowNum, status: "failed", error: e.message });
     }
@@ -282,4 +335,4 @@ async function processBooksImport(catalyst, industryId, rows) {
   return { total: rows.length, succeeded, failed: rows.length - succeeded, valuesCreated, results };
 }
 
-module.exports = { splitBooksRow, pushableBooksFields, processBooksImport, CREATE_ONLY };
+module.exports = { splitBooksRow, pickIndustry, pushableBooksFields, processBooksImport, CREATE_ONLY };

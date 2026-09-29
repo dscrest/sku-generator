@@ -133,7 +133,7 @@ async function evaluateOrg(catalyst, orgId) {
   return out;
 }
 
-module.exports = { shortfallCandidates, costBreach, evaluateOrg };
+module.exports = { shortfallCandidates, costBreach, evaluateOrg, email };
 
 // ponytail self-check: `node functions/skuapi/workorder/alerts.js --selftest`
 if (require.main === module && process.argv.includes("--selftest")) {

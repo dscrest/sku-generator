@@ -10,11 +10,611 @@ Related docs: [CHANGES.md](CHANGES.md) (change requests + shipped log),
 [SCHEMA.md](SCHEMA.md) (DB), [ARCHITECTURE.md](ARCHITECTURE.md) (system),
 [ZOHO_AUTH.md](ZOHO_AUTH.md) (OAuth setup).
 
-Last updated: 2026-09-21 (CR-192).
+Last updated: 2026-09-29 (CR-266).
 
 ---
 
 ## In progress
+
+### Zoho SSAF-T3 — Bulk item import → auto SKU → Zoho Books (Studio Sairish, task 1414095000028569207)
+- [x] Import tab + Books item-sheet import, auto-push setting, item-wise suffix series, auto-registered values (CR-092 / 127 / 128 / 132 / 133 / 136 / 189)
+- [x] Currency cells, product type per row / picked on the page, blank required = warning, typable column picker, Books export names auto-map (CR-255 / 257 / 258); deployed to Dev 2026-09-29
+- [x] Zoho comment posted for Krushika (2026-09-29)
+- [ ] Zoho status: Open → Running → To Be Tested — click in the Zoho UI (the API rejects the read-only Start / Due fields)
+- [ ] Set up the Yarn / Thread / Filler product types' properties on the Studio Sairish org (only Fabric has any)
+- [ ] Verify a real import on the org: Fabric row with a blank SKU → generated SKU + suffix; same row again → next suffix; auto-push to Books per SKU Settings
+- [ ] Krushika's test sign-off
+
+### CR-266 — Product Designs: no Publish / drafts / versions, edit in place (branch `feat/zoho-field-mapping`)
+- [x] `routes/recipe.js`: create + clone live, `assertEditable`, publish / new-version / versions endpoints removed, delete on any design, list hides Superseded; `--selftest` passes
+- [x] `RecipeBuilderPage.jsx` (no Publish, Edit → form, in-place tabs, no Versions tab / version chip), `RecipeNewPage.jsx`, `RecipeListPage.jsx`, `RecipeWizardPage.jsx`, `RecipeSnapshotPage.jsx`, `recipeShared.jsx` (Active / Inactive labels)
+- [x] Frontend build clean; browser check in Chromium against a stubbed API
+- [x] Deploy to Dev (2026-09-29)
+- [x] One-time data update on Dev (`RecipeTemplate`, via Catalyst MCP): 6 lone Drafts → `Published`; 2 Draft v2 matching their live v1 → `Superseded`
+- [ ] 2 Draft v2 that differ from the live v1, untouched: `RCP-RAVH100-SSQ` (Ricon, 69851000000312281 — drops Motor + Gear, adds MS / WCB) and `MOBILE512` (test org, 69851000000252320 — adds Camera) — user to say which copy stays
+- [ ] Verify on Ricon: New design → Active at once, quotable; Edit → Save changes the same design; Delete from More ▾
+
+### CR-265 — Every dropdown pick list is searchable, app + widgets (branch `feat/zoho-field-mapping`)
+- [x] `frontend/src/components/searchableSelect.js` global enhancer, installed in `main.jsx` (no call-site edits)
+- [x] Copy pasted at the top of the script in `widget.html`, `configurator.html`, `packing.html`; `books-widget/app/widget.html` re-copied
+- [x] Quote Maker popover filter always on; Configurator List questions have a filter
+- [x] `node frontend/src/components/searchableSelect.test.js` passes (helpers + widget-copy drift check); frontend build clean
+- [x] Browser check in Chromium: grid filter, page size, "add" select, select in a modal, calendar month/year, keyboard only, disabled select, each widget page
+- [x] Widget zip rebuilt (`books-widget/dist/packinglist.zip`), `app/widget.html` identical to `packing.html`
+- [ ] Click-through in Safari and Firefox (not run)
+- [x] `npm run build` + `catalyst deploy` to Dev 2026-09-29 (app, Quote Maker, Configurator, `/packing`); live pages confirmed to carry the enhancer
+- [ ] **Manual:** re-upload `books-widget/dist/packinglist.zip` in Books → Settings → Developer Space → Widgets
+- [ ] Verify inside the real Zoho CRM / Books iframes: panel not clipped, Configurator property select followed by auto-pick, packing item + package-type selects
+- [ ] When `searchableSelect.js` changes: re-paste the body into the four widget files (the self-check names the stale one), re-zip
+
+### CR-264 — Product Design form: Main product = the Books Composite Items list (branch `feat/zoho-field-mapping`)
+- [x] `zoho/import.js` `planCompositeSync` + `syncComposites`; `--selftest` passes
+- [x] `GET /api/recipe/products/composites`
+- [x] `RecipeNewPage.jsx`: list from Books composites + the saved pick; fallback to SKU master assembly items when Books cannot be read; ⟳ beside the select re-reads Books
+- [x] `npm run build` clean
+- [x] Deploy to Dev (2026-09-29)
+- [ ] Verify on Ricon: list = Books Composite Items (DHIRAJ COMP 1 … RAVS 300 SSNR-Sanitary); 5 rows promoted + 5 added in `SKUItem`; second open adds nothing
+
+### CR-263 — Product Design form: Main product = assembly items only, component name optional (branch `feat/zoho-field-mapping`)
+- [x] Main product list source superseded by CR-264
+- [x] `GET /api/recipe/products` rows carry `type`
+- [x] `RecipeNewPage.jsx`: Main product lists Manufacturing items + the saved pick; a row with only a material saves under the material's name
+- [x] `npm run build` clean
+- [ ] Click-through in the browser (not done — built only)
+- [x] Deploy to Dev (2026-09-29)
+
+### CR-262 — Search + filters on every grid that lacked them (branch `feat/zoho-field-mapping`)
+- [x] Shared `matches()` (`gridCols.js`) + `<SearchInput>` (`GridFooter.jsx`); `gridCols.test.js` passes
+- [x] `usePager` returns to the first page when the row count changes
+- [x] Search on Materials, Cost Master, Sizing Models, Components, Quotations, Industries, Properties, Books-linked values, WO Item List tab, all WO Reports views; Templates on the shared input
+- [x] New filters: Materials UOM, Cost Master Calculations, WO Item List Source, WO Reports Customers / Statuses
+- [x] WO details left rail search matches SO number + customer
+- [x] `npm run build` clean
+- [ ] Click-through in the browser (not done — built and unit-checked only)
+- [ ] Deploy to Dev
+- [ ] Decide: search on the short unpaged tables (Users & Roles, Add-on admin, Property Manager values, Purchase tab, Reserve BOM grid)
+- [ ] `WorkOrderListPage.jsx`: `useGridColumns` is called after an early return — move it above
+
+### CR-261 — Ricon: configured valve's WO uses the real items for the quoted MOC (branch `feat/zoho-field-mapping`)
+- [x] `push.js` `resolveBomLines` / `bomFromMatch`; `componentLines` on top of it; `push.test.js` passes
+- [x] `workorder/quoteBom.js` (SO → quote → line → frozen config → requirement lines) + `--selftest`
+- [x] `routes/workorder.js`: SO lines carry `config`; `seedFg` seeds from the template + `configJson`; preview / apply / assembly never touch the shared composite for a configured FG
+- [x] `POST /api/recipe/config-quote/:docKey` takes `quoteNo`; `configurator.html` sends it
+- [x] `WorkOrderNewPage.jsx` Configuration column; `BomTab.jsx` problems list, no *Apply & update Zoho* for a configured FG; frontend build
+- [x] Schema: `ConfigQuote.quoteNo`, `WorkOrderFG.configJson` (Dev, via MCP)
+- [ ] Deploy to Dev (on the user's go)
+- [ ] **Check 1 — SO field:** open one Books SO converted from a Ricon CRM quote; note which field holds the quote number (Reference# / custom field / `zcrm_*`). None → the convert function writes the quote number to SO Reference#
+- [ ] **Check 2 — Books bundle:** assemble one configured valve on Dev; confirm Books accepts bundle lines that are not in the composite's BOM. Refused → restore the composite after the bundle instead of skipping the push
+- [ ] Ricon data: Components rows for the remaining Model × MOC (Excel import); Books items for the parts still missing (Brg Cover WCB, Gland WCB, every other MOC) → Refresh from Zoho (also fills unit + service flag on the existing rows)
+- [ ] User verify (Ricon org): quote a mapped model with MOC = CI → save → converted SO → New WO shows the Configuration column → WO lines = Casing CI / Side Cover CI / Brg Cover CI / Gland CI × qty, stock columns filled → reserve → issue → assemble → Books assembly consumed the CI items, the valve's Books BOM unchanged
+- [ ] User verify (MSUN org): New WO + assemble unchanged (no Configuration column)
+- Later, if asked: planner picks the template by hand; two SO lines of the same valve on one WO; block the quote when a part has no item for the MOC
+
+### CR-260 — WO Settings: pick Main warehouse on every work order, Ricon RD2-T482 (branch `feat/zoho-field-mapping`)
+- [x] `store.js` `pickMainPerWo` setting + `needsMainPick()` + self-test; `POST /api/wo` 400 when on and nothing picked; `GET /api/wo/warehouses` returns `pickMain` / `notMain`
+- [x] `WorkOrderNewPage.jsx`: Reserve / Issue dropped from the list, empty start + `Select warehouse` + Save guard when the setting is on
+- [x] Self-checks pass (store, grid, txn, defects, purchase, assembly, blocks, perms); frontend build
+- [x] Deploy to Dev (2026-09-29, ships CR-259 too)
+- [ ] Ricon org: WO Settings → Warehouses → turn the setting on
+- [ ] User verify (Ricon org): New WO → Main warehouse empty, list = Head Office + Unit-2 only → Save without a pick is blocked → pick Unit-2 → saved, header shows Unit-2, Details column B = Unit-2 stock
+- [ ] User verify (MSUN org, setting off): New WO → Head Office preselected as before
+
+### CR-259 — WO Main warehouse: false 409 on older WOs, picker without WO Settings permission, Ricon RD2-T482 (branch `feat/zoho-field-mapping`)
+- [x] `store.js` `mainChanged()` + self-test; `PUT /api/wo/:id` compares the effective Main (blank = org Main)
+- [x] `GET /api/wo/warehouses` (`wo.orders`); `WorkOrderNewPage.jsx` picker + `WorkOrderPage.jsx` header / issue slip read it; `perms.js` self-check
+- [x] Self-checks pass (store, grid, txn, defects, purchase, assembly, blocks, perms); frontend build
+- [x] Deploy to Dev (2026-09-29, with CR-260)
+- [ ] Verify on Dev (MSUN org): `GET /api/wo/warehouses` → 200; PUT org Main on an older WO with reserved material → 200, Main still blank; PUT another warehouse → 409
+- [ ] Verify in the UI as a user with only Work Orders permission: New WO shows the Main warehouse select
+
+### CR-258 — Item import: the Product type box decides, "From Category Name" option (branch `feat/zoho-field-mapping`)
+- [x] `booksImport.js` `pickIndustry` without fallback, forced vs by-category; `routes/skuItems.js` optional `industryId` for books; `booksImport.test.js` passes
+- [x] `ImportItemsPage.jsx`: `From Category Name` option, mapping table per picked product type; build passes
+- [x] Deployed to Dev (2026-09-29)
+- [ ] Verify (SKU → Import, Simple): box = Fabric → only Fabric's properties in the mapping table, a Yarn-category row imports as Fabric with a warning; box = From Category Name → all product types' properties, the row goes to Yarn; a category matching no product type fails the row with that message
+
+### CR-257 — Books-sheet item import: product type per row, lenient required, typable column picker (branch `feat/zoho-field-mapping`)
+- [x] `booksImport.js`: `category` + `pickIndustry`, per-product-type `ctxFor`, `warning` / `productType` on results; `booksImport.test.js` passes
+- [x] `booksMapping.js` `ALIASES` for the Books export column names; `booksMapping.test.js` passes
+- [x] `ImportItemsPage.jsx`: `Category Name` field, all product types' properties (`GET /api/properties`), `ColumnPick` over `PickList`, results show product type + warning; build passes
+- [x] Deployed to Dev (2026-09-29)
+- [ ] Set up the Yarn / Thread / Filler product types' properties in Property Manager (test org has none — a row without an SKU cannot generate one there)
+- [ ] Verify (SKU → Import, Simple) with a Books export: Rate / Purchase Rate / Location Name pre-mapped; typing in a column picker filters, `— not mapped —` unmaps; a Yarn row lands on product type Yarn; blank required properties import with a warning
+
+### CR-255 — Books-sheet item import: money cells with a currency prefix (branch `feat/zoho-field-mapping`)
+- [x] `booksImport.js` numeric cells drop the currency prefix + thousands commas; `booksImport.test.js` passes
+- [x] Deployed to Dev (2026-09-29)
+- [ ] Verify: a Books export row with `Opening Stock Value` = `INR 1.00` no longer fails on that column
+
+### CR-256 — Bulk Item Import: sample as info link, upload button + picked file (branch `feat/zoho-field-mapping`)
+- [x] `ImportItemsPage.jsx`: `FilePick` (button + hidden input + picked-file line) in simple and composite flows; sample step removed, link under the upload; steps renumbered; build passes
+- [ ] Deploy to Dev
+- [ ] Verify (SKU → Import, Simple): steps 1 · 2 · 3, no sample step; `No file selected` → pick a sheet → name · size · rows and the mapping table; `Download sample` link downloads `sample_items.xlsx`; an empty sheet → error toast and `No file selected`
+- [ ] Verify (Composite): pick a Books composite export → file name + preview panel; Cancel clears both; `Download sample` link downloads the generated sheet
+
+### CR-254 — Components: Associated Items / Associated Services sections (branch `feat/zoho-field-mapping`)
+- [x] `zoho/import.js` — import + refresh keep `booksData.product_type`, refresh backfills; `booksImport.test.js` passes; `/products` `service`
+- [x] `RecipeComponentMapPage.jsx` two sections + `+ Add item` / `+ Add service`; `ComponentEditPage.jsx` `?kind=service`; build passes
+- [x] Product Design form: `RecipeNewPage.jsx` Services table (RecipeComponent `allowMaterial=false` + `skuItemId`); `calc.js bomLines` `items` map + selftest; push-books loads the items; build passes
+- [ ] Deploy to Dev
+- [x] `POST /service-items` + `NewServiceItemModal.jsx` on both forms; perms rule + selftest
+- [ ] Verify (Product Designs → New): Services → + Add Service → pick "Coating service" → Create → builder Components tab lists it; Push to Books → composite shows it under Associated Services
+- [ ] Verify: + New in Books → Name "Powder coating", SKU SVC-PCOAT → Create in Books → Books Items shows a Service item; the row's picker holds it; Components → Add service → same link works; duplicate SKU → 409 toast
+- [ ] Data: SKU Items → Books items industry → Refresh from Zoho once, so Ricon's service items (coating service…) get `product_type`
+- [ ] Verify: Components → Associated Services lists the coating-service component; + Add service → picker offers only service items, no From answer / Required / Goes as; Create → row under Services, qty `1 Nos`
+- [ ] Verify: Test → the service line shows `· service`; Books push still files it under the composite's Associated Services; WO Materials has no line for it
+
+### CR-253 — Components: simplified item mapping (branch `feat/zoho-field-mapping`)
+- [x] `recipe/componentMap.js` — `groupRows`, `planSync` + selftest cases; `routes/recipe.js` — `GET /component-map/components`, `PUT /component-map/component`, `DELETE /component-map/component`, `/products` `inBooks`; perms self-check passes
+- [x] `ComponentEditPage.jsx` (new + edit flat form, Advanced rules block); `RecipeComponentMapPage.jsx` grouped grid + Test modal; `App.jsx` routes + nav "Components"; build passes
+- [ ] Deploy to Dev
+- [ ] Verify (Ricon org): Components grid groups the existing rows; a Model+Series+MOC component shows `+n rules`; open it → Advanced rules listed with Edit links
+- [ ] Verify: New → "Casing", Depends on MOC → CI / SS items → Create → grid `By MOC · 2/3 answers`; `GET /api/recipe/component-map` has two one-condition rows
+- [ ] Verify: Edit the same → Same item always → Save → one `[]`-condition row, the two answer rows gone
+- [ ] Verify: Test → MOC = CI → Casing resolves; MOC = MS with Required = Yes → red missing row
+- [ ] Verify: CRM configurator BOM box unchanged for an untouched product; Books push still builds the composite
+- [ ] Later, if asked: per-answer qty column; group History tab; BOM-request handoff / SO-confirm auto-WO / free-text add-on line (mind-map gaps)
+
+### CR-252 — WO create / edit as one flat Books-style form (branch `feat/zoho-field-mapping`)
+- [x] Rev 1 (two-step pills + per-FG SKU property blocks + `GET /item-props`) deployed to Dev, rejected on review — replaced the same day
+- [x] `routes/workorder.js` — `GET /item-props` removed; `GET /so/:soId` returns the SO header fields (`soDate`, `shipmentDate`, `buyerOrderNo/Date`, `freightCharge`, `delivery`, `booking`, `transporter`); `perms.js` self-check line removed
+- [x] `WorkOrderNewPage.jsx` rewritten: `/wo/new` + `/wo/:id/edit`, Books-style rows (Sales order · Customer · Main warehouse — WO# · WO Date · Expected Shipment · Machining / Fitting · Priority · TC), two-column read-only SO fields, finished-goods item table, Special Instruction; CR-251 `hint` via router state
+- [x] `WorkOrderPage.jsx` — `EditModal` deleted; ✎ Edit and `onSoApplied` navigate to `/wo/:id/edit`; `App.jsx` route
+- [x] Docs: CHANGES, ARCHITECTURE (API + route tables), WORKORDER §5; build + perms self-check pass
+- [x] Rev 2 deployed to Dev 2026-09-28
+- [ ] Verify: New → pick SO → Customer / SO Date / Expected Shipment / Buyer Order / Freight / Delivery / Booking / Transporter fill in read-only; item table lists the FG lines with qty inputs → Create → WO header card matches
+- [ ] Verify: ✎ Edit → same form, SO and FGs read-only (sizes shown); change Fitting Date → Save → header card shows it
+- [ ] Verify: Apply an SO qty change → Edit page opens with the amber note; Dismiss → stays on Details
+
+### CR-251 — WO Edit: stage dates editable, auto-opened after an SO change (branch `feat/zoho-field-mapping`)
+- [x] `routes/workorder.js` `PUT /:id` — `machiningDoneDate`, `fittingDoneDate`
+- [x] `WorkOrderPage.jsx` `EditModal` — three-date row, `hint` note; `MaterialsGrid.jsx` `onSoApplied` after Apply / Add; build passes
+- [x] Deployed to Dev 2026-09-28
+- [x] Verify items superseded by CR-252 (the modal is now the `/wo/:id/edit` page)
+
+### CR-250 — New SO line → Add to work order / Dismiss (branch `feat/zoho-field-mapping`)
+- [x] `WorkOrder.soLinesJson` text via Catalyst MCP (69851000000312756)
+- [x] `soFields.js` — `parseSoLines`, `soNewLines` (pure), `soLinesJson`, `syncSoLines`; test extended, passes
+- [x] `routes/workorder.js` — `seedFg` extracted from create; create baselines `seen`; `POST /:id/so-line` (add / ack); `GET /:id` sync + `soNewLines`; list `soNewLine`
+- [x] `sync.js` — `salesorder` webhook runs `syncSoLines`; skips Closed / Cancelled
+- [x] `MaterialsGrid.jsx` banner + `addSoLine`; list + side-list red ＋; HistoryTab labels; build passes
+- [x] Deployed to Dev 2026-09-28 (twice — pre-CR baseline fix + WO-0027 `soLinesJson` reset)
+- [ ] Verify: open the WO on SO-00039 → banner names the new item → **Add to work order** → FG appears on Details with its BOM, History shows "Finished good added"
+- [ ] Verify: add another line in Books → red ＋ on the list (via webhook, or after opening the WO) → Dismiss → ＋ gone, no re-nag
+
+### CR-249 — WO Main warehouse per work order, Ricon RD2-T482 (branch `feat/zoho-field-mapping`)
+- [x] **Schema (Catalyst MCP, Dev)**: `WorkOrder.mainWarehouseId` varchar 255 (column 69851000000314101, 2026-09-28)
+- [x] `store.js` `warehouses(…, wo)` / `routeFor(…, wo)`; callers in `grid.js` (buildGrid, buildGridsBulk per-Main stock, mainStock), `txn.js`, `assembly.js`, `purchase.js` (WO-scoped PR), `defects.js`; `routes/workorder.js` create / GET / PUT (409 while reserved or issued) / `tracking-options?woId=`
+- [x] `WorkOrderNewPage.jsx` Main warehouse select (default = org setting); `WorkOrderPage.jsx` header row + Edit select; `MaterialsGrid.jsx` routes + picker use the WO's Main
+- [x] Self-checks pass (store, grid, txn, defects, purchase, assembly, blocks); frontend build
+- [x] Deploy to Dev (2026-09-28); commented on RD2-T482
+- [ ] User verify (Ricon org, two warehouses in Books): New WO → pick Unit-2 → Details column B = Unit-2 stock; Reserve → TO from Unit-2 → Reserve; Return → back to Unit-2; PO from the WO's PR delivers to Unit-2; Edit → change Main on a fresh WO works, on a WO with reserved stock → 409
+- [ ] Add `mainWarehouseId` column in Production before promoting
+
+### CR-248 — Ricon Product Configurator: card layout pass (branch `feat/zoho-field-mapping`)
+- [x] `configurator.html` — footer = Base price + Add only (Qty/UOM removed, line starts at 1 / first UOM); right pane 440px; card row Qty · UOM · Base price · Disc %, no total (Price detail keeps it); script syntax-checked
+- [x] Deployed to Dev 2026-09-28
+- [ ] Verify (user): reopen the widget on a Ricon Quote → Base price readable on card and footer, no clipped controls, Price detail still shows Total / unit
+
+### CR-247 — SO WO-stamp: singular `/salesorder/{id}/customfields` + fallback (branch `feat/zoho-field-mapping`)
+- [x] `booksApi.js` — `stampSalesOrderWo` → `PUT /salesorder/{id}/customfields` bare array; fallback `PUT /salesorders/{id} { custom_fields }`; loads, `soFields.test.js` passes
+- [x] Deployed to Dev 2026-09-28 (functions + client; CR-244 columns confirmed live first)
+- [ ] Verify: open the WO raised on SO-00039 → Books SO CF shows `WO-xxxx / dd/mm/yyyy` (self-heal); create a fresh WO on another SO → no `problems` banner
+
+### CR-246 — Ricon Product Configurator: two steps, vertical rows, saved quotes + Edit, BOM per line (branch `feat/zoho-field-mapping`)
+- [x] `configurator.html`: step pills + `Configuration →` / `← Valve`, `qRow` vertical rows (inline expand, auto-open next), `#result` on step 2 only; "Unit …" caption removed; card actions Edit · BOM · Price detail; Save button; restore on open; `editLine` / Update line / Cancel edit; `keepRows` drops owned rows, `readOwnedRows` after push, Deal → Quote re-keys the cart
+- [x] `routes/recipe.js`: `GET /config-quote`, `POST /config-quote/:docKey`, `cleanConfigLines` (+ `--selftest`); `perms.js` `/config-quote` → `recipe.configure` (+ selftest)
+- [x] **Schema (Catalyst MCP, Dev)**: `ConfigQuote` 69851000000294788 + `ConfigQuoteLine` 69851000000312383
+- [x] Deploy to Dev (2026-09-28)
+- [ ] User verify (Ricon CRM Quote → Product Configurator): only the Valve step shows; `Configuration →` disabled until a model is picked; Bare Shaft → step 2 = the MOC row only; Motor Operated → MOC + config rows + Motor Selection rows, one expands at a time, an answer opens the next; SKU / BOM / Base preview fills; Add → card shows **BOM** + **Price detail**, no "Unit …" text
+- [ ] User verify: Save → close → reopen → "Restored N saved lines"; Edit → step 2 with the saved answers and the model highlighted; change MOC → Update line → SKU/BOM change, qty kept, loose motor line re-added
+- [ ] User verify: Add item to Quote → Quoted_Items rows; add a manual row in CRM; reopen → Edit → Add again → the widget's rows replaced, the manual row kept; `GET /api/recipe/config-quote?docKey=quotes:<id>` lists the new `crmRowIds`
+- [ ] User verify (Deal): Create Quote → Draft quote; open the Configurator from that Quote → the lines are there
+- [ ] User verify (MSUN `/widget`): unchanged
+- [ ] Watch: a `required` question hidden by Bare Shaft blocking Add ("Still needed: …") → untick required on that question (data), no code change planned
+
+### CR-244 — Defect workflow split: shop floor raises, store manager decides (branch `feat/zoho-field-mapping`)
+- [x] `MaterialsGrid.jsx`: Replace dialog = reason + `PhotoField` (drop zone, thumbnail, ✕); Assign-replacement step and per-line Replace-with removed
+- [x] `defects.js`: `raise` trimmed; `replacementPlan` (pure, self-checked), `replacementOptions`, `replace` (BOM swap → reserve top-up → issue → PR; row updated last); `list` `open`
+- [x] `txn.trackingPool` (shared with `GET /tracking-options`), `grid.mainStock`; routes `GET /defects/:id/replacement-options`, `POST /defects/:id/replace`
+- [x] `WoDefectsPage.jsx`: Open filter, Replacement column, ⋮ Replace — Reserve & Issue / Raise PR (`ReplaceModal` + `TrackingPicker`), Restock / Trash / Return to vendor; `App.jsx` badge `?status=open`
+- [x] Self-checks + frontend build
+- [x] **Schema (Catalyst MCP, Dev)**: `DefectReturn.replacementStatus` varchar 50 + `replacementRef` varchar 255 (ids 69851000000299964 / 69851000000299965, 2026-09-28); table was empty, no legacy backfill needed
+- [x] Deploy to Dev (2026-09-28)
+- [ ] User verify (MSUN, WO with an issued batch-tracked line): Replace 1 → dialog shows reason + photo zone only; drop a JPG → thumbnail + ✕; Proceed → picker → TO Issue→Main → "Sent to Store issues"; Store issues (Open) lists it "Awaiting decision", badge 1; ⋮ Replace — Reserve & Issue, item blank → "N reservable" → picker excludes the blocked batch → two TOs, chip "Reserved & issued"; second defect with a different Books item + short stock → "reserved & issued N · PR-x raised for M", WO BOM shows the swapped line, Purchase page lists the PR; Restock / Trash / Return to vendor as before; row leaves Open only when both decisions are made
+- [ ] Negative: Replace on a decided row → 409; WO on Hold → Reserve & Issue → 409 "move it to Ready for Machining…", row stays Awaiting, retry works without a duplicate BOM line; item already on a draft PR → "Already requested — PR-x covers…"; legacy rows show "—" and are not counted
+
+### CR-243 — Assembly runs from the Ready row, not the count modal (branch `feat/zoho-field-mapping`)
+- [x] `AssembleModal.jsx`: no POST; `onProceed(body)` from picker Proceed and untracked Proceed
+- [x] `MaterialsGrid.jsx`: `runAssembly` closes the modal, POSTs, toasts, reloads; `AssemblyPanel` row shows *Assembling…* with count locked; other rows' Proceed disabled meanwhile
+- [x] `WORKORDER.md` assembly paragraph; `npm run build` passes
+- [x] `catalyst deploy` (Dev) 2026-09-26
+- [ ] User verify: batch-tracked FG → picker Proceed → both modals gone, row *Assembling…*, then Assembled/Remaining update; count modal never reappears
+
+### CR-242 — Single-item sync: short-BOM Manufacturing SKU lands as a plain Books item (branch `feat/zoho-field-mapping`)
+- [x] `zoho/push.js`: `pushPlain()` extracted; `pushManufacturing` falls back to it on `opts.plainIfNoBom` with < 2 lines; `routes/skuItems.js` push route sets the flag; `push.test.js` passes
+- [x] `catalyst deploy` (Dev) 2026-09-24
+- [ ] User verify: push Butterfly Valve from the details page → plain item in Books, chip "Synced"; later with ≥ 2 BOM lines a re-push replaces it with a composite
+
+### CR-241 — Manufacturing push: value items inherit the parent's HSN (branch `feat/zoho-field-mapping`)
+- [x] `zoho/push.js`: `pushValueToZoho(…, extra)` → `updateItem`/`createItem`; `buildAssociatedItems` passes `catalogueFields(booksData)` and names the failing value item; `node -e require` loads, `itemFields.test.js` passes
+- [x] `catalyst deploy` (Dev) 2026-09-24
+- [ ] User verify: re-push Butterfly Valve → no 2207; expect "needs at least 2 raw-material lines" until the Valve industry gets Component Map rows or a second flagged property
+- [ ] Later, if a client needs it: `PropertyValue.hsn` column + input on the value form
+
+### CR-240 — Uniform New button, generator in the record shell, SKU tab order (branch `feat/zoho-field-mapping`)
+- [x] `Toolbar.jsx` `+ New` primary at the right; `App.jsx` tab order; `SKUGeneratorPage.jsx` in `RecordPage` with shared `SkuRail`; build passes
+- [x] `catalyst deploy` (Dev) 2026-09-24 — working tree carried CR-238 too
+- [ ] User verify: grid shows `+ New` right; tabs SKU Generator · Books Items · BOM · Import; New → generator with rail, header Create, ✕; Open in Generator → title = SKU, rail card selected, Save returns to the item
+- [ ] Not asked: BOM page onto the record shell (`/sku/bom/:id`, History, More ▾)
+
+### CR-239 — Users & Roles: lockout fix, reserved Admin, permission matrix (branch `feat/zoho-field-mapping`)
+- [x] `perms.js`: `MODULES`/`VERBS`/`ACTIONS` → generated `PERM_KEYS`; `verbFor` + `hasVerb` in `requirePerm`/`prefixPerm`; Admin name = `*`; `expandLegacy`; self-test extended — passes
+- [x] `routes/access.js`: `ensureAdmin` bootstrap, Admin locked, name reserved, last-Admin gate, delete refused while assigned, `users`/`locked` in role output
+- [x] `UsersRolesPage.jsx`: BOFFO-style inline matrix form, roles grid, last-Admin checkbox disabled; build passes
+- [x] `catalyst deploy` (Dev, functions + client) — working tree carried CR-237/238 too
+- [ ] Verify (Dev org): open Settings → Users & Roles → Admin appears with Kamal + Dhiraj; both regain every module. Create "Purchase" (view+create+edit) → nobody changes; assign to a test user and drop their Admin → only Purchase; `DELETE /api/wo/po/:id` → 403 "Your role cannot delete Purchase"; sole Admin checkbox disabled (curl → 400); `PUT /api/access/roles/<adminId>` → 403; delete assigned role → 409; configure-only user `POST /api/recipe/sizing/select` still 200
+- [ ] Later, when asked: per-verb button hiding on grid pages; drop `expandLegacy` once every org's roles are re-saved
+
+### CR-238 — Ricon configurator widget: totals, Books push, design-cost line removed (branch `feat/zoho-field-mapping`)
+- [x] `configurator.html`: `#totals`/`.sw` gone; `#res-cost` gone (Rate prefill kept); Push to Books box, `pushToBooks()` and failure note gone — item never pushed, `pending` chip; `node --check` passes; `widget.html` untouched
+- [ ] `catalyst deploy` (Dev) — working tree carries CR-237 too
+- [ ] User verify (Ricon CRM widget): no footer totals, no Design cost line, no Push to Books box; Base price still prefills; new config → line with pending chip, status empty; item on SKU Items page un-pushed
+
+### CR-237 — SKU Item edit: Name is the SKU code for now (branch `feat/zoho-field-mapping`)
+- [x] `SKUItemPage.jsx`: SKU input + validation + payload key removed; Name full width
+- [x] `routes/skuItems.js` `PUT /:id`: `sku = name` (ponytail-marked), uniqueness check unchanged
+- [ ] User verify on Dev; revert to body `sku` when the generator/series owns edits again
+
+### CR-236 — Product Designs New/Edit: Component (text) + materials per row (branch `feat/zoho-field-mapping`)
+- [x] `routes/recipe.js`: `syncMaterials` diff-sync on `upsertComponents` (`materialIds`), `skuItemId` only written when sent; `node --check` passes
+- [x] `RecipeNewPage.jsx`: Component text + Materials (ZB items) chips/select column; edit prefill from `options`
+- [x] `RecipeBuilderPage.jsx`: Components wording, material codes on Overview + card, drawer Item select removed
+- [x] `vite build` clean
+- [x] `catalyst deploy` (Dev, 2026-09-24)
+- [ ] API check (needs the function secret — ask first): POST recipe with `materialIds [m1, m2, bogus]` → 2 options; PUT components-bulk `[m1]` → m2 gone, m1 keeps castWeight; row without `skuItemId` keeps its old link; delete 204
+- [ ] User verify: New → type a component, add 2 materials, remove one chip, Create → Overview shows the component with its material code; Materials tab lists the same; Edit → chips prefilled → Save
+
+### CR-234 — Product Designs: Edit opens the draft directly, no change-reason prompt (branch `feat/zoho-field-mapping`)
+- [x] `RecipeBuilderPage.jsx`: Edit → `POST new-version` directly; reason modal + Overview "Change reason" row removed; Versions timeline hides empty reason
+- [x] `vite build` clean
+- [x] `catalyst deploy` (Dev, 2026-09-24)
+- [ ] User verify: Published design → Edit lands on the edit form with a new draft; second Edit opens the existing draft
+
+### CR-233 — Record-page pattern app-wide: items panel · tabs · More ▾ · History (branch `feat/zoho-field-mapping`)
+- [x] `components/RecordPage.jsx` (RecordRail / RailCard / RecordPage), `components/HistoryTab.jsx` (AuditList, friendlyAction), `components/PushZohoDialog.jsx`, `pages/MasterDetailPage.jsx`
+- [x] `routes/activity.js` `GET /api/activity` + `reports.js auditRows`; `logActivity` in `routes/recipe.js`, `routes/skuItems.js`, `routes/sku.js`
+- [x] Product Designs: rail + History tab on `RecipeBuilderPage.jsx`
+- [x] SKU Items: `SKUItemPage.jsx` at `/sku/items/:id`; grid page trimmed (Toolbar buttons, row click → details, `?item=` redirect)
+- [x] Quotations: `RecipeSnapshotPage.jsx` on RecordPage; list `+` on the Toolbar
+- [x] Masters: Materials / Cost Master / Sizing Models / Component Map export Form + CFG + Detail; `/…/:id` routes in `App.jsx`
+- [x] `npm run build` clean; `node --check` on backend files
+- [x] `catalyst deploy` (Dev, 2026-09-24)
+- [ ] User verify: Product Designs rail filters + History rows; SKU item Edit/Save/Cancel, More ▾ Push/Generator/Delete, old `?item=` link; Quotation Convert logs; each master: row → details, Edit modal, Mark Inactive, Duplicate (Component Map), Delete; WO ⋯ + History unchanged
+
+### CR-232 — CRM SKU widget on the Home dashboard (branch `feat/zoho-field-mapping`)
+- [x] `widget.html`: `PageLoad` without `Entity` → dashboard mode (no record); Create Quote path without a Deal; opens the new quote, clears the cart
+- [x] Script syntax check ok
+- [x] `catalyst deploy` (Dev, 2026-09-24)
+- [ ] CRM setup (MSUN): Setup → Developer Space → Widgets → Create, type **Dashboard**, hosting External, URL `…/server/skuapi/widget`; Home → ⋯ → Add Component → Widget → pick it
+- [ ] User verify (MSUN Home): widget signs in / shows the picker; search + filters work; add lines → Create Quote → Draft quote with the lines opens, subject = first item name; existing Quote / Deal buttons unchanged
+- [ ] Same dashboard mode for `configurator.html` if the Product Configurator should sit on Home too
+
+### CR-231 — Manufacturer picklist from Books (real endpoint) + HSN 4/6/8 digits, Fotedar (branch `feat/zoho-field-mapping`)
+- [x] Live probe (Fotedar token, GETs only, secrets in scratchpad files then deleted): `/settings/manufacturers` 404 on both APIs, Inventory v1 6018; **`GET /books/v3/manufacturers` → `manufacturers[].name`**; `items/editpage` also lists `manufacturers[]` + `brands[]`
+- [x] `booksApi.listManufacturers` → Books v3 `/manufacturers`, 5-min cache per org
+- [x] `itemFields.js`: `digits` / `lengths` on HSN, strip in `pickItemFields`, `itemFieldError`; 400 before any write in `sku.js` create/update + `skuItems.js` PUT; test +8 asserts
+- [x] `components/itemFieldRules.js` + SKU Generator / SKU Items drawer: digits-only input, Save blocked with the message, `<select>` only when the list has entries, fetch failure toasts
+- [x] `itemFields.test.js` ok, backend modules load, `npm run build` clean
+- [x] `catalyst deploy` (Dev, 2026-09-24)
+- [x] Follow-up: native select menu clamped at the viewport bottom → datalist (opened the whole master at once, unsizeable) → `components/PickList.jsx` (sized, scrolling, fixed-positioned, flips) in the Generator card and the Items drawer; rebuilt + redeployed
+- [ ] User verify (Fotedar): Item details → Manufacturer offers the Books master as a typeahead list (Plaloc today); HSN accepts digits only, `123` blocked, `8481` / `848180` / `84818090` save
+- [ ] Brand as a third extra field if Fotedar wants it (one `ITEM_FIELDS` entry + `listBrands` from `items/editpage` `brands[].brand`)
+
+### CR-230 — Product Designs: Books-style details page, More ▾, item picker select, list header removed (branch `feat/zoho-field-mapping`)
+- [x] `RecipeListPage.jsx`: header bar gone, Toolbar `+` → New
+- [x] `RecipeNewPage.jsx`: Item Details = `<select>` "SKU — name"; legacy plain-name rows as "(unlinked)"
+- [x] `RecipeBuilderPage.jsx`: Overview · Components · Materials & costing · Versions; meta card, Add component, Test template, drawer Delete removed; More ▾ Clone / Mark as Inactive / Mark as Active / Delete
+- [x] `components/Menu.jsx` lifted from `WorkOrderPage.jsx`
+- [x] `ConfiguratorSettingsPage.jsx`: cards stacked full width (ladder row is wide)
+- [x] Overview tab: "Associated Items" table (Books look — item name + [SKU], quantity + unit) under the details
+- [x] `routes/recipe.js`: `copyRecipeInto`, `POST /recipes/:id/clone`, `PUT /recipes/:id/status` (Published ↔ Archived), new-version refuses Archived
+- [x] `npm run build` clean
+- [x] `catalyst deploy` (Dev, 2026-09-24)
+- [ ] User verify: list has no header; New page item select; details page tabs + Overview; Clone opens a Draft v1 copy; Published → Mark as Inactive → ARC, Push to Books / Edit refused, Mark as Active restores; Draft → Delete → list; WO ⋯ menu still works; Quote Maker ignores an Archived design
+
+### CR-230 — Return / Replace capped at issued − assembled (branch `feat/zoho-field-mapping`)
+- [x] `formulas.js`: `componentQtys` (moved from `assembly.js`), `gridRow(…, consumed)` → `consumed` / `returnable`, `cap("return")` on `returnable`
+- [x] `grid.js assemble`: consumed per line from `fg.assembledQty`; `MaterialsGrid.jsx` Return + Replace `capKey: 'returnable'`
+- [x] Self-checks (`formulas.js`, `grid.js` + the rest of workorder/) and frontend build
+- [x] Deploy to Dev (2026-09-26)
+- [ ] User verify (MSUN, WO with one assembled FG): Return/Replace tab → MAX fills nothing ("Nothing to replace…"), typing 1 paints red, Proceed → 400 "…not yet returned or assembled"; Assembly tab → Delete assembly → cap is back to issued; a WO with nothing assembled behaves exactly as before
+- [ ] **Deferred (user, 2026-09-26) — Replace a component inside an already-assembled unit.** Not now: per-item replace before assembly is the Replace tab (per BOM line); post-assembly = Delete assembly → Replace. Zoho has no edit-bundle API. Design when wanted: Replace tab line gains an "in assembled unit" switch (pick assembly + FG serial from `WoAssembly.serialNumbers`); defective part → **positive** inventory adjustment at Main with its batch/serial (`inventoryApi.adjustmentBody` needs an `in_quantity` variant) + `DefectReturn` row (new cols `assemblyId`, `fgSerial`) so the block list and Store issues actions work unchanged; replacement part → blocked-aware pick from Main (`tracking-options`) + **negative** adjustment at Main (consumed; no TOs, ReservationLine untouched); short at Main → refuse with "raise a purchase request from the Purchase tab and replace once it arrives"; `defect.raised` activity carries the FG serial. Known gap: ledger/reports won't show repair consumption
+
+### CR-229 — Settings hub reorg: Price Ladder → Product Configurator, tabbed SKU Settings, hidden main nav, Configure/Quotations off the menu (branch `feat/zoho-field-mapping`)
+- [x] `components/TabBar.jsx` extracted from `App.jsx` (`right` slot); `App.jsx`: no `Sidebar` under `/settings/*`, Configure & Quote / Quotations dropped from `NAV_LINKS`
+- [x] `SettingsLayout.jsx`: General / Add-ons groups, `/settings/sku` → `SkuSection` (TabBar + Outlet, tabs Series · Item defaults · Zoho Books · Industries · Properties), new `/settings/configurator`
+- [x] `SkuSettingsPage.jsx`: `:tab` param, full-width card grid, pinned Save bar, ladder + designRate removed from state and PUT
+- [x] `ConfiguratorSettingsPage.jsx` (new): price ladder + design-rate toggle, partial PUT `{ priceLadder, designRate }`
+- [x] `npm run build` clean; `ladder.js --selftest` ok
+- [x] `catalyst deploy` (Dev, 2026-09-24)
+- [ ] User verify: gear → no main sidebar; SKU Settings tabs save across tabs; Product Configurator ladder saves and survives a later SKU Settings save; menu shows five Product Configurator entries, `/#/recipe/configure` still opens
+- [ ] Follow-up (only if asked): Work Order settings group sidebar → TabBar
+
+### CR-228 — Product Configurator: Motor HP from TPH band, Motor map rows, Motor HP → Books Capacity (branch `feat/zoho-field-mapping`)
+- [x] Data (Dev, MCP): Motor map rows re-keyed (Fitted: HP + Make + Type; Loose: Inactive); Motor HP `zohoCfApiName = cf_capacity`; TPH bands on the Motor HP values
+- [x] `PropertyValue.capMin` / `capMax` (MCP) + `NUM_COLS`; `POST`/`PUT /property-values` accept them; Properties page value form "Auto-pick from … to"
+- [x] `configurator.html` `autoPick(tph)` on capacity change (`widget.html` untouched)
+- [x] `catalyst deploy` (Dev)
+- [ ] User verify (Ricon, Quote Maker): TPH 10 → Motor HP 1.5 HP, TPH 15 → 2 HP, TPH 0.8 → 0.5 HP, TPH 4.5 → unchanged (sheet gap); RAVH 100 S-Square + CI + 0.5 HP + BBL + IP55 IE2 → "Motor · Motor HP BBL IP IE2 0.5 × 1 Nos" after the design lines; push → Books item custom field Capacity = "0.5 HP"
+- [ ] Confirm the Books api name of the Capacity custom field is `cf_capacity` (Books → Settings → Items → Custom fields); if the field is numeric, rename the Motor HP values to bare numbers
+- [ ] Ricon: motor items + map rows for 1 / 1.5 / 2 / 3 / 5 HP (Component Map Import) — only 0.5 HP is mapped today
+
+### CR-227 — Product Configurator: Product Design BOM under the picked model (branch `feat/zoho-field-mapping`)
+- [x] `routes/recipe.js`: `templateBy()` + `POST /sizing/bom` (design by `recipeCode`, else by the picked Books item's `productItemId`; material by answer, never 400s)
+- [x] `configurator.html`: design lines on pick, ahead of category items + Component Map; `missing` skips components the design lists (`widget.html` untouched)
+- [x] `catalyst deploy` (Dev)
+- [ ] User verify (Ricon, Quote Maker): pick RAVH 100 S-Square → Casing 55 KG / Side Cover / Brg Cover / Gland / Motor / Gear listed on pick, CI fills in after MOC, no red "no item mapped" rows, 4 map lines follow; RAVH 200 Square (no design) unchanged
+- [ ] Data: link RAVH 150S / RAVH-S Square (SizingModel 69851000000295672) to `RCP-RAVH150-SS` once the user confirms it is the S-Square design — or the user sets Product design on the Sizing Models grid
+
+### CR-226 — Product Configurator: sizing model → Books valve item, Refresh from Zoho (branch `feat/zoho-field-mapping`)
+- [x] `SizingModel.skuItemId` column (Dev, MCP); `SIZING_FIELDS` + guard; `/sizing/select` returns `item` (own link, else the Product Design's product); `sizing.js fit()` passes `skuItemId`
+- [x] Data: Square/RAVH 100 `recipeCode` = RCP-RAVH100-SSQ (design cost now flows); RCP-RAVH150-SS and RCP-RAVS150 have no Product item set — set it on the design or link the sizing row
+- [x] Sizing Models page: Books item column + picker; `configurator.html` linked pick → quoted as-is (BOOKS ITEM badge, no generate/create/push)
+- [x] `refreshFromBooks` + `POST /api/sku-items/refresh-zoho` + "Refresh from Zoho" button
+- [x] `sizing --selftest`, route requires, widget `node --check`, frontend build; `catalyst deploy` (2026-09-23)
+- [ ] User: SKU Items → industry RAV → Refresh from Zoho (valve composites become Manufacturing; RAVB 300 S-Blow Through, RAVH 300 S-Square, RAVH 400 SS-Square, RAVS 300 SSNR-Sanitary get created)
+- [x] Ricon models linked via ZCQL (user "Go", 2026-09-23): Square/RAVH 100 → RAVH 100 S-Square, Square/RAVH 150 → RAVH 150 S-Square, RAVH-S Square/RAVH 150S → RAVH 150 SS-Square, RAVH-S Square/RAVH 200S → RAVH 200 SS-Square, RAVH-S IC/RAVH 150S → RAVH 150 SS-IC, RAVH-S IC/RAVH 200S → RAVH 200 SS-IC, RAVB Square/RAVB 150 → RAVB 150 S, RAVB Square/RAVB 200 → RAVB 200 S
+- [ ] Open: Round/RAVH 150 has two Books items (R-8 Bld / R-10 Bld) — blades, contradicts "one item per model + series"; RAVH 220.70 CB matches no CB sizing row; RAVH 300 S-Square / RAVH 400 SS-Square / RAVB 300 S-Blow Through / RAVS 300 SSNR-Sanitary appear after Refresh from Zoho — link them on the Sizing Models page
+- [ ] User verify (CRM): option row shows the Books name; pick → BOOKS ITEM badge; Add to lines → Books SKU on the line, no create-item call; unlinked model still generates
+
+### CR-225 — Assembly delete: material back at Issue + 36642 number reuse (branch `feat/zoho-field-mapping`)
+- [x] Zoho cleanup of the pre-CR-212 delete on WO-0026: TO-00035 + bundle WO-0026-A1 removed; batches 555/9999/111/125/Dummy Octfis verified back at Issue
+- [x] `assembly.assembleFg`: reference seq per WO, retry on 36642 (number already used)
+- [x] Deployed to Dev 2026-09-23 (whole working tree, incl. CR-222/223 pending edits)
+- [ ] User verify (MSUN, WO-0026): Make Assembly again from the same batches → bundle number `WO-0026-A2` (or higher); ⋮ → Delete assembly → batches back under Issue in the picker / stock report
+
+### CR-224 — Product Configurator: trim questions, Motor/Bare Shaft radio, MOC-driven Books items (branch `feat/zoho-field-mapping`)
+- [x] `configurator.html`: Selected model section gone; four cards — Valve Selection (duty inputs + RAV type · Motor/Bare Shaft radio · Find), Model Selection (sizing options, after Find), Configuration (MOC first; Bare Shaft: MOC only, other answers cleared), Motor Selection (motor/gear, Motor Operated only, last); Find button sits under Volume; BOM list gated on MOC, Books category items + Component Map lines
+- [x] `booksApi.listCategories` / `listItemsByCategory`; `GET /api/recipe/category-items?parent=&child=`; perm `recipe.configure`
+- [x] Dev data: `showInWidget=false` on the 8 RAV questions; Motor HP "Bare Shaft" value deleted; `seedData.js` `widget: false` + seed routes honour it
+- [x] `componentMap --selftest`, `perms --selftest`, `node --check` on widget script + routes pass
+- [x] `catalyst deploy` to Dev (2026-09-23)
+- [ ] Verify `GET /api/recipe/category-items?parent=MOC&child=CI` on Ricon's org returns Casing CI / Side Cover CI / Brg Cover CI / Gland CI (Books `category_id` filter assumed from the Inventory docs — fall back to `listItems()` filtered on `category_id` if Books rejects it)
+- [ ] User verify (CRM Quote → Product Configurator): no Series/Model dropdowns; radio → Bare Shaft hides motor+gear fields and the SKU drops them; Configuration teal, MOC first; nothing under the SKU until MOC picked, then CI items + mapped components
+- [ ] Later: re-key the seeded Motor map rows without Motor supply; decide qty/BOM push for category items
+
+### CR-223 — SKU Items → Delete clears the Zoho Books item too (branch `feat/zoho-field-mapping`)
+- [x] `inventoryApi.deleteCompositeItem`; `push.deleteFromZoho` (type → composite / plain item, gone = proceed, refusal = 409, local untouched)
+- [x] `DELETE /api/sku-items/:id` Zoho-first, returns `{ deleted, zohoDeleted }`; `SKUItemsPage.jsx` dialog text + toast shows Zoho's reason
+- [x] `node functions/skuapi/zoho/push.test.js` passes (type → endpoint, gone, refusal); `node --check` on route + inventoryApi; frontend build passes
+- [ ] `catalyst deploy` to Dev
+- [ ] User verify (MSUN): push a throwaway Manufacturing SKU → SKU Items ⋮ → Delete → gone in Books composite items and locally, toast "deleted here and in Zoho Books"
+- [ ] Negative: delete a pushed item that has a Books transaction → toast with Books' message, row stays; delete one already removed by hand in Books → local row goes, no error
+
+### CR-222 — Number inputs: no spinners in widget HTML (branch `feat/zoho-field-mapping`)
+- [x] `configurator.html` global rule added; `packing.html` + `books-widget/app/widget.html` rule un-scoped from `td`
+- [ ] `catalyst deploy` (configurator + packing ship with the function); re-zip Books widget per the manual-zip rule and re-upload
+- [ ] User verify: configurator Qty / Base price, packing qty cells, Books widget — no arrows
+
+### CR-221 — Product Designs → New: Books-style page + Associate Items (branch `feat/zoho-field-mapping`)
+- [x] Columns via Catalyst MCP (Dev): `RecipeTemplate.uom` 69851000000291975, `RecipeComponent.skuItemId` 69851000000288714
+- [x] `routes/recipe.js`: `uom` on create/update, `skuItemRef` on every component write
+- [x] `RecipeNewPage.jsx` + route; `RecipeListPage` modal removed; builder Unit select, item line on the card, Item select in drawer + add modal
+- [x] Frontend build passes; `node --check` on the route file
+- [x] `catalyst deploy` to Dev 2026-09-23 (whole working tree — also shipped CR-216/217/219/220); API check passed (2 linked items + 1 bogus → ids kept / blank, `uom` canonicalised, dupe 409, test row deleted)
+- [x] Pass 2: full-width Books layout; `/recipe/recipes/:id/edit` reuses the form (PUT meta + components-bulk + DELETE removed); builder draft **Edit** → form; new-version → form
+- [ ] User verify: Product Designs → New → Name/SKU, pick 2 items, Add New Row, remove one, Create → builder shows the components with `sku · name`; Unit survives reload; duplicate SKU → error toast; builder **Edit** → same form prefilled, change a qty, remove a row, Save → builder reflects it
+
+### CR-218 — Product Configurator (Ricon): Valve Selection Section + Volume (branch `feat/zoho-field-mapping`)
+- [x] `configurator.html`: section renamed + `.hl` card, read-only Volume (Ltr/Min) after Speed via `updateVolume()`, `+N% spare` cell dropped, Product defaults to the industry named RAV; `seedData.js` drops Prod. Type / Application
+- [x] Ricon Dev data: Prod. Type / Application `showInWidget = false` (Catalyst MCP)
+- [x] Widget inline script parses; `sizing.js` self-test passes
+- [x] `catalyst deploy` to Dev 2026-09-23 (whole working tree — also shipped CR-215/216/217)
+- [ ] User verify in CRM (Ricon Deal): teal "Valve Selection Section" with Capacity → Bulk Density → Speed (RPM) 20 → Volume → RAV type, no Prod. Type / Application; 5 TPH / 0.6 / 20 → Volume 6.94; model rows end with "runs at N RPM"
+
+### CR-217 — Product Configurator: "one size up" row removed (branch `feat/zoho-field-mapping`)
+- [x] `recipe/sizing.js` drops `next` (self-test), `/sizing/select` sets `valueId` on the option only, `configurator.html` row/CSS cleanup
+- [x] Sizing self-test, routes load, widget inline script parses
+- [ ] `catalyst deploy` to Dev (whole working tree — also ships CR-215/216)
+- [ ] User verify in CRM: 20 TPH / 0.8 / 20 RPM / Drop through → RAVH 300 (Square), RAVH 400S, RAVH 300 (Round) + Round Old "above largest" line, no grey rows; pick still fills Series + Model
+
+### CR-216 — UOM list in SKU Settings (branch `feat/zoho-field-mapping`)
+- [x] `OrgSetting uomList` + `parseUoms`/`uomsOf`/`normUom(v, list)` in `recipe/componentMap.js` (selftest covers parse, de-dup, org casing)
+- [x] `GET/PUT /api/sku-items/settings` `uoms`; `GET /api/recipe/uoms` org-aware; org list at `create-item` and Component Map writes
+- [x] SKU Settings → Units of measure box; template builder datalist, Component Map select and CRM Product Configurator (`fillUoms`) read the org list
+- [x] Frontend built (`npm run build` → `functions/skuapi/app`); routes `node --check`; widget inline script parses
+- [ ] `catalyst deploy` to Dev (whole working tree — also ships CR-215)
+- [ ] User verify: set e.g. `Nos, Kgs, MTR, Box` in SKU Settings → the component card UOM in the template builder, the Component Map row and the configurator Qty unit offer exactly those; a saved item keeps the `MTR` spelling
+
+### CR-214 — Product Configurator UOM list inlined (branch `feat/zoho-field-mapping`)
+- [x] `configurator.html`: `uomList` = the CR-206 standard list, select filled at boot, `/api/recipe/uoms` fetch removed
+- [x] Inline script parses; deployed to Dev (`catalyst deploy` 2026-09-23 — whole working tree)
+- [ ] User verify (Fotedar, CRM Product Configurator): UOM offers Nos/Pcs/Kgs/Gms/Mtr/CM/MM/Ltr/Set/Box on the result row and per cart line; chosen unit lands on the quote line / Product Usage Unit
+
+### CR-220 — Product Configurator: Mfg / BO price ladder per quote line (branch `feat/zoho-field-mapping`)
+- [x] `recipe/ladder.js` (`applyLadder`, `parseLadder`, `classOf`, `--selftest` with the sheet numbers)
+- [x] `routes/skuItems.js` `priceLadder` ⇄ `OrgSetting priceLadder`; `SkuSettingsPage.jsx` Price ladder card (mockup 1i)
+- [x] `configurator.html` — class chip + tint, Base price, Price detail popover (1e), footer Total / Mfg / BO, CRM `List_Price` = ladder unit, `paramVals` ladder columns (`widget.html` untouched)
+- [x] Checks: ladder self-test, widget script parses, routes load, `npm run build`
+- [x] Deployed to Dev (`catalyst deploy` 2026-09-23); live `/configurator` carries the ladder
+- [ ] Ricon: enter the % sets in Settings → SKU Settings (sheet: Mfg 10/15/5/–/10, BO 5/10/2/–/10; screenshot: 10/11/12/13/14 and 2/3/4/5/6)
+- [ ] User verify (Ricon CRM Quote → Product Configurator): valve at base 100 → Mfg chip, Unit 190; loose motor → BO chip, Unit 123; Price detail toggle Mfg↔BO flashes and moves the footer totals; qty 15 BO line at base 100 → 1,841; Create Quote → `List_Price` 190
+- [ ] User verify (MSUN `/widget`): unchanged
+- [ ] CR-B next: `ComponentMap.childIndustryId` + `sequence`, plan grid + Configure drawer (mockup 1a–1d, 1h); CR-C: `PlanQuote`/`PlanQuoteLine`, Estimate "System quote" design with Customer / MFG / BO views, perm keys `recipe.plan.mfg` / `recipe.plan.bo` (team membership: print views + row locking, 1f/1g/1j); later: per-line % override
+
+### CR-212 — Delete assembly resolves an untracked TO by number (branch `feat/zoho-field-mapping`)
+- [x] `inventoryApi.findTransferOrderByNumber`; `assembly.deleteAssembly` reads the number from the row or the `fg.assemble` History entry and deletes the TO before the bundle
+- [x] `createBundle` returns the bundle (not the envelope) so `zohoBundleId` is stored; `findBundleByNumber` for old rows; delete refuses when the bundle is not in Zoho
+- [x] Self-checks (`assembly.js`, `inventoryApi.js`); deployed to Dev 2026-09-23
+- [ ] **Clean-up:** WO-0026-A1 was deleted locally at 09:48 before the fix — delete bundle `WO-0026-A1` and Transfer Order `TO-00035` in Zoho Inventory (by hand, or via the API harness with approval)
+- [ ] User verify (MSUN): assemble again → `WoAssembly.zohoBundleId` populated; ⋮ → Delete assembly → TO and bundle gone in Zoho, FG progress back, no warning
+
+### CR-213 — SKU Settings page scroll (branch `feat/zoho-field-mapping`)
+- [x] `SkuSettingsPage.jsx` wrapper `flex:1; overflowY:auto` (same as the other settings pages)
+- [x] Frontend build ok, deployed to Dev (`catalyst deploy` 2026-09-23 — whole working tree)
+- [ ] User verify: Settings → SKU Settings scrolls to the Extra item fields + Save
+
+### CR-211 — Ricon: item costing in the add-on, design cost → configurator Rate, org-wise (branch `feat/zoho-field-mapping`)
+- [x] Ricon data via Catalyst MCP (Dev): 7 plate/rod rates; `RCP-RAVS150` (69851000000312150, repurposed draft) + `RCP-RAVH150-SS` (69851000000299877) — 4 CI castings each, 4 cost elements; `SizingModel.recipeCode` on RAVS 150 + 3× RAVH 150; `OrgSetting cfgDesignRate=true`
+- [x] `routes/skuItems.js` `designRate` ⇄ `cfgDesignRate`; `SkuSettingsPage.jsx` checkbox
+- [x] `calc.js selectByMaterial` (+ self-test); `POST /api/recipe/sizing/price`
+- [x] `configurator.html` `refreshPrice` → Design cost line + Rate box prefill (`widget.html` untouched)
+- [x] Checks: calc/perms/addons self-tests, widget script parses, routes load, `npm run build`
+- [x] Offline check: stored rows → `computeQuote` = 12,750 for both designs
+- [x] Deployed to Dev (`catalyst deploy` 2026-09-23 — whole working tree); live `/configurator` carries `refreshPrice`, unauthenticated `/sizing/price` → 401
+- [ ] User verify (Ricon app): Product Designs lists RAVS 150 + RAVH 150 SS (Draft) → Materials & costing shows CI 55/23/1/1 → Test tab all CI: Casing 7250, Side Cover 2410, Brg Cover 195, Gland 145, unit 12,750; Materials grid has MS/SS304/SS316/EN8 Rode/SS304 Rode/SS316 Rode/GM
+- [ ] User verify (Ricon CRM widget): 1 TPH / 0.6 / 20 RPM / Sanitary → RAVS 150 → pick → MOC CI → "Design cost ₹12,750 · RAVS 150 v1 (Draft)" + Rate 12750; type a rate → answer changes keep it; Add → quote line rate 12750. Drop through / Square → RAVH 150 → RAVH 150 SS cost
+- [ ] User verify (org switch): Settings → SKU untick → widget shows no design cost; MSUN: box unticked, no `/sizing/price` call
+- [ ] User decide: RAVH 150 SS Casing figures (sheet row blank — copied from RAVS150); which RAVH 150 series rows should carry the SS design; then Publish both designs (Configure & Quote lists Published only)
+- [ ] Later (say so when asked): plate/rod components, WCB/CF8 options, FAB + BLD_CHAMFER, OH/Margin/P&F/Disc as PERCENTAGE elements + Mfg-vs-BO profiles (per-component flag), Cast-vs-Plate grouping on Materials, MOC → cast-grade map
+
+### CR-210 — Manufacturer dropdown from the Books master, Fotedar (branch `feat/zoho-field-mapping`)
+- [x] `booksApi.listManufacturers` + `GET /api/sku-items/manufacturers`; `ITEM_FIELDS.manufacturer.source`
+- [x] SKU Generator card + SKU Items drawer: `<select>` when the source loads, text input otherwise; stored off-master value stays selectable
+- [x] `itemFields.test.js` passes, frontend build ok
+- [x] Deployed to Dev (`catalyst deploy` 2026-09-23 — whole working tree)
+- [x] User verify failed 2026-09-24: text box, not a dropdown — the guessed endpoint was 404; fixed in CR-231 (probed `GET /books/v3/manufacturers`)
+- [ ] ~~User verify (Fotedar org): Manufacturer shows the Books master values in Generator + drawer → create/push → Books item carries the chosen manufacturer. If the dropdown does not appear, the Zoho endpoint/keys need a live probe (undocumented) — check the function log for the `/settings/manufacturers` error
+
+### CR-209 — Org-wise extra item fields: Manufacturer + HSN Code, Fotedar (branch `feat/zoho-field-mapping`)
+- [x] `itemFields.js` catalogue + pure helpers, `itemFields.test.js` passes
+- [x] `OrgSetting skuItemFields` gate; settings GET/PUT + Settings → SKU checkboxes
+- [x] `create-item` / `update-item` / `PUT /sku-items/:id` merge `fields` into `SKUItem.booksData`; composite push carries catalogue keys
+- [x] SKU Generator "Item details" card + SKU Items drawer inputs, org-gated
+- [x] Fotedar India (907623451) row inserted via Catalyst MCP (Dev)
+- [x] Frontend build ok
+- [x] Deployed to Dev (`catalyst deploy` 2026-09-23 — whole working tree)
+- [ ] User verify (Fotedar org): Generator shows HSN Code + Manufacturer → create → Push → Books item has HSN + Manufacturer; edit from SKU Items drawer → re-push updates Books; another org → no fields, Settings boxes unticked
+- [ ] Later if asked: same inputs in the CRM widgets' new-item forms
+
+### CR-208 — WO: Make Assembly action, Show Completed Items tab, serials per line (branch `feat/zoho-field-mapping`)
+- [x] `MaterialsGrid.jsx`: action label "Make Assembly"; `WorkOrderPage.jsx`: tab "Show Completed Items" after Purchase, serials one per line with per-serial select
+- [x] Frontend build ok
+- [x] Deployed to Dev (`catalyst deploy` 2026-09-23 — whole working tree)
+- [x] Copy-all button removed from the serial column on request (2026-09-23); per-serial click-select stays
+- [ ] User verify: Details → Make Assembly tab; top tabs order Details · Item List · Purchase · Show Completed Items · Approvals · History; click one serial → only it highlights, Ctrl+C copies it
+
+### CR-207 — Packing List: over-pack error as inline banner (branch `feat/zoho-field-mapping`)
+- [x] `packing.html`: `#overpack-warn` red banner kept current by `renderSummary()`; `blockedByOverPack()` scrolls to it instead of `alert()`
+- [x] Widget zip rebuilt (`books-widget/dist/packinglist.zip`, no directory entries), `app/widget.html` identical to `packing.html`
+- [x] Deployed to Dev (`catalyst deploy` 2026-09-23 — whole working tree)
+- [ ] **Manual:** re-upload `books-widget/dist/packinglist.zip` in Books → Settings → Developer Space → Widgets
+- [ ] User verify: qty above ordered → red banner lists `Item (N packed / M ordered)` at once; Save / Print → no browser dialog, banner scrolls into view, action blocked; qty corrected → banner gone, Save works
+
+### CR-206 — Product Configurator: general UOM on Qty (branch `feat/zoho-field-mapping`)
+- [x] `ComponentMap.uom` + `SKUItem.uom` varchar(20) via Catalyst MCP (Dev)
+- [x] `recipe/componentMap.js`: `UOMS`, `normUom`, lines carry `uom` (selftest ok); `GET /api/recipe/uoms`; `componentMapData` stores `uom`; `create-item` stores `uom`
+- [x] `push.js` / `inventoryApi.js`: Books `unit` = `item.uom` on plain + composite create/update; null keeps `pcs` (push.test.js ok)
+- [x] `configurator.html`: UOM select beside Qty + on each cart card, component list `× 55 Kgs`, `paramVals` → Products Usage Unit / UOM columns, `pickValue` picklist casing
+- [x] `RecipeComponentMapPage.jsx`: UOM select, grid `qty uom`, import `UOM`/`Unit` column (frontend build ok)
+- [x] Deployed to Dev (`catalyst deploy` 2026-09-23 — whole working tree, CR-203/204 code went along again)
+- [ ] User verify (RAV): Component Map row `55 Kgs` → widget shows `× 55 Kgs`; add to lines → card UOM select; push → Product Usage Unit = value; pushed Books item `unit` = value
+- [ ] **CRM admin (per org):** add the units to Products → Usage Unit picklist (else the Product refresh warns, the line still lands)
+- [ ] When promoting to Production: add the same two columns there (MCP, Environment = Production)
+
+### CR-205 — Packing List: invoice custom fields, Exporter's Ref from org profile, blank new package, load time (branch `feat/zoho-field-mapping`)
+- [x] Live probe of INV-000013 + MSUN org profile custom-field labels (read-only, secrets deleted)
+- [x] `routes/packing.js`: `headerFromCustomFields` (SO < invoice < org, label aliases, Buyer Order No + Date join) → `docHeader`; `/doc` reads in parallel, weights per distinct item in parallel, org profile always read, `me` on the response, timing log line; selftest extended
+- [x] `packing.html`: `docHeader` overrides prefill on a fresh plan / fills blanks on a saved one; `+ Add package` = Type only, L/W/H/Gross blank; `/doc` is the auth probe (no `/auth/me`)
+- [x] Widget zip rebuilt (`books-widget/dist/packinglist.zip`), `app/widget.html` identical to `packing.html`
+- [x] Deployed to Dev (functions, 2026-09-23 — whole working tree, so CR-203/204 backend code went with it); `/doc` 2.1 s warm end-to-end (was 3.4–6.8 s server + auth hop); `docHeader` = Hazira / XYZ / Ex Works / `88888 | 15-09-2026` / AAQCM4066R
+- [ ] **Manual:** re-upload `books-widget/dist/packinglist.zip` in Books → Settings → Developer Space → Widgets
+- [ ] User verify (MSUN INV-000013): Port of Loading = Hazira, Port of Discharge = XYZ, Inco Terms = Ex Works, Buyer Order = `88888 | 15-09-2026`, Exporter's Ref = AAQCM4066R on open; a saved plan keeps its edited values; `+ Add package` → blank L/W/H/Gross; page opens in a few seconds
+- [ ] Optional (MSUN): add invoice custom fields `Place of Receipt By`, `Pre-Carriage`, `AD Code No.`, `LC No.`, `Country & Origin of Goods` in Books if those should also come from the invoice (labels already matched)
+
+### CR-245 — WO list: SO qty change as red ▲/▼ arrow (branch `feat/zoho-field-mapping`)
+- [x] `soFields.soQtyChange` (+ test), `GET /api/wo` `soQtyChange`, arrow in `WorkOrderListPage.jsx` + WO side list
+- [x] Deploy to Dev (2026-09-28)
+- [x] User verify (MSUN, 2026-09-28): SO line qty edited in Books → Books webhook → red arrow in the WO list without opening the WO — "Working"
+
+### CR-204 — SO quantity change: hint + History + Apply (branch `feat/zoho-field-mapping`)
+- [x] `WorkOrderFG.soLineItemId` / `soQty` / `soAckQty` via Catalyst MCP (Dev); WO create stores them
+- [x] `workorder/soFields.js` `soQtyChanges` (pure, `soFields.test.js`), `syncSoQty`, `soQtyPending`; run on WO open + `salesorder` webhook
+- [x] `POST /api/wo/:id/fg/:fgId/qty` `{ qty }` (rescale by `perUnitQty`, committed guard, BomRevision, `wo.fgqty`) / `{ ack:true }` (`so.qty.dismissed`)
+- [x] List `soQtyChanged` pill; Details banner per FG with Apply / Dismiss; History labels
+- [x] Deploy to Dev (2026-09-28, with CR-245)
+- [x] User verify (MSUN, 2026-09-28): SO line qty edited in Books → WO list shows the red arrow (CR-245) via the webhook
+- [ ] User verify (MSUN): WO Details banner "now N", History "Sales order quantity changed"; Apply → BOM lines rescaled, revision +1; with reserved stock and a lower qty → refused with the guard message; Dismiss clears the arrow only
+- [x] Books workflow rule for Sales Orders (MSUN, 2026-09-28): webhook POST `/internal/zoho-event?type=salesorder&orgId=60077990319`, header `X-Sync-Secret`, Raw JSON body `{"salesorder_id": "${SalesOrder.SalesOrder ID}"}`; rule = Sales Orders · Edited · any field. Default/form payloads are not parsed by the function — Raw JSON only
+
+### CR-203 — Replace defective material + Store issues page (branch `feat/zoho-field-mapping`)
+- [x] `DefectReturn` table via Catalyst MCP (Dev); `OrgSetting.storeIssueEmail` key; `wo.defects` permission
+- [x] `workorder/blocks.js` (block list, pure + self-check) wired into `tracking-options`, `planLines`, `confirmTxn.assertPicksAllowed`, `createTransferOrder` auto-pick, grid column B
+- [x] `workorder/defects.js` `raise` / `action` / `list` / File Store photo; `bom.applyLineOp` lifted from `POST /:id/lines`; `inventoryApi.createInventoryAdjustment`
+- [x] Routes: `POST /:id/replace`, `GET /defects`, `POST /defects/photo`, `GET /defects/:id/photo`, `POST /defects/:id/action`
+- [x] Materials grid **Replace** tab → defect dialog (reason, photo, replace-with) → picker → Assign replacement (Reserve & Issue / Raise PR); `WoDefectsPage` + nav + badge; `RowMenu items`; History labels
+- [x] Self-checks: `blocks.js`, `txn.js`, `grid.js`, `perms.js`, `inventoryApi.js`, `bom.js`, `soFields.test.js`; frontend build
+- [x] Deploy to Dev (2026-09-26, with CR-230)
+- [ ] Set **Store issue email** in Settings → Work Order → Alerts; grant `wo.defects` to the Store Issue Manager role
+- [ ] User verify (MSUN, a WO with an issued batch-tracked line): Replace 1 unit with reason + photo → TO Issue → Main, Store issues lists it with the photo, email received, WO History "Defective material replaced"; Reserve picker no longer offers that batch qty; Assign replacement → Reserve & Issue creates two TOs; Store issues ⋮ Repaired → batch usable again; Inventory adjustment → Zoho adjustment created (verify the payload Zoho accepts — body is logged on rejection), stock snapshot reduced; Return to vendor → stays blocked
+- [ ] Negative: Replace on a Completed WO → 409; a reserve pick naming a blocked serial → refused; photo > 5 MB → refused client-side
+
+### CR-202 — Assembly: delete/undo + Assembly tab with serials (branch `feat/zoho-field-mapping`)
+- [x] `WoAssembly.zohoTransferOrderId` / `zohoTransferOrderNumber` via Catalyst MCP (Dev); `assembleFg` stores them
+- [x] `zoho/inventoryApi.js` `deleteTransferOrder` / `deleteBundle`
+- [x] `workorder/assembly.js` `deleteAssembly` (Zoho TO → bundle → local row, FG progress recomputed, `fg.assemble.delete` activity); `listAssemblies` returns `serials[]` + `transferOrderNumber`
+- [x] `DELETE /api/wo/:id/assembly/:asmId` (`wo.action.assemble`)
+- [x] `WorkOrderPage.jsx`: Assembly tab — item, Assembly #, qty, TO, serials one per line + Copy, ⋮ Delete assembly via `ReasonModal` (reason required, in the audit trail); card stretches to the tab bottom; History label
+- [x] Self-checks (`assembly.js`, `inventoryApi.js`) + frontend build
+- [x] Deploy to Dev (functions + client, 2026-09-23)
+- [ ] User verify (MSUN WO-0026): Assembly tab lists the assembly with all serials, Copy pastes `KGV2026001, KGV2026002, …`; ⋮ → Delete → Zoho TO and bundle gone, stem back at Issue, FG 0/3 and status blank, History "Assembly deleted"; re-assemble gets fresh serials
+- [ ] Negative: delete on a Completed/Closed WO → 409; Zoho refusal (FG invoiced) → error toast, row stays
+
+### CR-201 — Assembly: Zoho 2056 "entered all the batches" at qty > 1 (branch `feat/zoho-field-mapping`)
+- [x] Live probe against MSUN Zoho: payload replayed fine at qty 1, reproduced 2056 at qty 3; per-unit `quantity_consumed` at qty 3 accepted (probe bundles deleted)
+- [x] `zoho/inventoryApi.js` `createBundle`: `quantity_consumed` = line total ÷ units (4 dp); bundle body logged on every Zoho rejection
+- [x] Self-checks: `inventoryApi.js --selftest`, `assembly.js --selftest`
+- [x] Deploy to Dev (functions, 2026-09-22)
+- [ ] User verify (MSUN): WO-0026 → Assembly → KGV FG qty 3 → Select batch (stem FIFO 555 × 1 + 9999 × 2) → Proceed Assembly → "Assembly WO-0026-A1 created — 3/3 assembled · serials … · moved to Main by TO-xxxxx"; Zoho bundle lines show `quantity_consumed` 1 / total 3; stem Issue balance 0
+- [ ] Closes CR-176's "pending user verify" (explicit picks) once the above passes
+
+### CR-200 — Quote Maker reads the Component Map (branch `feat/zoho-field-mapping`)
+- [x] `recipe/componentMap.js` `selectedFromValues`; `push.js componentLines` uses it (no behaviour change)
+- [x] `POST /api/recipe/component-map/resolve` accepts `{ skuItemId }`
+- [x] `widget.html`: `hasRecipe` gate, `resolveComponents` per added line, component rows under the cart card, loose components as own lines removed with the valve
+- [x] Self-tests: `componentMap.js --selftest`, `push.test.js`; widget scripts parse
+- [x] Deploy to Dev (functions, 2026-09-22) — `/widget` serves the new code, unauthenticated resolve → 401
+- [ ] API verify (Ricon): resolve `{skuItemId}` of the RAVH 100 S-Square Loose-motor item → castings + gear `inBooks`, motor `asQuoteLine`; bogus id → 404; MSUN session → add-on gate
+- [ ] CRM verify (Ricon Quote): search "RAVH 100" → Add → component rows under the card, motor line auto-added (Trading, × map qty); remove the valve → motor line goes; push → Quoted_Items has both. MSUN: no change, no extra request
+- [ ] Deferred: shared widget code extraction (separate CR); loose-line qty following the valve qty
+
+### CR-199 — SKU → CRM Product: fixed Product Type / Item Classification (branch `feat/zoho-field-mapping`)
+- [x] `widget.html` + `configurator.html`: `fixedProductPicks()` by field label, merged into the new-Product payload
+- [x] Deploy to Dev (functions, 2026-09-22, shipped with CR-200)
+- [ ] CRM verify: push a quote line with a **new** SKU → Products record shows Product Type = goods, Item Classification = Finished Good; if the Products module lacks either field, nothing is sent and the push still succeeds
+
+### CR-198 — Materials grid: qty box always editable (branch `feat/zoho-field-mapping`)
+- [x] `MaterialsGrid.jsx` `GridRow`: no `disabled` on the qty box; over-cap red + MAX-at-0 grey kept
+- [x] Deploy to Dev (2026-09-22)
+- [ ] User verify (MSUN): WO-0026 → Details → De-reserve: every box editable; type 1 → red border → Proceed Release → "only 0 is reserved" toast, no MT created. Return tab: type 1 → Proceed Return → MT confirmed + TO
+
+### CR-197 — Ricon: drop RAVS150 demo recipe, RAVH 100 S-Square recipe (branch `feat/zoho-field-mapping`)
+- [x] Ricon org: demo recipe 69851000000296717 + 4 components + 12 options + 4 cost elements deleted via Catalyst MCP
+- [x] Ricon org: Draft recipe 69851000000291888 `RCP-RAVH100-SSQ` — 6 components, CI options 55/23/1/1 kg, 4 cost elements
+- [x] Demo seed removed: `seedData.js`, `POST /seed-demo`, Recipes "Seed RAVS150 demo" button, Materials hint
+- [x] Deploy to Dev (2026-09-22)
+- [ ] User verify (Ricon): Recipes lists only "RAVH 100 S-Square" (Draft), no seed button → open → 6 components in sheet order → Materials & costing: CI on the 4 castings 55/23/1/1 → Test tab all CI: Casing 3850, Side Cover 1610, Brg Cover 70, Gland 70, Motor/Gear 0
+- [ ] Ricon: Motor / Gear pricing rule (bought-out items — no material option today)
+
+### CR-196 — Deal → Quote from widgets: Quote_Stage always Draft (branch `feat/zoho-field-mapping`)
+- [x] `widget.html` + `configurator.html`: `Quote_Stage: 'Draft'` on the Deal → Quote insert
+- [x] Deploy to Dev (2026-09-22)
+- [ ] User verify (MSUN): Deal → widget → Create quote → new Quote shows stage **Draft**; both SKU Quote and Product Configurator widgets
+
+### CR-195 — Ricon product configuration: RM by MOC, loose motor, map import (branch `feat/zoho-field-mapping`)
+- [x] `ComponentMap.asQuoteLine` column (Dev, via MCP)
+- [x] `recipe/componentMap.js` passes `asQuoteLine`; `push.js componentLines` drops such lines from the composite; `routes/recipe.js` accepts the field
+- [x] `POST /api/recipe/seed-rav-map` — Motor supply question + 7 sample rows by caption / answer / item name
+- [x] `configurator.html`: separate-line tag + own cart line per flagged component (`widget.html` untouched)
+- [x] `RecipeComponentMapPage.jsx`: "Goes as" column + field; Excel/CSV Import (parse in browser, POST 5 at a time)
+- [x] Deploy to Dev (2026-09-22)
+- [x] Ricon data: Industry "Books items" (69851000000296726) + Import from Zoho → 56 items imported, 19 skipped (no SKU / already linked)
+- [x] `POST /api/recipe/seed-rav-map` as the Ricon user → 7 rows, `Motor supply` added (69851000000297722), `notFound` empty
+- [x] 27 more rows posted from Ricon's item names: motor BBL/CG × IE2/IE3/IE4/FLP × Fitted/Loose, Gear Elmech Inline Helical / Warm, Chain/Direct/Couple Drive, Coating Service (service item, RAVH 100 S-Square), rotor strips (RAVH 100 S-Square), Shaft seal-Air Purge, SOV with timer, Proximity sensor, Inlet/Outlet Companion flange (qty = answer) — 34 rows total
+- [ ] User verify: widget RAVH 100 / RAVH-S Square / CI / 0.5 HP BBL IE2 / Elmech NMRV / Motor supply=Loose → 4 castings + gear listed, motor "separate line"; Add → 2 cart lines; push → composite = castings + gear (KG); Fitted → motor inside, 1 line; Bare Shaft → no motor row, nothing missing
+- [ ] Ricon: remaining Model × MOC weights via Component Map → Import
+- [ ] Deferred: Bare Shaft hides Motor Make/Type (`Property.showIf`) — only if sales keep filling them; Motor HP from TPH — needs Ricon's rule; sheet says Gear type Inline Helical for item "Gear Elmech NMRV" — confirm
 
 ### CR-192 — Quote T&C templates as an org setting (branch `feat/zoho-field-mapping`)
 - [x] `OrgSetting.settingText` text column added (Dev, via MCP)
@@ -187,7 +787,7 @@ Last updated: 2026-09-21 (CR-192).
 - [x] `woCommon.jsx` — `StatusChip ghost`, `NextStage`; `WorkOrderPage.jsx` header hint
 - [x] Frontend build passes (2026-09-16)
 - [x] Deployed to Dev (functions + client, 2026-09-16)
-- [ ] Verify: create WO on a confirmed SO → Books SO shows `WO-xxxx / dd/mm/yyyy` in the CF. If Books rejects `/customfields`, switch the helper to `PUT /salesorders/{id}` `{ custom_fields }`
+- [x] Verify: create WO on a confirmed SO → Books rejected the plural path (SO-00039, "Invalid URL Passed", 2026-09-28) → fixed in CR-247
 - [ ] Verify: cancel that WO → CF blank; new-WO picker lists the SO again; create again → CF shows the new number
 - [ ] Verify: edit WO date → reopen the WO → CF date follows (self-heal)
 - [ ] Verify: header shows `DRF ─▶ Ready For Machining` on a Draft, updates per stage, nothing on Closed/Cancelled, resume target on Hold
@@ -697,7 +1297,7 @@ quotations/snapshot/mfg, recipe list/builder, materials master). Detail in
 - [x] Tables + columns via MCP; `recipe-engine` addon key; calc selftest green; frontend builds
 - [x] `recipe-engine` enabled for OCTFIS test org 743418751 (OrgAddon row via MCP, 2026-09-05)
 - [x] Deployed to Catalyst Dev (`catalyst deploy`, 2026-09-05); `/api/recipe/*` mounted (401 without auth, not 404)
-- [ ] Live verify: `POST /api/recipe/seed-demo` → builder shows RAVS150 → new
+- [ ] Live verify (demo seed removed in CR-197 — use any recipe): builder → new
       version → publish (old → Superseded) → wizard ×10 WCB/CF8 → QTN created →
       change a rate in Materials → snapshot unchanged, fresh calc shows new rate →
       convert → mfg totals (cast wt × qty, grade chips)
@@ -1247,6 +1847,7 @@ Reference + setup procedure: [WORKORDER.md](WORKORDER.md).
 
 ## Done (recent — full detail in CHANGES.md)
 
+- [x] Zoho SSAF-T12 New Add-on SKU Generator Enhancement Request (Studio Sairish) — custom field mapping, auto suffix, reuse of property data, Manufacturing / Composite items (CR-008 / 027 / 128, CR-136, CR-189, CR-163 / 165 / 184 / 242); delivered to the client, Closed in Zoho (2026-09-29). Further changes come as a separate task
 - [x] CR-061 Warehouse-stock report — `/wo/reports` "Warehouse stock" tab (item × warehouse On hand/Available), warehouse + item-search filters, ⟳ Sync all stock + CSV; `ItemStockSnapshot` gains `itemName`/`sku` (2026-08-29)
 - [x] CR-055 Estimate print: footer capped 16mm + font-load re-measure; spill-free confirmed by headless-Chrome PDF test (2026-08-26)
 - [x] CR-056 Estimate print polish: numeric Revision No before Revision Date (blank = omitted), header email removed, "To, <name>" one line, CalcSheet compact (no filler stretch), PAG NO. middle-aligned, wrapping descriptions (2026-08-26)

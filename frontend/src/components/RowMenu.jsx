@@ -5,7 +5,9 @@ import { useState, useEffect, useRef } from 'react';
 // action is optional. Replaces RowEditButton + RowDeleteButton on record grids.
 // Menu is position:fixed so it never clips inside the grid's scroll container;
 // it closes on any outside mousedown or scroll.
-export default function RowMenu({ onEdit, onDuplicate, onDelete, editLabel = 'Edit', deleteLabel = 'Delete' }) {
+// `items` (CR-203): extra entries [{ label, onClick, tone?, disabled? }] rendered
+// above Edit / Duplicate / Delete — for grids whose actions aren't CRUD.
+export default function RowMenu({ onEdit, onDuplicate, onDelete, editLabel = 'Edit', deleteLabel = 'Delete', items = [] }) {
   const [pos, setPos] = useState(null); // null = closed
   const ref = useRef(null);
 
@@ -55,6 +57,16 @@ export default function RowMenu({ onEdit, onDuplicate, onDelete, editLabel = 'Ed
           border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
           boxShadow: '0 6px 20px rgba(0,0,0,0.12)',
         }}>
+          {items.map(it => (
+            <button key={it.label} disabled={it.disabled} title={it.title}
+              style={{ ...itemStyle, color: it.tone || itemStyle.color, opacity: it.disabled ? 0.45 : 1, cursor: it.disabled ? 'default' : 'pointer', whiteSpace: 'nowrap' }}
+              onClick={e => { e.stopPropagation(); setPos(null); it.onClick(); }}
+              onMouseEnter={e => { if (!it.disabled) e.currentTarget.style.background = 'var(--bg-secondary)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+            >
+              {it.label}
+            </button>
+          ))}
           {onEdit && (
             <button style={itemStyle}
               onClick={e => { e.stopPropagation(); setPos(null); onEdit(); }}

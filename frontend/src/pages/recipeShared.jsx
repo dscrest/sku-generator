@@ -2,7 +2,6 @@
 
 const STATUS_COLORS = {
   Published: ['#dcfce7', '#15803d'],
-  Draft: ['#fef3c7', '#92400e'],
   Superseded: ['var(--bg-secondary)', 'var(--text-muted)'],
   Archived: ['var(--bg-secondary)', 'var(--text-muted)'],
   Quotation: ['#dbeafe', '#1d4ed8'],
@@ -11,14 +10,19 @@ const STATUS_COLORS = {
 
 // Short codes keep grid columns narrow; full status on hover.
 const STATUS_ABBREV = {
-  Published: 'PUB', Draft: 'DRF', Superseded: 'SUP', Archived: 'ARC',
+  Published: 'ACT', Superseded: 'OLD', Archived: 'INA',
   Quotation: 'QTN', Order: 'ORD',
 };
+
+// Designs have no publish step (CR-266): the stored Published / Archived read
+// as Active / Inactive; Superseded is an old version from before that.
+const STATUS_LABEL = { Published: 'Active', Archived: 'Inactive', Superseded: 'Old version' };
+export const statusLabel = (status) => STATUS_LABEL[status] || status || '';
 
 export function StatusPill({ status }) {
   const [bg, fg] = STATUS_COLORS[status] || ['var(--bg-secondary)', 'var(--text-muted)'];
   return (
-    <span title={status} style={{ fontSize: 11, fontWeight: 600, padding: '2px 9px', borderRadius: 10, background: bg, color: fg, whiteSpace: 'nowrap' }}>
+    <span title={statusLabel(status)} style={{ fontSize: 11, fontWeight: 600, padding: '2px 9px', borderRadius: 10, background: bg, color: fg, whiteSpace: 'nowrap' }}>
       {STATUS_ABBREV[status] || String(status || '').slice(0, 3).toUpperCase()}
     </span>
   );

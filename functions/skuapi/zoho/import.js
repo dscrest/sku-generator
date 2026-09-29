@@ -2,6 +2,12 @@
 const { rowList, out, idOk, reqOrg, orgClause } = require("../store");
 const { isConfigured } = require("./auth");
 const { listItems, getItem } = require("./booksApi");
+const { listCompositeItems } = require("./inventoryApi");
+const { mergeBooksData } = require("../itemFields");
+
+// Books `product_type` (goods / service) kept on the item (CR-254): the
+// Components page files a service under Associated Services, like Books.
+const typeData = (b) => mergeBooksData(null, { product_type: b.product_type || "" });
 
 // Auto SKU code for an imported value: first 4 uppercase alphanumerics of the
 // text, numeric suffix on collision within the property. Editable later in
@@ -82,6 +88,7 @@ async function importFromBooks(catalyst, industryId) {
         type: "Trading", // Books has no item-type concept; default, edit later
         industryId: String(industryId),
         zohoItemId: String(b.item_id),
+        booksData: typeData(b),
         orgId: reqOrg(catalyst),
       });
       const item = out(row);
@@ -134,4 +141,144 @@ async function importFromBooks(catalyst, industryId) {
   return report;
 }
 
-module.exports = { importFromBooks, autoCode };
+/**
+ * Refresh the SKU master from Zoho Books (CR-226). Books is the truth: every
+ * Books item with a SKU is matched locally (zohoItemId, then sku) and its
+ * name / sku / zohoItemId re-synced; composites become Manufacturing (never
+ * demoted); unmatched items are created in `industryId`. Items without a SKU
+ * are skipped. Custom fields are not re-mapped (that is the import's job).
+ * ponytail: sequential updateRow; ≤ ~300 changed rows per run before the
+ * 30 s function limit — a Catalyst Job if a catalog ever needs more.
+ */
+async function refreshFromBooks(catalyst, industryId) {
+  if (!isConfigured()) throw new Error("Zoho not configured");
+  if (!idOk(industryId)) throw new Error("Invalid industryId");
+  const zcql = catalyst.zcql();
+  const ds = catalyst.datastore();
+  const owned = rowList(await zcql.executeZCQLQuery(`SELECT ROWID FROM Industry WHERE ROWID = ${industryId} AND ${orgClause(catalyst)}`));
+  if (!owned.length) throw new Error("Industry not found");
+
+  const local = rowList(await zcql.executeZCQLQuery(`SELECT ROWID, sku, name, type, zohoItemId, booksData FROM SKUItem WHERE ${orgClause(catalyst)}`)).map(out);
+  const byZoho = new Map(local.filter((r) => r.zohoItemId).map((r) => [String(r.zohoItemId), r]));
+  const bySku = new Map(local.filter((r) => r.sku).map((r) => [String(r.sku).trim().toLowerCase(), r]));
+  const [books, composites] = await Promise.all([listItems(catalyst), listCompositeItems(catalyst)]);
+  const compositeIds = new Set(composites.map((c) => String(c.composite_item_id)));
+  const report = { total: books.length, updated: 0, created: 0, composites: 0, skipped: 0, errors: [] };
+
+  for (const b of books) {
+    const sku = String(b.sku || "").trim();
+    if (!sku) { report.skipped++; continue; }
+    const zid = String(b.item_id);
+    const isComposite = compositeIds.has(zid);
+    if (isComposite) report.composites++;
+    try {
+      const row = byZoho.get(zid) || bySku.get(sku.toLowerCase());
+      if (row) {
+        const patch = {};
+        if ((b.name || sku) !== row.name) patch.name = b.name || sku;
+        if (sku !== row.sku) patch.sku = sku;
+        if (!row.zohoItemId) patch.zohoItemId = zid;
+        if (isComposite && row.type !== "Manufacturing") patch.type = "Manufacturing";
+        if (b.product_type && !String(row.booksData || "").includes('"product_type"')) patch.booksData = mergeBooksData(row.booksData, { product_type: b.product_type });
+        if (Object.keys(patch).length) { await ds.table("SKUItem").updateRow({ ROWID: row.id, ...patch }); report.updated++; }
+      } else {
+        const created = out(await ds.table("SKUItem").insertRow({
+          name: b.name || sku, sku, description: b.description || null, type: isComposite ? "Manufacturing" : "Trading",
+          industryId: String(industryId), zohoItemId: zid, booksData: typeData(b), orgId: reqOrg(catalyst),
+        }));
+        byZoho.set(zid, created);
+        bySku.set(sku.toLowerCase(), created);
+        report.created++;
+      }
+    } catch (err) {
+      report.errors.push({ sku, message: err.message });
+    }
+  }
+  return report;
+}
+
+// Books composites vs the org's SKU master (CR-264). Pure. Match by zohoItemId,
+// then SKU — the order refreshFromBooks uses. A matched row is promoted to
+// Manufacturing (never demoted); an unknown composite becomes a new row.
+// `matched` and `inserts` together are the list, in Books order.
+function planCompositeSync(composites, localRows) {
+  const byZoho = new Map(localRows.filter((r) => r.zohoItemId).map((r) => [String(r.zohoItemId), r]));
+  const bySku = new Map(localRows.filter((r) => r.sku).map((r) => [String(r.sku).trim().toLowerCase(), r]));
+  const plan = { updates: [], inserts: [], matched: [] };
+  const seen = new Set();
+  for (const c of composites) {
+    if (String(c.status || "").toLowerCase() === "inactive") continue;
+    const zid = String(c.composite_item_id);
+    const sku = String(c.sku || "").trim() || String(c.name || "").trim();
+    if (!sku || seen.has(zid)) continue;
+    seen.add(zid);
+    const row = byZoho.get(zid) || bySku.get(sku.toLowerCase());
+    if (!row) {
+      plan.inserts.push({ name: c.name || sku, sku, type: "Manufacturing", zohoItemId: zid, booksData: typeData(c) });
+      continue;
+    }
+    const patch = {};
+    if (row.type !== "Manufacturing") patch.type = "Manufacturing";
+    if (!row.zohoItemId) patch.zohoItemId = zid;
+    if (Object.keys(patch).length) plan.updates.push({ id: String(row.id), patch });
+    plan.matched.push({ id: String(row.id), sku: row.sku, name: row.name });
+  }
+  return plan;
+}
+
+/**
+ * The Books org's active composite items as SKU-master rows — the Product
+ * Design form's Main product list (CR-264). Writes only what Books changed.
+ * ponytail: sequential writes; a first run over a few hundred composites
+ * needs a Catalyst Job (30 s function limit).
+ */
+async function syncComposites(catalyst, orgId) {
+  if (!isConfigured()) throw new Error("Zoho not configured");
+  const ds = catalyst.datastore();
+  const composites = await listCompositeItems(catalyst);
+  const local = rowList(await catalyst.zcql().executeZCQLQuery(`SELECT ROWID, sku, name, type, zohoItemId FROM SKUItem WHERE ${orgClause(catalyst)}`)).map(out);
+  const plan = planCompositeSync(composites, local);
+  for (const u of plan.updates) await ds.table("SKUItem").updateRow({ ROWID: u.id, ...u.patch });
+  const list = [...plan.matched];
+  if (plan.inserts.length) {
+    // same landing rule as the service-item create (CR-254)
+    const industries = rowList(await catalyst.zcql().executeZCQLQuery(`SELECT ROWID, name FROM Industry WHERE ${orgClause(catalyst)}`)).map(out);
+    const ind = industries.find((i) => /books items/i.test(i.name || "")) || industries[0];
+    for (const it of ind ? plan.inserts : []) {
+      const row = out(await ds.table("SKUItem").insertRow({ ...it, description: null, industryId: String(ind.id), orgId }));
+      list.push({ id: String(row.id), sku: it.sku, name: it.name });
+    }
+  }
+  return list.sort((a, b) => String(a.sku).localeCompare(String(b.sku)));
+}
+
+module.exports = { importFromBooks, refreshFromBooks, autoCode, planCompositeSync, syncComposites };
+
+// ponytail self-check: `node functions/skuapi/zoho/import.js --selftest`
+if (require.main === module && process.argv.includes("--selftest")) {
+  const assert = require("assert");
+  const local = [
+    { id: "1", sku: "RAVB 150 S", name: "RAVB 150 S", type: "Trading", zohoItemId: "900" },
+    { id: "2", sku: "ravh 100", name: "RAVH 100", type: "Trading", zohoItemId: null },
+    { id: "3", sku: "OK", name: "Ok", type: "Manufacturing", zohoItemId: "902" },
+  ];
+  const plan = planCompositeSync([
+    { composite_item_id: 900, name: "RAVB 150 S", sku: "RAVB 150 S", status: "active" },
+    { composite_item_id: 901, name: "RAVH 100", sku: " RAVH 100 " },
+    { composite_item_id: 902, name: "Ok", sku: "OK" },
+    { composite_item_id: 903, name: "DHIRAJ COMP 1", sku: "" },
+    { composite_item_id: 904, name: "Old", sku: "OLD", status: "inactive" },
+    { composite_item_id: 903, name: "DHIRAJ COMP 1", sku: "" },
+  ], local);
+  assert.deepStrictEqual(plan.updates, [
+    { id: "1", patch: { type: "Manufacturing" } },
+    { id: "2", patch: { type: "Manufacturing", zohoItemId: "901" } },
+  ]);
+  assert.deepStrictEqual(plan.matched.map((m) => m.id), ["1", "2", "3"]);
+  assert.strictEqual(plan.inserts.length, 1);
+  assert.deepStrictEqual(
+    { ...plan.inserts[0], booksData: undefined },
+    { name: "DHIRAJ COMP 1", sku: "DHIRAJ COMP 1", type: "Manufacturing", zohoItemId: "903", booksData: undefined },
+  );
+  console.log("import selftest ok");
+}

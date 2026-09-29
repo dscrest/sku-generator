@@ -34,6 +34,7 @@ function selectModels({ tph, bd, rpm = 20, group, models }) {
     requiredRpm: Math.round((need * r * 10) / Number(m.capacity)) / 10,
     sparePct: Math.round((Number(m.capacity) / need - 1) * 100),
     recipeCode: m.recipeCode || "",
+    skuItemId: m.skuItemId || "", // linked Books valve item (CR-226) — resolved by the route
   });
   const options = [];
   const tooBig = [];
@@ -45,11 +46,9 @@ function selectModels({ tph, bd, rpm = 20, group, models }) {
       tooBig.push({ series, largest: { modelCode: top.modelCode, capacity: Number(top.capacity) } });
       continue;
     }
-    // "one size up" = the next model with a genuinely larger capacity; models
-    // tied at the fitting capacity (RAVH 200 / RAVH 250D) are all offered.
-    const up = list.slice(i + 1).find((m) => Number(m.capacity) > Number(list[i].capacity));
+    // Models tied at the fitting capacity (RAVH 200 / RAVH 250D) are all offered.
     for (const m of list.filter((x) => Number(x.capacity) === Number(list[i].capacity))) {
-      options.push({ series, ...fit(m), next: up ? fit(up) : null });
+      options.push({ series, ...fit(m) });
     }
   }
   options.sort((a, b) => a.capacity - b.capacity);
@@ -66,7 +65,7 @@ if (require.main === module && process.argv.includes("--selftest")) {
   const sq = dt.options.find((o) => o.series === "Square");
   console.assert(sq && sq.modelCode === "RAVH 200" && sq.capacity === 7.35, `Square -> RAVH 200, got ${sq && sq.modelCode}`);
   console.assert(sq.requiredRpm === 18.9, `required speed 18.9, got ${sq.requiredRpm}`);
-  console.assert(sq.next && sq.next.modelCode === "RAVH 250", `one size up RAVH 250, got ${sq.next && sq.next.modelCode}`);
+  console.assert(!("next" in sq), "no one-size-up row");
   console.assert(new Set(dt.options.map((o) => o.series)).size === 4, "4 drop-through series");
   console.assert(dt.options.filter((o) => o.series === "Round Old").length === 2, "Round Old offers both 7.35 models");
   // Legacy sheet row: 1.81 × 20 × 60 × 0.3 = 651.6 kg/hr lands exactly on RAVH 100.

@@ -48,7 +48,7 @@ export default function RecipeMfgPage() {
           <MetaCard k={q.status === 'Order' ? 'Sales Order' : 'Quotation'} v={q.qtnNo} />
           <MetaCard k="Product" v={s.product?.code || q.productCode || '—'} />
           <MetaCard k="Order qty" v={`${orderQty} Nos`} />
-          <MetaCard k="Recipe snapshot" v={`${(s.recipe?.code || q.recipeCode || '').replace('RCP-', '')} v${s.recipe?.version ?? q.recipeVersion}`} />
+          <MetaCard k="Template snapshot" v={`${(s.recipe?.code || q.recipeCode || '').replace('RCP-', '')} v${s.recipe?.version ?? q.recipeVersion}`} />
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

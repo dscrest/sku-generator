@@ -2,7 +2,7 @@
 // Run: node functions/skuapi/booksImport.test.js
 // Zoho Books item-sheet import: row splitting + push field whitelist.
 const assert = require("assert");
-const { splitBooksRow, pushableBooksFields } = require("./booksImport");
+const { splitBooksRow, pickIndustry, pushableBooksFields } = require("./booksImport");
 
 // --- splitBooksRow: fixed headers route to the right places ---
 {
@@ -54,6 +54,13 @@ assert.throws(() => splitBooksRow({ "Item Type": "Widget" }), /Unknown Item Type
 
 // Numbers must parse; blanks are dropped entirely.
 assert.throws(() => splitBooksRow({ "Selling Price": "abc" }), /Selling Price must be a number/);
+// Books export format: currency prefix + thousands commas.
+{
+  const { booksData } = splitBooksRow({ "Opening Stock Value": "INR 1.00", "Selling Price": "INR 1,200.50", "Purchase Price": "₹0.21" });
+  assert.strictEqual(booksData._openingStockValue, 1);
+  assert.strictEqual(booksData.rate, 1200.5);
+  assert.strictEqual(booksData.purchase_rate, 0.21);
+}
 {
   const r = splitBooksRow({ "Item Name": "X", "Selling Price": "", SKU: "  " });
   assert.strictEqual(r.sku, "");
@@ -102,6 +109,19 @@ assert.throws(() => splitBooksRow({ Brand: "x".repeat(9600) }), /too large/);
   // Update path drops create-only keys too.
   assert.deepStrictEqual(pushableBooksFields(stored, { update: true }), { rate: 5, unit: "pcs" });
   assert.deepStrictEqual(pushableBooksFields(null), {});
+}
+
+// --- Per-row product type: Category Name picks the industry of the same name ---
+{
+  const r = splitBooksRow({ "Item Name": "AA Yarn DS", "Category Name": " Yarn " });
+  assert.strictEqual(r.category, "Yarn");
+  assert.strictEqual(splitBooksRow({ "Item Name": "X" }).category, "");
+
+  const inds = [{ id: "1", name: "Fabric" }, { id: "2", name: "Yarn " }];
+  assert.strictEqual(pickIndustry(inds, "Yarn"), "2");
+  assert.strictEqual(pickIndustry(inds, "  yARN"), "2");
+  assert.strictEqual(pickIndustry(inds, "Thread"), null); // no such product type → row fails
+  assert.strictEqual(pickIndustry(inds, ""), null);
 }
 
 console.log("booksImport.test.js OK");

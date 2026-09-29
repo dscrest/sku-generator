@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
-import GridFooter, { usePager } from '../components/GridFooter.jsx';
+import GridFooter, { usePager, FilterSelect, matches, distinct } from '../components/GridFooter.jsx';
 import { Empty } from '../components/MaterialsGrid.jsx';
 import { StatusChip, AccessNotice, select, thStyle, cell } from '../components/woCommon.jsx';
 import DataTable, { useGridColumns, ColumnChooser } from '../components/DataTable.jsx';
@@ -100,6 +100,9 @@ export default function WorkOrderReportsPage() {
   const [stockFilter, setStockFilter] = useState('all'); // all | in | low | zero
   const [hideZero, setHideZero] = useState(false); // "Ignore items with 0 stock"
   const [q, setQ] = useState('');
+  // Client-side filters over the loaded report rows; reset on view switch.
+  const [fCustomer, setFCustomer] = useState('');
+  const [fStatus, setFStatus] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState(''); // "N/total" while a chunked sync runs
   const [refreshTick, setRefreshTick] = useState(0); // bump to re-pull after a sync
@@ -194,14 +197,20 @@ export default function WorkOrderReportsPage() {
       .catch(() => setFilterOpts({ wos: [], vendors: [] }));
   }, [view, filterOpts]);
 
-  // Warehouse-stock filters are client-side; other views filter server-side.
+  // Search and the customer/status filters are client-side on every view; the
+  // WO / vendor dropdowns filter server-side.
   // VIEWS[4] payload is { warehouses, mainWarehouseId, issueWarehouseId, items }
   // — one flat entry per item with a per-warehouse stocks map. The qty filter
   // evaluates the selected warehouse's column, or the org total when "All".
   const whMeta = view === VIEWS[4] && rows && !Array.isArray(rows) ? rows : null;
-  const displayed = view !== VIEWS[4] ? (rows || []) : (whMeta?.items || []).filter(it => {
+  const list = Array.isArray(rows) ? rows : [];
+  const displayed = view !== VIEWS[4] ? list.filter(r =>
+    matches(q, r.woNumber, r.salesOrderNumber, r.customerName, r.fgName, r.rmName, r.name, r.sku, r.vendors)
+    && (!fCustomer || r.customerName === fCustomer)
+    && (!fStatus || r.status === fStatus),
+  ) : (whMeta?.items || []).filter(it => {
     const basis = whFilter ? (it.stocks[whFilter] || 0) : it.total;
-    return (!q || `${it.itemName} ${it.sku || ''}`.toLowerCase().includes(q.toLowerCase()))
+    return matches(q, it.itemName, it.sku)
       && (stockFilter === 'all' ? true
         : stockFilter === 'in' ? basis > 0
         : stockFilter === 'low' ? basis > 0 && basis < 10
@@ -232,7 +241,7 @@ export default function WorkOrderReportsPage() {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
         <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
           {VIEWS.map(v => (
-            <button key={v} onClick={() => { if (v !== view) { setRows(null); setView(v); } }} style={{
+            <button key={v} onClick={() => { if (v !== view) { setRows(null); setQ(''); setFCustomer(''); setFStatus(''); setView(v); } }} style={{
               padding: '7px 14px', fontSize: 13, border: 'none', cursor: 'pointer',
               background: v === view ? 'var(--blue)' : 'var(--bg-card)',
               color: v === view ? '#fff' : 'var(--text-secondary)', fontWeight: v === view ? 600 : 400,
@@ -253,8 +262,13 @@ export default function WorkOrderReportsPage() {
             )}
           </>
         )}
-        {view === VIEWS[4] && (
-          <input style={{ ...select, minWidth: 220 }} value={q} onChange={e => setQ(e.target.value)} placeholder="Search item name or SKU…" />
+        <input style={{ ...select, minWidth: 220 }} value={q} onChange={e => setQ(e.target.value)}
+          placeholder={view === VIEWS[4] ? 'Search item name or SKU…' : 'Search…'} aria-label="Search" />
+        {(view === VIEWS[0] || view === VIEWS[1]) && (
+          <FilterSelect label="customers" value={fCustomer} onChange={setFCustomer} options={distinct(list, 'customerName')} style={select} />
+        )}
+        {(view === VIEWS[0] || view === VIEWS[3]) && (
+          <FilterSelect label="statuses" value={fStatus} onChange={setFStatus} options={distinct(list, 'status')} style={select} />
         )}
         <div style={{ flex: 1 }} />
         {view === VIEWS[4] && (
@@ -281,6 +295,8 @@ export default function WorkOrderReportsPage() {
             : view === VIEWS[3] ? 'No work order lines to reconcile yet.'
             : view === VIEWS[4] ? 'No stock synced yet — run “Sync all stock”.'
             : 'No purchase request lines match.'}</Empty>
+        ) : view !== VIEWS[4] && !displayed.length ? (
+          <Empty>No matches.</Empty>
         ) : view === VIEWS[0] ? (
           <div style={{ marginTop: 12 }}>
             <DataTable cols={cols} rows={pageRows} onRowClick={r => navigate(`/wo/${r.id}`)} />

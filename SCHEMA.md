@@ -77,14 +77,17 @@ Removed by the `DELETE /admin/orgs/:orgId` cascade.
 ### Role
 Named per-org permission set (Users & Roles, CR-120). A user's effective
 permissions = union of their assigned roles' `perms`. **An org with zero Role
-rows is wide open** (`userPerms` returns `["*"]`) — enforcement starts with the
-first role. `ADMIN_EMAILS` super-admins always get `["*"]` regardless.
+rows is wide open** (`userPerms` returns `["*"]`); `routes/access.js`
+`ensureAdmin()` creates the reserved **`Admin`** role (CR-239) on the first
+roles read/write and assigns it to every existing org user (or to existing
+`users.manage` holders), so enforcement never starts by locking anyone out.
+`ADMIN_EMAILS` super-admins always get `["*"]` regardless.
 
 | Column | Type | Purpose |
 |--------|------|---------|
 | `orgId` | varchar(50), **mandatory** | Tenant key |
-| `name` | varchar(100), mandatory | Role display name (e.g. Purchase, Sales) |
-| `perms` | text | JSON array of permission keys (`PERM_KEYS` in `perms.js`: `wo.orders`, `wo.purchase`, `wo.bom`, `wo.reports`, `wo.settings`, `sku`, `reserve`, `estimate`, `recipe.*`, `users.manage`) |
+| `name` | varchar(100), mandatory | Role display name. **`Admin` (case-insensitive) is reserved**: full access (`["*"]`), cannot be edited/deleted, org must keep ≥1 holder |
+| `perms` | text | JSON array of permission keys (`PERM_KEYS` in `perms.js`, CR-239 shape): a module key alone = View/page access (`wo.orders`, `wo.purchase`, `wo.bom`, `wo.defects`, `wo.reports`, `wo.settings`, `sku`, `reserve`, `estimate`, `recipe.*`, `users.manage`), `<mod>.create` / `.edit` / `.delete` / `.export` = verbs, `wo.action.*` = WO action grants. Rows holding only bare keys (pre-CR-239) are read as all-verb grants (`expandLegacy`). Empty for Admin (name decides) |
 
 ### UserRole
 Role assignment, per org (a user can hold different roles in different orgs).
@@ -93,7 +96,7 @@ Role assignment, per org (a user can hold different roles in different orgs).
 |--------|------|---------|
 | `orgId` | varchar(50), **mandatory** | Tenant key |
 | `userId` | varchar(50), mandatory | AppUser ROWID |
-| `roleId` | varchar(50), mandatory | Role ROWID (assignments hand-cascaded on role delete) |
+| `roleId` | varchar(50), mandatory | Role ROWID (a role with assignments cannot be deleted — 409; the last Admin assignment cannot be removed — 400) |
 
 ### GridPref
 Org-wide grid column layout for the column chooser (CR-120) — one row per
@@ -155,6 +158,7 @@ Allowed options for a `List`-type property.
 | `createAsItem` | bool? | **CR-026 (superseded).** Old per-value "create as Books item" toggle; the gate moved to `Property.createValuesAsItems`. Column kept, no longer read |
 | `zohoItemId` | string? | **CR-026.** Linked Books `item_id` once created; presence = already linked (update instead of re-create) and drives the "Books items" tracking grid |
 | `isDefault` | bool? | **CR-094.** Marks the one value pre-selected for its property in the SKU generator. At most one true per property — enforced in the `POST`/`PUT /property-values` handlers (`clearOtherDefaults`), no DB-level uniqueness. Null/false = not default |
+| `capMin` / `capMax` | double(4)? | **CR-228.** Capacity band: the CRM configurator pre-selects this value when the industry's `capacity`-role input (TPH) falls in `[capMin, capMax]` (overlapping edges → the higher band; `configurator.html autoPick`). Null = no auto-pick. Set on the Properties page value form |
 | `orgId` | string | Tenant key |
 
 > Import can **create** PropertyValue rows: a Books custom-field value that matches
@@ -174,6 +178,7 @@ A generated, persisted product.
 | `zohoItemId` | string? | Linked Zoho Books `item_id` once pushed — also set at create time by the Books API import and by the Books-sheet import's `Item ID` column (CR-189) |
 | `lastPushedAt` | datetime? | When the SKU last landed in Books (stamped by `pushToZoho`); compared to `MODIFIEDTIME` for the "Edited · Re-push" stale-sync badge (CR-038) |
 | `booksData` | text? | JSON of Zoho Books item fields captured by the Books-sheet import (rate, hsn_or_sac, unit, product_type, item_type, package_details, …) — merged into the Books push payload; `_`-prefixed keys are reference-only (CR-127) |
+| `uom` | string(20)? | **CR-206.** Item unit from the configurator widget (`Nos`, `Kgs`, `MM` … — `recipe/componentMap.js` `UOMS`, free text tolerated). Sent as the Books item `unit` on push (beats `booksData.unit`); null = legacy `pcs` |
 | `orgId` | string | Tenant key |
 
 ### SKUItemValue
@@ -243,7 +248,7 @@ become a column. Read via `workorder/settings.js`.
 | Column | Type | Purpose |
 |--------|------|---------|
 | `orgId` | string | Tenant key |
-| `settingKey` | string | `mainWarehouseId`, `reserveWarehouseId`, `issueWarehouseId`, `purchaseTeamEmail`, `approverL1Email`, `approverL2Email`, `approvalLevels` (`0`/`1`/`2`; unset = derive from approver emails, CR-082), `shortfallAlertDays`, `costAlertPct`, `woNumberPrefix`, `prNumberPrefix`, `txnNumberPrefix` — the full list is `SETTING_KEYS` in `workorder/store.js` |
+| `settingKey` | string | `mainWarehouseId`, `reserveWarehouseId`, `issueWarehouseId`, `pickMainPerWo` (`true` = a new work order must carry its own Main, CR-260), `purchaseTeamEmail`, `approverL1Email`, `approverL2Email`, `approvalLevels` (`0`/`1`/`2`; unset = derive from approver emails, CR-082), `shortfallAlertDays`, `costAlertPct`, `woNumberPrefix`, `prNumberPrefix`, `txnNumberPrefix` — the full list is `SETTING_KEYS` in `workorder/store.js`; SKU-module keys (`skuSeriesMode`, `cfgNoAutoPush`, `skuItemFields`, `cfgDesignRate` = CR-211 design-cost switch for the CRM Product Configurator, `priceLadder` = CR-220 JSON `{"mfg":{"oh","margin","pf","other","disc"},"bo":{…}}` % sets per line class for the configurator's Base → … → Disc ladder, `uomList` = CR-216 comma-separated units of measure for every UOM dropdown (blank = the standard list in `recipe/componentMap.js`), …) are read by `settingsOut()` in `routes/skuItems.js` |
 | `settingValue` | string(255) | Always stored as text; callers coerce |
 | `settingText` | text(10000) | Large JSON settings that overflow `settingValue` (CR-192): keys `estimateTpl` (one row per quote T&C template, `{ name, terms[] }`, template id = ROWID — the only key with many rows per org) and `estimateBank` (shared bank/contact table). `settingValue` stays blank on these rows, so `settings()` ignores them |
 
@@ -273,9 +278,11 @@ The BRD's BOM header — one per Work Order, linked to a confirmed Sales Order.
 | `buyerOrderNo` / `buyerOrderDate` | string? | SO custom fields "Buyer Order No" / "Buyer Order Date", label-matched (CR-110) |
 | `freightCharge` / `delivery` / `booking` / `transporter` | string? | SO custom fields "Freight Charge" / "Delivery" / "Booking" / "Transporter", label-matched, re-synced on every open (CR-161) |
 | `tcRequired` | string? | `Yes` \| `No` \| blank — test certificate required; user-entered at create / Edit (CR-161) |
+| `soLinesJson` | string? | **CR-250.** JSON `{ seen: [SO line ids], pending: [{ lineItemId, itemId, name, sku, qty }] }` — SO lines Sales added after create that await Add / Dismiss on Details. `null` = pre-CR row, baselined on first open. Written by create, `GET /:id`, the `salesorder` webhook and `POST /:id/so-line` |
+| `mainWarehouseId` | string? | **CR-249.** This WO's Main warehouse (Books warehouse id); blank = the org `mainWarehouseId` setting. `store.warehouses(…, wo)` swaps `main` for it, so column B stock, reserve source, return / de-reserve target, assembly FG target and WO-scoped PO delivery follow it. Editable only while nothing is reserved / issued |
 | `woPriority` | string? | User-entered at WO create (Low/Medium/High/Urgent; SO custom field "Priority" is prefill only, CR-113) — column named `woPriority` because `priority` is a Catalyst reserved keyword; API serves it as `priority` (CR-110) |
 | `dueDate` | string? | = `shipmentDate` — the SO's Expected Shipment (built-in `shipment_date`, or a CF labelled "Expected Shipment (Date)"), re-synced on every open (CR-159); due *days* are computed client-side, never stored (CR-110) |
-| `machiningDoneDate` / `fittingDoneDate` | string? | Machining / Fitting date, asked on → Ready for Machining (fitting optional) and again on → Fitting in Progress if fitting is still blank (CR-160, CR-170); shown on the WO header card |
+| `machiningDoneDate` / `fittingDoneDate` | string? | Machining / Fitting date, asked on → Ready for Machining (fitting optional) and again on → Fitting in Progress if fitting is still blank (CR-160, CR-170); shown on the WO header card. Editable from ✎ Edit / `PUT /:id` since CR-251 (auto-opened after an SO qty / line change) |
 
 `woPriority` is the only user-owned column (`USER_OWNED`, `workorder/soFields.js`): the on-open SO re-sync only backfills it when blank (CR-113); every other SO-derived column re-syncs on every open.
 
@@ -291,6 +298,10 @@ One finished good on the work order (an SO line). A WO may carry several.
 | `fgQty` | number | Quantity to produce — the multiplier for column A |
 | `assembledQty` | number | Units turned into FG stock via Zoho assemblies (CR-126) |
 | `status` | string? | `Closed` once `assembledQty ≥ fgQty`; blank otherwise (CR-126) |
+| `soLineItemId` | string? | **CR-204.** The Books SO `line_item_id` this FG was created from (blank on older rows → matched by item) |
+| `soQty` | number? | **CR-204.** The SO line quantity as last seen (WO open / `salesorder` webhook). `null` = never synced |
+| `soAckQty` | number? | **CR-204.** The SO quantity the planner acknowledged — set at create, by Apply and by Dismiss. `soQty ≠ soAckQty` = the amber "SO qty" badge |
+| `configJson` | text? | **CR-261.** Frozen quote configuration `{ quoteNo, industryId, sel, values }` of a valve configured in the CRM Product Configurator (≤9500 chars). Set at create when the SO names a saved quote; blank otherwise. Present = the BOM comes from the Component Map for these answers and the FG never writes to the shared Books composite |
 
 ### WorkOrderLine
 The **frozen RM requirement** for this WO — the BOM as it stood when imported.
@@ -304,7 +315,7 @@ edit cannot retroactively rewrite a closed work order.
 | `rmName` / `rmSku` / `uom` | string? | Denormalised |
 | `perUnitQty` | number | From `composite_item.mapped_items[].quantity` |
 | `requiredQty` | number | Column **A** = `perUnitQty × fgQty` |
-| `source` | string | `composite` \| `excel` \| `manual` \| `self` (non-composite SO item is its own one-line BOM, CR-152) |
+| `source` | string | `composite` \| `excel` \| `manual` \| `self` (non-composite SO item is its own one-line BOM, CR-152) \| `quote` (resolved from the FG's `configJson`, CR-261) |
 | `diffStatus` | string? | `unchanged` \| `new` \| `qtyChanged` \| `removed` — drives the import diff colours |
 | `prevQty` | number? | Previous `requiredQty` when `diffStatus = qtyChanged` |
 | `revision` | number | Revision this line belongs to |
@@ -401,8 +412,32 @@ assemblies each get a row; `WorkOrderFG.assembledQty` is the running sum.
 | `fgItemId` | string | Zoho composite item id |
 | `qty` | number | Units assembled by this bundle |
 | `zohoBundleId` / `zohoBundleNumber` | string? | The Zoho Inventory bundle |
+| `zohoTransferOrderId` / `zohoTransferOrderNumber` | string? | **CR-202.** The Issue → Main Transfer Order created for the finished good, so Delete assembly can remove it. Blank on rows from before CR-202 (delete then warns to remove the TO in Zoho) |
 | `serialNumbers` | text? | **CR-150.** JSON array of the finished-good serials this bundle produced (`["KGV2026001", …]`, `<ValveTypeCode><YYYY><NNN>`); 10000 chars ⇒ ≤700 units per assembly |
 | `createdBy` | string? | AppUser ROWID |
+
+### DefectReturn — table id `69851000000295789` (CR-203)
+One defective-material line pulled off a work order. The units went back to
+Main through an ordinary `return` MaterialTxn (`txnId`); while the row is
+`pending` or `returned_to_vendor` its quantity / batches / serials are
+**blocked** from every pool the app reads (`workorder/blocks.js`).
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `orgId` (mandatory), `workOrderId`, `workOrderFgId`, `itemId` | varchar 50 | Keys |
+| `woNumber` v50, `fgName` v255, `itemName` v255, `itemSku` v100 | string | Denormalised for the Store issues grid |
+| `qty` | double | Defective units |
+| `trackingJson` | text | The picks, `MaterialTxnLine.trackingJson` shape: `{serials:[…]}` / `{batches:[{batch_id,batch_number,qty}]}`; blank for untracked items |
+| `reason` / `actionReason` | text | Why it was defective / why the manager decided as they did |
+| `photoFileId` / `photoType` | varchar 50 | Catalyst File Store file id (folder `defects`) + mime; blank = no photo |
+| `status` | varchar 50 | `pending` → `repaired` (usable again) / `adjusted` (Zoho inventory adjustment −qty at Main) / `returned_to_vendor` (stays blocked) |
+| `txnId` | varchar 50 | The confirmed return `MaterialTxn` |
+| `replacementItemId` / `replacementName` | string | The different item the store manager chose (CR-244; before that, the shop-floor pick). Written right after the BOM swap so a refused reserve can be retried without a second swap |
+| `replacementStatus` | varchar 50 | **CR-244.** `''` = awaiting the manager's replacement decision → `issued` (reserved & issued) / `pr_raised` (purchase request only) / `both` / `legacy` (rows raised before CR-244, backfilled). Independent of `status` — a row is "open" while either is undecided |
+| `replacementRef` | varchar 255 | **CR-244.** Display only: the Transfer Order and/or PR numbers the decision produced ("TO-12, TO-13, PR-0007") |
+| `zohoAdjustmentId` | varchar 50 | Set by the `adjusted` action |
+| `raisedBy` / `actionedBy` | varchar 50 | AppUser ROWID |
+| `raisedAt` / `actionedAt` | datetime | |
 
 ### CompositeItemCache
 Read model for the BOM. Zoho stays master; this makes opening a work order cost
@@ -511,9 +546,9 @@ DRILLING "Drill Etc", ASSEMBLY "Assembly") offered by the builder's
 | `rate` | number | Default value (CR-106): org default on master rows; optional per-recipe override, blank = inherit master live. Precedence: option `fixedCosts[code]` / quote override → `rate` → 0 |
 
 ### RecipeTemplate — table id `69851000000261063`
-One row per (code, version); lineage = same org + code. `Draft` is the only
-writable status (`assertDraft` guards every write); publish supersedes the
-prior published version of the same code.
+One row per design (CR-266: live when created, edited in place — no draft,
+publish or versions). Before CR-266 it was one row per (code, version), and
+publishing superseded the prior published version of the same code.
 
 | Column | Type | Purpose |
 |--------|------|---------|
@@ -522,12 +557,13 @@ prior published version of the same code.
 | `name` | string(255) | |
 | `productItemId` | string(50) | `SKUItem` ROWID (main ERP product; may be blank) |
 | `productCode` / `productName` | string | Denormalized for lists + snapshots |
-| `version` | int | 1, 2, 3… per code |
-| `status` | string(20) | `Draft` → `Published` → `Superseded`; `Archived` |
+| `version` | int | Always 1 for new rows; unused since CR-266 |
+| `status` | string(20) | `Published` = Active (set at create), `Archived` = Inactive. `Superseded` = an old version from before CR-266 (read-only, hidden from the list); `Draft` is legacy and no longer written |
 | `effectiveFrom` | string(20) | |
 | `changeReason` | string(255) | Version timeline text |
 | `updatedBy` | string(50) | AppUser id |
 | `booksCompositeItemId` | string(50) | Linked Zoho Books composite item id (CR-143). Copied into new versions so the lineage keeps pushing to the same composite; written by `POST /recipes/:id/push-books` outside `assertDraft` (works on Published recipes — link storage is not a recipe edit) |
+| `uom` | string(20) | **CR-221.** Unit of the finished product, canonicalised against the org UOM list (`normUom`); blank = unset |
 
 ### RecipeComponent — table id `69851000000258454`
 
@@ -544,6 +580,7 @@ prior published version of the same code.
 | `allowMaterial` | bool | Sales pick the material (configurable component) |
 | `allowQtyOverride` / `allowComponentOverride` | bool | Flags stored; no wizard behavior yet (v1) |
 | `parentComponentId` | string(50) | Nesting hook — column only, no UI (v1) |
+| `skuItemId` | string(50) | **CR-221.** Optional linked `SKUItem` ROWID; own-org only (`skuItemRef`), blank = unlinked. **CR-236:** no longer written by the New/Edit page or the builder drawer (a component is a plain name; its Books items are the allowed materials via `RecipeComponentOption`) — still read by `POST /sizing/bom` |
 
 ### RecipeComponentOption — table id `69851000000259591`
 Allowed material per component with its per-material costing inputs.
@@ -588,8 +625,9 @@ smallest Active model whose `capacity` covers the duty (`recipe/sizing.js`).
 | `series` | string(50) | Sheet column (`Square`, `RAVH-S Square`, `Round`, `Round Old`, `RAVH-S IC`, `RAVS`, `CB`, `RAVB Square`); must equal a value of the `series`-role question |
 | `modelCode` | string(50) | e.g. `RAVH 150`; must equal a value of the `model`-role question (name match — no value id stored) |
 | `capacity` | double(15,4) | ltr/rev |
-| `recipeCode` | string(50) | `RecipeTemplate.code` lineage (survives versions). Stored hook for design-driven BOM/price — not read yet |
+| `recipeCode` | string(50) | `RecipeTemplate.code` lineage (survives versions). Read by `POST /api/recipe/sizing/price` (CR-211): the widget's design cost for the picked model (Published version, else newest); blank = no rate lookup. Also read by `POST /api/recipe/sizing/bom` (CR-227): the design's component list shown under the picked model (blank → the design whose `productItemId` is the linked Books item, else none) |
 | `status` | string(20) | `Active` \| `Inactive` |
+| `skuItemId` | string(50)? | **CR-226.** `SKUItem` ROWID of the Books valve item the configurator quotes for this model (column 69851000000293592); blank = the widget generates a new SKU for the pick. Set on the Sizing Models grid; `POST /api/recipe/sizing/select` returns it as `item` |
 
 ### ComponentMap — table id `69851000000291466` (CR-194)
 Product Configurator component map: "when these answers hold, component X is
@@ -606,9 +644,34 @@ composite BOM of a Manufacturing item.
 | `conditionsJson` | text | `[{propertyId, valueId}]`, AND-ed; `[]` = always. SKU-active List questions only. Guarded to ≤ 9500 chars |
 | `skuItemId` | string(255) | Component `SKUItem` ROWID |
 | `qty` | double(15,4) | Per-unit qty (default 1) |
+| `uom` | string(20)? | **CR-206.** Unit of `qty` (`Nos`, `Kgs`, `MM` …; `normUom`, blank/null reads as `Nos`). Shown in the widget's component list and inherited by separate-line quote lines |
 | `qtyPropertyId` | string(255)? | When set, qty = the numeric answer of this Range question (companion flanges); answer ≤ 0 drops the line |
 | `required` | boolean | Component with a required row and no match → `missing` (widget shows it red, Books push fails) |
+| `asQuoteLine` | boolean | **CR-195.** "Goes as: Separate quote line" — the matched component is sold loose: the widget adds it to the cart as its own quote line and `push.js` leaves it out of the composite BOM. Default false = BOM line |
 | `status` | string(255) | `Active` \| `Inactive` |
+
+### ConfigQuote — table id `69851000000294788` (CR-246)
+The CRM Product Configurator widget's saved cart, one per CRM record per org
+(`routes/recipe.js` `GET /config-quote`, `POST /config-quote/:docKey`). Seed of
+the planned `PlanQuote` (system quote, CR-C).
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `orgId` | varchar(50), **mandatory** | Tenant key |
+| `docKey` | varchar(80), mandatory | `quotes:<crm quote id>` \| `deals:<crm deal id>` (a Deal → Create Quote saves the same cart under both) |
+| `crmRowIds` | text | JSON array of the Quoted_Items / custom-subform row ids the widget wrote and still owns — dropped from `keepRows` and replaced on the next push; rows typed by hand in CRM are never in it |
+| `quoteNo` | varchar(100)? | **CR-261.** The CRM quote number (`Quote_No`, else `Quote_Number`) — what the converted Books SO carries; the work order finds the cart by it (`workorder/quoteBom.js`). Blank on Deal carts and on carts saved before CR-261 (filled on the next save) |
+
+### ConfigQuoteLine — table id `69851000000312383` (CR-246)
+Row per cart line — replaced wholesale on every save (PackingBox pattern).
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `orgId` | varchar(50), **mandatory** | Tenant key |
+| `quoteId` | varchar(20), mandatory | ConfigQuote ROWID (string FK, hand-cascaded) |
+| `seq` | int, mandatory | Cart order |
+| `lineJson` | text | The widget line ≤9500 chars: `{id, sku, name, type, values, qty, uom, rate, disc, cls, rateTouched, badge, parent, config}`; `config = {industryId, sel, motorOp, sizingInput, pick:{modelCode, series}}` is what Edit re-opens (absent on loose component lines, which follow their `parent`). Over the cap → 413, never truncated |
+| `bomJson` | text | `[{c, item, qty, cls}]` — the component list as shown under the SKU when the line was added; trimmed from the end to fit 9500 chars |
 
 ### RecipeQuotation — table id `69851000000258813`
 Self-contained quotation with the **immutable configuration snapshot**.
@@ -669,6 +732,27 @@ Newest first. One row per applied schema change; link the CR that requested it.
 
 | Date | CR | Change | Applied |
 |------|----|--------|---------|
+| 2026-09-29 | [CR-266](CHANGES.md) | No schema change — `RecipeTemplate.status` meaning: `Published` = Active from create, `Draft` no longer written; `version` / `changeReason` unused. Data (Dev, via Catalyst MCP): 6 `Draft` rows → `Published` (69851000000256280, …264177, …276254, …293685, …297835, …314161); 2 `Draft` v2 rows → `Superseded` (69851000000252309, …313126); 2 `Draft` v2 rows left as they are pending the user's pick (69851000000312281, …252320) | ✅ live (Dev), 2 rows pending |
+| 2026-09-29 | [CR-261](CHANGES.md) | `ConfigQuote.quoteNo` varchar 100 nullable (column 69851000000293965) — CRM quote number, the SO → quote link; `WorkOrderFG.configJson` text nullable (column 69851000000312879) — frozen quote configuration of a configured valve. Added via Catalyst MCP | ✅ live (Dev) |
+| 2026-09-28 | [CR-250](CHANGES.md) | `WorkOrder.soLinesJson` text nullable (column 69851000000312756) — new SO lines awaiting Add / Dismiss. Added via Catalyst MCP | ✅ live (Dev) |
+| 2026-09-28 | [CR-249](CHANGES.md) | `WorkOrder.mainWarehouseId` varchar 255 nullable (column 69851000000314101) — per-WO Main warehouse, blank = org setting. Added via Catalyst MCP | ✅ live (Dev) |
+| 2026-09-28 | [CR-246](CHANGES.md) | New tables `ConfigQuote` (69851000000294788: `orgId` varchar 50 mandatory 69851000000288882, `docKey` varchar 80 mandatory 69851000000288883, `crmRowIds` text 69851000000288884) + `ConfigQuoteLine` (69851000000312383: `orgId` varchar 50 mandatory 69851000000313284, `quoteId` varchar 20 mandatory 69851000000313285, `seq` int mandatory 69851000000313286, `lineJson` text 69851000000313287, `bomJson` text 69851000000313288) — the CRM Product Configurator's saved cart per record. Added via Catalyst MCP (Development) | ✅ live (Dev) |
+| 2026-09-23 | [CR-228](CHANGES.md) | `PropertyValue.capMin` + `PropertyValue.capMax` (double 4dp, nullable, columns 69851000000292998 / 69851000000297831) — capacity band that pre-selects the value in the CRM configurator. Added via Catalyst MCP (Development). Data (Ricon): 8 Motor `ComponentMap` rows lose the Motor supply condition, 8 Loose rows `Inactive`; `Property` Motor HP `zohoCfApiName = cf_capacity`; bands on the six Motor HP values | ✅ live (Dev) |
+| 2026-09-23 | [CR-226](CHANGES.md) | `SizingModel.skuItemId` (varchar 50, nullable, column 69851000000293592) — linked Books valve item for the configurator. Added via Catalyst MCP (Development) | ✅ live (Dev) |
+| 2026-09-23 | [CR-216](CHANGES.md) | No schema change — new `OrgSetting` key `uomList` (comma-separated units of measure, ≤255 chars, ≤20 chars per unit; blank = the standard list `Nos,Pcs,Kgs,Gms,Mtr,CM,MM,Ltr,Set,Box`). Written by `PUT /api/sku-items/settings` (`uoms`), read by `GET /api/recipe/uoms`, the settings GET and `normUom()` at item / Component Map writes | ✅ n/a |
+| 2026-09-23 | [CR-220](CHANGES.md) | No schema change — new `OrgSetting` key `priceLadder` (JSON in `settingValue`, ~110 chars: per-class OH/Margin/P&F/Other/Disc % for the CRM Product Configurator price ladder; unset = all 0 = unit price equals base). Written by `PUT /api/sku-items/settings` | ✅ n/a |
+| 2026-09-23 | [CR-211](CHANGES.md) | No schema change — new `OrgSetting` key `cfgDesignRate` (`true` = CRM Product Configurator fills Rate from the picked model's Product Design; row 69851000000293588 for Ricon 60079238204). `SizingModel.recipeCode` now read by `POST /api/recipe/sizing/price`. Data via Catalyst MCP (Dev): 7 `MaterialType` plate/rod rows, recipes `RCP-RAVS150` (69851000000312150) + `RCP-RAVH150-SS` (69851000000299877) with components/options/cost elements | ✅ n/a |
+| 2026-09-23 | [CR-210](CHANGES.md) | No schema change — Manufacturer values still stored as text in `SKUItem.booksData.manufacturer`; the dropdown source is the Books master, read live | ✅ n/a |
+| 2026-09-23 | [CR-209](CHANGES.md) | No schema change — new `OrgSetting` key `skuItemFields` (comma-separated enabled extra item fields from `itemFields.js` `ITEM_FIELDS`: `hsn_or_sac`, `manufacturer`; blank = org sees none). Values stored in the existing `SKUItem.booksData` JSON under the Books field keys. Data seed via Catalyst MCP (Dev): row 69851000000294624 for Fotedar India 907623451 = `hsn_or_sac,manufacturer` | ✅ n/a |
+| 2026-09-23 | [CR-206](CHANGES.md) | `ComponentMap.uom` (varchar 20, nullable, 69851000000288661) + `SKUItem.uom` (varchar 20, nullable, 69851000000312154) — unit of the component qty / the item's Books unit. Added via Catalyst MCP | ✅ live (Dev) |
+| 2026-09-26 | [CR-244](CHANGES.md) | `DefectReturn.replacementStatus` (varchar 50, nullable) + `DefectReturn.replacementRef` (varchar 255, nullable) — the store manager's replacement decision, separate from the disposition `status`. Added via Catalyst MCP 2026-09-28 — column ids `69851000000299964` (`replacementStatus`), `69851000000299965` (`replacementRef`). Legacy backfill (`UPDATE … SET replacementStatus = 'legacy'`) ran against an empty table — no pre-CR rows existed in Dev | ✅ live (Dev) |
+| 2026-09-23 | [CR-204](CHANGES.md) | `WorkOrderFG.soLineItemId` (varchar 50, nullable, 69851000000293584), `WorkOrderFG.soQty` (double 4dp, nullable, 69851000000293585), `WorkOrderFG.soAckQty` (double 4dp, nullable, 69851000000297740) — SO line link, last-seen SO qty, acknowledged SO qty. Added via Catalyst MCP | ✅ live (Dev) |
+| 2026-09-23 | [CR-203](CHANGES.md) | New table `DefectReturn` (69851000000295789; columns 69851000000294578–600: `orgId` mandatory, `workOrderId`, `workOrderFgId`, `itemId`, `woNumber`, `fgName`, `itemName`, `itemSku`, `qty` double 4dp, `trackingJson` text, `reason` text, `actionReason` text, `photoFileId`, `photoType`, `status`, `txnId`, `replacementItemId`, `replacementName`, `zohoAdjustmentId`, `raisedBy`, `actionedBy`, `raisedAt` datetime, `actionedAt` datetime). Catalyst File Store folder `defects` is created by the function on first upload. New `OrgSetting` key `storeIssueEmail`. Added via Catalyst MCP | ✅ live (Dev) |
+| 2026-09-23 | [CR-202](CHANGES.md) | `WoAssembly.zohoTransferOrderId` (varchar 100, nullable, 69851000000293580) + `WoAssembly.zohoTransferOrderNumber` (varchar 100, nullable, 69851000000293581) — the FG transfer order per assembly, for Delete assembly. Added via Catalyst MCP | ✅ live (Dev) |
+| 2026-09-22 | [CR-199](CHANGES.md) | No schema change — CRM Products create from the quote widgets now sends fixed picklists `Product Type = goods`, `Item Classification = Finished Good` (resolved by field label; skipped when the module lacks the field) | n/a |
+| 2026-09-23 | [CR-221](CHANGES.md) | `RecipeTemplate.uom` (varchar 20, nullable, 69851000000291975) + `RecipeComponent.skuItemId` (varchar 50, nullable, 69851000000288714) — Books-style New page: product unit + Associate Items link to the SKU master. Added via Catalyst MCP | ✅ live (Dev) |
+| 2026-09-22 | [CR-197](CHANGES.md) | No schema change — data (Ricon org 60079238204, via Catalyst MCP): demo `RecipeTemplate` 69851000000296717 and its `RecipeComponent` / `RecipeComponentOption` / per-recipe `CostElement` rows deleted; Draft `RecipeTemplate` 69851000000291888 `RCP-RAVH100-SSQ` inserted with 6 components, 4 CI options, 4 cost elements. `POST /api/recipe/seed-demo` removed | ✅ n/a |
+| 2026-09-22 | [CR-195](CHANGES.md) | `ComponentMap.asQuoteLine` (boolean, default false, column id 69851000000294542) — component sold as its own quote/SO line, excluded from the composite BOM. Added via Catalyst MCP (Development). Data seed (not schema): `POST /api/recipe/seed-rav-map` adds the RAV question `Motor supply` (Fitted/Loose) + 7 sample map rows for Ricon | ✅ live (Dev) |
 | 2026-09-21 | [CR-194](CHANGES.md) | New table `ComponentMap` (69851000000291466: `orgId`, `industryId`, `component`, `conditionsJson` text, `skuItemId`, `qty` double 4dp, `qtyPropertyId`, `required` boolean default false, `status`). Added via Catalyst MCP (Development) | ✅ live (Dev) |
 | 2026-09-21 | [CR-192](CHANGES.md) | `OrgSetting.settingText` text(10000) — quote T&C templates JSON (keys `estimateTpl` ×N, `estimateBank`) | ✅ live (Dev, via MCP) |
 | 2026-09-18 | [CR-184](CHANGES.md) | No schema change — `OrgSetting` key `cfgNoAutoPush` (`true` = CRM widgets save new items to the SKU master without pushing to Books; blank = push at once) replaces `cfgNoAutoCreate`, which is now ignored | ✅ n/a |

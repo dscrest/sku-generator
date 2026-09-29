@@ -3,7 +3,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import Modal, { ModalFooter, ModalBtn } from './Modal.jsx';
 import RowMenu from './RowMenu.jsx';
-import GridFooter, { usePager } from './GridFooter.jsx';
+import GridFooter, { usePager, FilterSelect, SearchInput, matches, distinct } from './GridFooter.jsx';
 import { Empty, Banner } from './MaterialsGrid.jsx';
 import { select, btn, StatusChip, fgLabel } from './woCommon.jsx';
 import DataTable, { useGridColumns, ColumnChooser } from './DataTable.jsx';
@@ -40,7 +40,7 @@ const buildColumns = (locked, setModal) => [
   {
     key: 'actions', label: '', lock: true, align: 'right', width: 110, render: l => (
       !locked && l.requiredQty > 0 && (
-        <RowMenu editLabel="Edit / replace" onEdit={() => setModal({ mode: 'replace', line: l })} deleteLabel="Remove" onDelete={() => setModal({ mode: 'remove', line: l })} />
+        <RowMenu onEdit={() => setModal({ mode: 'replace', line: l })} deleteLabel="Remove" onDelete={() => setModal({ mode: 'remove', line: l })} />
       )
     ),
   },
@@ -50,6 +50,8 @@ export default function WoItemsTab({ workOrderId, fgs, status, onChanged }) {
   const [fgId, setFgId] = useState(fgs[0]?.id || null);
   const [data, setData] = useState(null);
   const [modal, setModal] = useState(null); // { mode: 'add' | 'replace' | 'remove', line? }
+  const [q, setQ] = useState('');
+  const [fSource, setFSource] = useState('');
   const locked = LOCKED.includes(status);
   const fg = fgs.find(f => String(f.id) === String(fgId)) || fgs[0];
 
@@ -62,7 +64,8 @@ export default function WoItemsTab({ workOrderId, fgs, status, onChanged }) {
   useEffect(() => { setData(null); load(fgId); /* eslint-disable-next-line */ }, [fgId, workOrderId]);
 
   const lines = data?.lines || [];
-  const { pageRows, pager } = usePager(lines);
+  const shown = lines.filter(l => matches(q, l.rmName, l.rmSku) && (!fSource || l.source === fSource));
+  const { pageRows, pager } = usePager(shown);
   const { cols, chooser } = useGridColumns('wo.items', buildColumns(locked, setModal));
   // Substitution notes: every revision that changed something, newest first.
   const changes = (data?.revisions || []).filter(r =>
@@ -95,12 +98,15 @@ export default function WoItemsTab({ workOrderId, fgs, status, onChanged }) {
           </span>
         )}
         <div style={{ flex: 1 }} />
+        <SearchInput value={q} onChange={setQ} placeholder="Search item or SKU…" />
+        <FilterSelect label="sources" value={fSource} onChange={setFSource} options={distinct(lines, 'source')} />
         <ColumnChooser chooser={chooser} />
         {!locked && <button onClick={() => setModal({ mode: 'add' })} style={btn}>＋ Add item</button>}
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', padding: '0 20px 16px' }}>
-        {!data ? <Empty>Loading…</Empty> : !lines.length ? <Empty>No items on this finished good yet.</Empty> : (
+        {!data ? <Empty>Loading…</Empty> : !lines.length ? <Empty>No items on this finished good yet.</Empty>
+          : !shown.length ? <Empty>No matches.</Empty> : (
           <DataTable cols={cols} rows={pageRows} rowStyle={l => ({ opacity: l.requiredQty === 0 ? 0.55 : 1 })} />
         )}
 
@@ -147,8 +153,8 @@ function summaryText(s) {
 // ---- one modal for the three edits -----------------------------------------
 
 const TITLES = {
-  add: 'Add an item',
-  replace: 'Edit / replace item',
+  add: 'New',
+  replace: 'Edit',
   remove: 'Remove item',
 };
 

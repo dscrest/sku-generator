@@ -32,7 +32,9 @@ export default function Modal({ title, onClose, onSubmit, children, width = 480 
           width, maxWidth: '95vw',
           boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
           overflow: 'hidden',
-          animation: 'modalIn 0.2s ease forwards',
+          // No `forwards`: a lingering transform would trap position:fixed
+          // popovers (DateInput, RowMenu) inside the overflow:hidden box.
+          animation: 'modalIn 0.2s ease',
         }}
       >
         <style>{`@keyframes modalIn { from { opacity:0; transform:translateY(20px) scale(0.97); } to { opacity:1; transform:translateY(0) scale(1); } }`}</style>

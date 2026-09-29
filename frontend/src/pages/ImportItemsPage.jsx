@@ -4,14 +4,18 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import { readXlsxFile, matrixFromText, parseBooksComposites, downloadBooksSample } from '../components/BomTab';
 import { autoMap, applyMapping } from '../components/booksMapping';
+import PickList from '../components/PickList';
 
 // Bulk item import (CR-092): upload a Zoho Books item sheet → map columns to
 // Books fields (exact-name matches auto-map, rest by hand) → per-row
 // Name/SKU/Description via the same engine as the manual generator → local
-// SKUItem rows. One fixed sample file for every product type; the product type
-// is auto-picked (selector shown only when the org has several). Composite
+// SKUItem rows. One fixed sample file for every product type. The product type
+// picked on the page applies to every row; "From Category Name" (the default
+// when the org has several) sends each row to the product type named like its
+// Category Name. Composite
 // items import inline here too (Books composite export → /api/wo/composites).
 // Push to Books is manual unless the org's auto-push setting (SKU Settings) is on.
+// The sample download is an info link under the upload button, not a step.
 
 const T = {
   accent: '#4f46e5', ink: '#0f172a', ink3: '#64748b', border: '#e2e8f0',
@@ -37,7 +41,7 @@ const card = (active) => ({
 
 // Fixed columns of the Zoho Books item import/export sheet (sample_items.csv).
 const BOOKS_HEADERS = [
-  'Item Name', 'SKU', 'Item ID', 'HSN/SAC', 'Sales Description', 'Selling Price',
+  'Item Name', 'SKU', 'Item ID', 'Category Name', 'HSN/SAC', 'Sales Description', 'Selling Price',
   'Is Returnable Item', 'Brand', 'Manufacturer', 'UPC', 'EAN', 'ISBN',
   'Part Number', 'Product Type', 'Sales Account', 'Unit', 'Purchase Description',
   'Purchase Price', 'Item Type', 'Purchase Account', 'Inventory Account',
@@ -62,6 +66,53 @@ function matrixToRows(matrix) {
     });
 }
 
+const fmtSize = (b) => (b < 1048576 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1048576).toFixed(1)} MB`);
+const hint = { margin: '8px 0 0', fontSize: 12, color: T.ink3 };
+const linkBtn = {
+  background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit',
+  color: T.accent, textDecoration: 'underline',
+};
+
+// Visible button + hidden input. The handlers clear the input's value (so the
+// same file can be re-picked), so the picked file is shown from state instead.
+function FilePick({ onChange, picked }) {
+  const ref = useRef(null);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      <button onClick={() => ref.current?.click()} style={btn(T.accent)}>
+        ⬆ {picked ? 'Change file' : 'Choose file'}
+      </button>
+      <input ref={ref} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" onChange={onChange} style={{ display: 'none' }} />
+      <span style={{ fontSize: 13, color: picked ? T.ink : T.ink3 }}>
+        {picked ? `📄 ${picked}` : 'No file selected'}
+      </span>
+    </div>
+  );
+}
+
+const NOT_MAPPED = '— not mapped —';
+
+// Typable column picker: PickList filters as you type, but only a real file
+// column commits — other text is dropped on blur. Focus blanks the text so the
+// whole list shows; the current column stays visible as the placeholder.
+function ColumnPick({ value, options, onChange }) {
+  const [text, setText] = useState(null); // null ⇔ not editing
+  return (
+    <PickList
+      value={text ?? value}
+      options={options}
+      placeholder={value || NOT_MAPPED}
+      onChange={(v) => {
+        setText(v);
+        if (v === NOT_MAPPED) onChange('');
+        else if (options.includes(v)) onChange(v);
+      }}
+      inputProps={{ onFocusCapture: () => setText(''), onBlur: () => setText(null) }}
+      style={{ ...ctrl, height: 28, width: '100%', borderColor: value ? T.borderStrong : T.border }}
+    />
+  );
+}
+
 export default function ImportItemsPage() {
   const [kind, setKind] = useState('simple'); // 'simple' | 'composite'
   const [industries, setIndustries] = useState([]);
@@ -73,28 +124,40 @@ export default function ImportItemsPage() {
   const [fileName, setFileName] = useState('');
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
-  const fileRef = useRef(null);
 
   useEffect(() => {
     axios.get('/api/industries')
       .then((r) => {
         const list = r.data || [];
         setIndustries(list);
-        setIndustryId(list[0]?.id || ''); // auto-pick; selector shown only when several
+        // '' = From Category Name. A single product type needs no choice.
+        setIndustryId(list.length === 1 ? list[0].id : '');
       })
       .catch(() => toast.error('Failed to load product types'));
+    // Every product type's properties in one call — rows route per Category Name.
+    axios.get('/api/properties')
+      .then((r) => setProperties((r.data || []).filter((p) => p.activeInSku !== false)))
+      .catch(() => toast.error('Failed to load properties'));
   }, []);
 
-  useEffect(() => {
-    setProperties([]); setRows([]); setCsvHeaders([]); setMapping({}); setResult(null); setFileName('');
-    if (!industryId) return;
-    axios.get(`/api/industries/${industryId}/properties`)
-      .then((r) => setProperties((r.data || []).filter((p) => p.activeInSku !== false)
-        .sort((a, b) => (a.skuPosition ?? 0) - (b.skuPosition ?? 0))))
-      .catch(() => toast.error('Failed to load properties'));
-  }, [industryId]);
-
-  const templateHeaders = [...BOOKS_HEADERS, ...properties.map((p) => `${p.caption} (Custom Field)`)];
+  // One mapping row per caption; a caption shared by product types lists them all.
+  // `mapping` covers every product type's fields (switching the product type
+  // keeps hand-made mappings); the table shows the picked product type's only.
+  const typesByField = {};
+  const seen = new Map(); // lowercased caption → field
+  const shownProps = new Set();
+  for (const p of properties) {
+    const caption = String(p.caption || '').trim();
+    if (!caption) continue;
+    const k = caption.toLowerCase();
+    if (!industryId || String(p.industryId) === String(industryId)) shownProps.add(k);
+    if (!seen.has(k)) { seen.set(k, `${caption} (Custom Field)`); typesByField[seen.get(k)] = []; }
+    const types = typesByField[seen.get(k)];
+    if (p.industryName && !types.includes(p.industryName)) types.push(p.industryName);
+  }
+  const templateHeaders = [...BOOKS_HEADERS, ...seen.values()];
+  const shownHeaders = [...BOOKS_HEADERS, ...[...seen].filter(([k]) => shownProps.has(k)).map(([, f]) => f)];
+  const columnOptions = [NOT_MAPPED, ...csvHeaders];
 
   // Exact-named columns map automatically; the user maps the rest by hand.
   useEffect(() => {
@@ -103,31 +166,34 @@ export default function ImportItemsPage() {
   }, [csvHeaders, properties]);
 
   async function onFile(e) {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
-    setFileName(file.name); setResult(null);
+    setResult(null);
     try {
       const matrix = /\.(xlsx|xls)$/i.test(file.name)
         ? await readXlsxFile(file)
         : matrixFromText(await file.text());
       const parsed = matrixToRows(matrix);
-      if (!parsed.length) { toast.error('No data rows found in the sheet'); setRows([]); setCsvHeaders([]); return; }
+      if (!parsed.length) { toast.error('No data rows found in the sheet'); setRows([]); setCsvHeaders([]); setFileName(''); return; }
       setCsvHeaders((matrix[0] || []).map((h) => String(h || '').trim()).filter(Boolean));
       setRows(parsed);
+      setFileName(`${file.name} · ${fmtSize(file.size)}`);
       toast.success(`${parsed.length} row${parsed.length === 1 ? '' : 's'} ready`);
     } catch (err) {
       toast.error('Could not read the file');
-      setRows([]); setCsvHeaders([]);
+      setRows([]); setCsvHeaders([]); setFileName('');
     } finally {
-      if (fileRef.current) fileRef.current.value = '';
+      input.value = '';
     }
   }
 
   async function runImport() {
-    if (!industryId || !rows.length) return;
+    if (!rows.length) return;
     setBusy(true); setResult(null);
     try {
-      const body = { industryId, rows: applyMapping(rows, mapping), format: 'books' };
+      const shownMapping = Object.fromEntries(shownHeaders.map((f) => [f, mapping[f]]));
+      const body = { industryId: industryId || null, rows: applyMapping(rows, shownMapping), format: 'books' };
       const { data } = await axios.post('/api/sku-items/import', body);
       setResult(data);
       const pushed = data.results.filter((r) => r.pushed).length;
@@ -144,6 +210,8 @@ export default function ImportItemsPage() {
   const [compGroups, setCompGroups] = useState(null);
   const [compCreateMissing, setCompCreateMissing] = useState(false);
   const [compBusy, setCompBusy] = useState(false);
+  const [compFileName, setCompFileName] = useState('');
+  const clearComp = () => { setCompGroups(null); setCompFileName(''); };
 
   async function onCompFile(e) {
     const file = e.target.files?.[0];
@@ -160,6 +228,7 @@ export default function ImportItemsPage() {
       }
       setCompCreateMissing(false);
       setCompGroups(groups);
+      setCompFileName(`${file.name} · ${fmtSize(file.size)}`);
     } catch {
       toast.error('Could not read that file. Use .xlsx or .csv.');
     }
@@ -173,7 +242,7 @@ export default function ImportItemsPage() {
       bad.forEach((r) => toast.error(`${r.name}: ${r.error}`, { duration: 8000 }));
       const okCount = data.results.length - bad.length;
       if (okCount) toast.success(`${okCount} composite item(s) imported`);
-      setCompGroups(null);
+      clearComp();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Import failed');
     } finally {
@@ -185,10 +254,10 @@ export default function ImportItemsPage() {
 
   function downloadResults() {
     if (!result) return;
-    const head = 'row,status,sku,name,error' + (hasPushCol ? ',pushed,pushError' : '');
+    const head = 'row,status,sku,name,error,productType,warning' + (hasPushCol ? ',pushed,pushError' : '');
     const esc = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
     const body = result.results.map((r) => {
-      const cols = [r.row, r.status, r.sku || '', r.name || '', r.error || ''];
+      const cols = [r.row, r.status, r.sku || '', r.name || '', r.error || '', r.productType || '', r.warning || ''];
       if (hasPushCol) cols.push(r.pushed === undefined ? '' : String(!!r.pushed), r.pushError || '');
       return cols.map(esc).join(',');
     }).join('\n');
@@ -228,50 +297,42 @@ export default function ImportItemsPage() {
 
       {kind === 'simple' && (
         <>
-          {/* Product type is auto-picked; the selector appears only when the org has several. */}
+          {/* The selector appears only when the org has several product types. */}
           {industries.length > 1 && (
             <div style={{ marginTop: 20 }}>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: T.ink3, marginBottom: 6 }}>
                 Product type
               </label>
               <select value={industryId} onChange={(e) => setIndustryId(e.target.value)} style={{ ...ctrl, minWidth: 260 }}>
+                <option value="">From Category Name</option>
                 {industries.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
               </select>
             </div>
           )}
 
-          {/* Step 2: sample — one fixed Books item sheet for every product type */}
+          {/* Step 2: upload. The sample (one fixed Books item sheet for every
+              product type) is optional info, so it sits below as a link. */}
           <div style={{ marginTop: 20 }}>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: T.ink3, marginBottom: 6 }}>
-              2 · Sample file
+              2 · Upload filled sheet
             </label>
-            {/* ponytail: relative href — app is hosted under /app/ with base './' + HashRouter */}
-            <a href="sample_items.xlsx" download="sample_items.xlsx"
-               style={{ ...btn(T.bgSubtle), color: T.ink, border: `1.5px solid ${T.borderStrong}`,
-                        display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>
-              ⬇ Download sample
-            </a>
-            <p style={{ margin: '8px 0 0', fontSize: 12, color: T.ink3 }}>
-              Rows with an SKU keep it as-is; rows without one generate it from the
-              custom-field columns using this product type's SKU rules.
+            <FilePick onChange={onFile}
+                      picked={fileName && `${fileName} · ${rows.length} row${rows.length === 1 ? '' : 's'}`} />
+            <p style={hint}>
+              Need a template?{' '}
+              {/* ponytail: relative href — app is hosted under /app/ with base './' + HashRouter */}
+              <a href="sample_items.xlsx" download="sample_items.xlsx" style={{ color: T.accent }}>Download sample</a>
+              . Rows with an SKU keep it as-is; rows without one generate it from the
+              custom-field columns, using the SKU rules of the product type.
             </p>
           </div>
 
-          {/* Step 3: upload */}
-          <div style={{ marginTop: 20 }}>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: T.ink3, marginBottom: 6 }}>
-              3 · Upload filled sheet
-            </label>
-            <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" onChange={onFile} style={{ fontSize: 15, padding: '10px 12px', border: `1.5px dashed ${T.borderStrong}`, borderRadius: 8, width: '100%', maxWidth: 640, boxSizing: 'border-box' }} />
-            {fileName && <span style={{ marginLeft: 10, fontSize: 12, color: T.ink3 }}>{fileName} — {rows.length} rows</span>}
-          </div>
-
-          {/* Step 4: field mapping — Zoho Books fields | uploaded file columns.
+          {/* Step 3: field mapping — Zoho Books fields | uploaded file columns.
               Exact-name matches auto-map; everything else starts unmapped. */}
           {csvHeaders.length > 0 && (
             <div style={{ marginTop: 20 }}>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: T.ink3, marginBottom: 6 }}>
-                4 · Match fields with Zoho Books ({Object.values(mapping).filter(Boolean).length} of {templateHeaders.length} matched)
+                3 · Match fields with Zoho Books ({shownHeaders.filter((f) => mapping[f]).length} of {shownHeaders.length} matched)
               </label>
               <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: 'hidden', maxWidth: 640 }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
@@ -282,16 +343,17 @@ export default function ImportItemsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {templateHeaders.map((f) => (
+                    {shownHeaders.map((f) => (
                       <tr key={f} style={{ borderTop: `1px solid ${T.border}` }}>
-                        <td style={{ padding: '5px 10px' }}>{f}</td>
                         <td style={{ padding: '5px 10px' }}>
-                          <select value={mapping[f] || ''}
-                                  onChange={(e) => setMapping((m) => ({ ...m, [f]: e.target.value }))}
-                                  style={{ ...ctrl, height: 28, width: '100%', borderColor: mapping[f] ? T.borderStrong : T.border, color: mapping[f] ? T.ink : T.ink3 }}>
-                            <option value="">— not mapped —</option>
-                            {csvHeaders.map((h) => <option key={h} value={h}>{h}</option>)}
-                          </select>
+                          {f}
+                          {!industryId && typesByField[f]?.length > 0 && (
+                            <span style={{ color: T.ink3, marginLeft: 6 }}>· {typesByField[f].join(', ')}</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '5px 10px' }}>
+                          <ColumnPick value={mapping[f] || ''} options={columnOptions}
+                                      onChange={(v) => setMapping((m) => ({ ...m, [f]: v }))} />
                         </td>
                       </tr>
                     ))}
@@ -307,8 +369,8 @@ export default function ImportItemsPage() {
           {/* Run */}
           <div style={{ marginTop: 20 }}>
             <button onClick={runImport}
-                    disabled={!industryId || !rows.length || busy || !mapping['Item Name']}
-                    style={{ ...btn(T.accent), opacity: !industryId || !rows.length || busy || !mapping['Item Name'] ? 0.5 : 1 }}>
+                    disabled={!rows.length || busy || !mapping['Item Name']}
+                    style={{ ...btn(T.accent), opacity: !rows.length || busy || !mapping['Item Name'] ? 0.5 : 1 }}>
               {busy ? 'Importing…' : `Import ${rows.length} item${rows.length === 1 ? '' : 's'}`}
             </button>
           </div>
@@ -317,27 +379,20 @@ export default function ImportItemsPage() {
 
       {kind === 'composite' && (
         <>
-          {/* Step 2: sample — generated Books composite-items sheet (opens in Excel) */}
+          {/* Step 2: upload. The sample (generated Books composite-items sheet,
+              opens in Excel) is optional info, so it sits below as a link. */}
           <div style={{ marginTop: 20 }}>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: T.ink3, marginBottom: 6 }}>
-              2 · Sample file
+              2 · Upload Books export
             </label>
-            <button onClick={downloadBooksSample}
-                    style={{ ...btn(T.bgSubtle), color: T.ink, border: `1.5px solid ${T.borderStrong}` }}>
-              ⬇ Download sample
-            </button>
-            <p style={{ margin: '8px 0 0', fontSize: 12, color: T.ink3 }}>
-              Zoho Books composite-items export format: one block per composite item,
+            <FilePick onChange={onCompFile}
+                      picked={compFileName && `${compFileName} · ${compGroups?.length || 0} composite item(s)`} />
+            <p style={hint}>
+              Need a template?{' '}
+              <button onClick={downloadBooksSample} style={linkBtn}>Download sample</button>
+              . Zoho Books composite-items export format: one block per composite item,
               component rows beneath it.
             </p>
-          </div>
-
-          {/* Step 3: upload */}
-          <div style={{ marginTop: 20 }}>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: T.ink3, marginBottom: 6 }}>
-              3 · Upload Books export
-            </label>
-            <input type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" onChange={onCompFile} style={{ fontSize: 15, padding: '10px 12px', border: `1.5px dashed ${T.borderStrong}`, borderRadius: 8, width: '100%', maxWidth: 640, boxSizing: 'border-box' }} />
           </div>
 
           {/* Preview + run. ponytail: no "updates existing / creates new" badge — that
@@ -351,7 +406,7 @@ export default function ImportItemsPage() {
                   <input type="checkbox" checked={compCreateMissing} onChange={(e) => setCompCreateMissing(e.target.checked)} />
                   Create missing component items in Books
                 </label>
-                <button onClick={() => setCompGroups(null)} disabled={compBusy}
+                <button onClick={clearComp} disabled={compBusy}
                         style={{ ...btn(T.bgElev), color: T.ink, border: `1.5px solid ${T.borderStrong}` }}>
                   Cancel
                 </button>
@@ -402,6 +457,11 @@ export default function ImportItemsPage() {
                     <td style={{ padding: '7px 10px', fontFamily: T.mono }}>{r.sku || '—'}</td>
                     <td style={{ padding: '7px 10px', color: r.status === 'failed' ? T.err : T.ink }}>
                       {r.status === 'success' ? r.name : r.error}
+                      {r.status === 'success' && (r.productType || r.warning) && (
+                        <div style={{ fontSize: 12, color: T.ink3 }}>
+                          {[r.productType, r.warning].filter(Boolean).join(' · ')}
+                        </div>
+                      )}
                     </td>
                     {hasPushCol && (
                       <td style={{ padding: '7px 10px', fontSize: 12, color: r.pushError ? T.err : r.pushed ? T.ok : T.ink3 }}

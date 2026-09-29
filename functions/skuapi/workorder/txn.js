@@ -10,11 +10,12 @@
  */
 const { rowList, zStr } = require("../store");
 const { dsDate } = require("../zoho/auth");
-const { createTransferOrder, listWarehouses } = require("../zoho/inventoryApi");
+const { createTransferOrder, listWarehouses, getItemStock, withBatchFallback, listSerialsBatches, pickSerialsBatches } = require("../zoho/inventoryApi");
 const { validateLine, applyToBalance, TXN_TYPES } = require("./formulas");
-const { routeFor, nextNumber, logActivity, byOrg, settings, inList } = require("./store");
+const { routeFor, nextNumber, logActivity, byOrg, settings, inList, warehouses } = require("./store");
 const { buildGrid, indexRows } = require("./grid");
 const { MATERIAL_OK } = require("./status");
+const { blockedFor, entryFor, applyBlocks, blockedPick } = require("./blocks");
 
 const n = (v) => Number(v) || 0;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -69,7 +70,7 @@ function parseTracking(json) {
  * Returns the lines to write plus every problem found — all of them, so the
  * user fixes the whole form in one pass instead of one error at a time.
  */
-function planLines(type, gridRows, requested) {
+function planLines(type, gridRows, requested, blocked) {
   if (!TXN_TYPES.includes(type)) return { lines: [], errors: [`Unknown transaction type "${type}"`] };
   const byItem = new Map(gridRows.map((r) => [String(r.itemId), r]));
   const lines = [];
@@ -88,10 +89,40 @@ function planLines(type, gridRows, requested) {
     if (problem) { errors.push(problem); continue; }
     const tErr = trackingProblem(req.tracking, qty, row.name || itemId);
     if (tErr) { errors.push(tErr); continue; }
+    // Blocked serials are refused here (CR-203); batch picks need the live
+    // pool and are checked at confirm (assertPicksAllowed).
+    const bErr = blocked ? blockedPick(req.tracking, blocked.get(itemId), row.name || itemId) : null;
+    if (bErr) { errors.push(bErr); continue; }
     lines.push({ rmItemId: itemId, workOrderLineId: row.workOrderLineId, qty, name: row.name, tracking: req.tracking || null });
   }
   if (!lines.length && !errors.length) errors.push("Enter a quantity on at least one line");
   return { lines, errors };
+}
+
+/**
+ * Batch/serial pool for the picker (CR-123), with the defective block applied
+ * (CR-203). Shared by GET /tracking-options and the Store issues replacement
+ * (CR-244). `{ tracking: null }` for untracked items; else the pool plus a FIFO
+ * prefill for `qty` (short stock is not an error here — confirm re-validates).
+ */
+async function trackingPool(catalyst, orgId, { itemId, type, fromWarehouseId, qty, wo }) {
+  const from = fromWarehouseId ? String(fromWarehouseId) : (await routeFor(catalyst, orgId, String(type), wo)).fromWarehouseId;
+  const item = await withBatchFallback(catalyst, await getItemStock(catalyst, String(itemId)), String(itemId), from);
+  let mainId = null;
+  try { mainId = (await warehouses(catalyst, orgId, wo)).main; } catch { /* not configured */ }
+  applyBlocks(item, entryFor(await blockedFor(catalyst, orgId), String(itemId), from, mainId));
+  const pool = listSerialsBatches(item, from);
+  if (!pool.tracking) return { tracking: null };
+  let prefill = null;
+  try { prefill = n(qty) > 0 ? pickSerialsBatches(item, from, n(qty)) : null; } catch { /* short */ }
+  return {
+    ...pool,
+    prefill: prefill
+      ? (prefill.serial_numbers
+        ? { serials: prefill.serial_numbers }
+        : { batches: (prefill.batches || []).map((b) => ({ batch_id: b.batch_id, batch_number: b.batch_number, qty: b.quantity_transfer })) })
+      : null,
+  };
 }
 
 // ---- draft ----------------------------------------------------------------
@@ -106,12 +137,12 @@ async function createDraft(catalyst, orgId, { workOrderId, workOrderFgId, type, 
     throw e;
   }
   const grid = await buildGrid(catalyst, orgId, wo, fg);
-  const { lines, errors } = planLines(type, grid.rows, requested);
+  const { lines, errors } = planLines(type, grid.rows, requested, await blockedFor(catalyst, orgId));
   if (errors.length) { const e = new Error(errors.join("\n")); e.status = 400; e.details = errors; throw e; }
 
   const s = await settings(catalyst, orgId);
   const txnNumber = await nextNumber(catalyst, orgId, "MaterialTxn", "txnNumber", s.txnNumberPrefix);
-  let route = await routeFor(catalyst, orgId, type);
+  let route = await routeFor(catalyst, orgId, type, wo);
   // Optional per-txn warehouse override (Haresh item 3), gated by the
   // allowWarehouseSelect setting. Ids are checked against live Zoho warehouses
   // so a stale id fails here with a clear message, not at TO-post time.
@@ -195,9 +226,11 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
   if (!txnLines.length) { const e = new Error("This transaction has no lines"); e.status = 400; throw e; }
 
   const grid = await buildGrid(catalyst, orgId, wo, fg);
+  const blocked = await blockedFor(catalyst, orgId);
   const { lines, errors } = planLines(
     txn.type, grid.rows,
     txnLines.map((l) => ({ itemId: l.rmItemId, qty: l.qty, tracking: parseTracking(l.trackingJson) })),
+    blocked,
   );
   if (errors.length) { const e = new Error(errors.join("\n")); e.status = 409; e.details = errors; throw e; }
 
@@ -206,7 +239,10 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
   // the override.
   const route = (txn.fromWarehouseId && txn.toWarehouseId)
     ? { fromWarehouseId: String(txn.fromWarehouseId), toWarehouseId: String(txn.toWarehouseId) }
-    : await routeFor(catalyst, orgId, txn.type);
+    : await routeFor(catalyst, orgId, txn.type, wo);
+  let mainId = null;
+  try { mainId = (await warehouses(catalyst, orgId, wo)).main; } catch { /* per-txn override without the role map */ }
+  await assertPicksAllowed(catalyst, lines, route.fromWarehouseId, mainId, blocked);
   let to;
   try {
     to = await createTransferOrder(catalyst, {
@@ -219,6 +255,8 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
       numberHint: txn.txnNumber,
       // Published to the TO's cf_so_no SO-lookup custom field (needs the id).
       soId: wo.salesOrderId || "",
+      // Defective-block (CR-203): FIFO auto-pick skips blocked serials/batch qty.
+      blockedEntry: (itemId) => entryFor(blocked, itemId, route.fromWarehouseId, mainId),
     });
   } catch (err) {
     throw friendlyTransferError(err);
@@ -265,6 +303,24 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
     transferOrderId: String(to.transfer_order_id || ""),
     transferOrderNumber: String(to.transfer_order_number || ""),
   };
+}
+
+/**
+ * Explicit batch picks vs the pool after the defective block (CR-203). One
+ * live Zoho read per line, only for items that have a batch block at this
+ * source — serials were judged in planLines without a pool.
+ */
+async function assertPicksAllowed(catalyst, lines, fromWarehouseId, mainId, blocked) {
+  if (!blocked.size) return;
+  for (const l of lines) {
+    const entry = entryFor(blocked, l.rmItemId, fromWarehouseId, mainId);
+    if (!entry || !entry.batches.size || !(l.tracking && Array.isArray(l.tracking.batches))) continue;
+    const item = await withBatchFallback(catalyst, await getItemStock(catalyst, l.rmItemId), l.rmItemId, fromWarehouseId);
+    const pool = listSerialsBatches(applyBlocks(item, entry), fromWarehouseId);
+    const available = new Map((pool.batches || []).map((b) => [String(b.batch_id), b.available]));
+    const msg = blockedPick(l.tracking, entry, l.name || l.rmItemId, available);
+    if (msg) { const e = new Error(msg); e.status = 409; e.details = [msg]; throw e; }
+  }
 }
 
 // Material movement no longer moves the WO status (CR-159): stages are set
@@ -499,7 +555,7 @@ async function listTxns(catalyst, orgId, workOrderId) {
 }
 
 module.exports = {
-  planLines, createDraft, confirmTxn, cancelTxn, recompute, listTxns,
+  planLines, createDraft, confirmTxn, cancelTxn, recompute, listTxns, trackingPool,
   applyBalances, adjustSnapshots, loadContext, loadTxn, sweepLines, autoReturnOnComplete, trackingProblem,
 };
 
@@ -549,6 +605,12 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.match(planLines("teleport", rows, [{ itemId: "11", qty: 1 }]).errors[0], /Unknown transaction type/);
   assert.match(planLines("reserve", rows, []).errors[0], /at least one line/);
   assert.match(planLines("reserve", rows, [{ itemId: "11", qty: 1 }, { itemId: "11", qty: 1 }]).errors[0], /twice/);
+
+  // Defective block (CR-203): a pick that names a blocked serial is refused; other items unaffected.
+  const blocked = new Map([["11", { qty: 1, batches: new Map(), serials: new Set(["S9"]) }]]);
+  assert.match(planLines("reserve", rows, [{ itemId: "11", qty: 1, tracking: { serials: ["S9"] } }], blocked).errors[0], /S9 is blocked/);
+  assert.deepStrictEqual(planLines("reserve", rows, [{ itemId: "11", qty: 1, tracking: { serials: ["S1"] } }], blocked).errors, []);
+  assert.deepStrictEqual(planLines("reserve", rows, [{ itemId: "11", qty: 1 }], blocked).errors, [], "no explicit pick → judged at confirm");
 
   // Auto-return sweep (CR-031): reserved stock always goes back; issued only
   // when it exceeds the final requirement (a removed line has bom = 0).

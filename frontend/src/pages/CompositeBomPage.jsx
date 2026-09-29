@@ -113,7 +113,7 @@ export default function CompositeBomPage() {
         <button onClick={() => sheet.fileRef.current?.click()} disabled={busy} style={btn}>⬆ Import Books export</button>
         <input ref={sheet.fileRef} type="file" accept=".xlsx,.xls,.csv,.tsv,.txt" onChange={sheet.onFile} style={{ display: 'none' }} />
         <button onClick={() => setSelected('new')} style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
-          + New Composite Item
+          + New
         </button>
       </div>
 
@@ -374,7 +374,7 @@ function NewComposite({ onBack, onCreated }) {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '10px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
         <button onClick={onBack} style={btn}>← All BOMs</button>
-        <b style={{ fontSize: 14 }}>New Composite Item</b>
+        <b style={{ fontSize: 14 }}>New</b>
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', padding: '14px 20px 24px', maxWidth: 720 }}>

@@ -23,7 +23,7 @@ const selectStyle = {
 };
 
 const emptyProp = { name: '', caption: '', unit: '', valueType: 'Manual', rangeMin: '', rangeMax: '', required: false, includeInName: false, zohoCfApiName: '', clubKey: '', createValuesAsItems: false, showInWidget: false, sizingRole: '' };
-const emptyVal = { displayValue: '', name: '', sku: '', description: '', createAsItem: false, isDefault: false };
+const emptyVal = { displayValue: '', name: '', sku: '', description: '', createAsItem: false, isDefault: false, capMin: '', capMax: '' };
 
 // Single-club combobox: shows the current club as a removable chip, filters
 // existing clubs as you type, and offers "Create" for a new name. One club per
@@ -157,6 +157,11 @@ function ValForm({ form, setForm, onSubmit, onCancel, label }) {
         <div><label style={labelStyle}>SKU Code <span style={{ color: '#e11d48' }}>*</span></label><input style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} value={form.sku} onChange={e => setForm(f => ({ ...f, sku: e.target.value }))} onFocus={fi} onBlur={fo} /></div>
       </div>
       <div><label style={labelStyle}>Description</label><input style={inputStyle} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} onFocus={fi} onBlur={fo} /></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div><label style={labelStyle}>Auto-pick from (capacity)</label><input type="number" step="any" style={inputStyle} value={form.capMin} onChange={e => setForm(f => ({ ...f, capMin: e.target.value }))} onFocus={fi} onBlur={fo} /></div>
+        <div><label style={labelStyle}>to</label><input type="number" step="any" style={inputStyle} value={form.capMax} onChange={e => setForm(f => ({ ...f, capMax: e.target.value }))} onFocus={fi} onBlur={fo} /></div>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: -6 }}>Pre-selected in the CRM configurator when the capacity input (TPH) falls in this band; sales can still change it.</div>
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
         <input type="checkbox" checked={!!form.isDefault} onChange={e => setForm(f => ({ ...f, isDefault: e.target.checked }))} />
         Set as default value
@@ -264,7 +269,7 @@ export default function PropertyManagerPage() {
 
   function openEditVal(val) {
     setSelectedVal(val);
-    setValForm({ displayValue: val.displayValue, name: val.name, sku: val.sku, description: val.description || '', createAsItem: !!val.createAsItem, isDefault: !!val.isDefault, zohoItemId: val.zohoItemId || '' });
+    setValForm({ displayValue: val.displayValue, name: val.name, sku: val.sku, description: val.description || '', createAsItem: !!val.createAsItem, isDefault: !!val.isDefault, zohoItemId: val.zohoItemId || '', capMin: val.capMin ?? '', capMax: val.capMax ?? '' });
     setShowEditVal(true);
   }
 
@@ -398,10 +403,10 @@ export default function PropertyManagerPage() {
         </div>
       </div>
 
-      {showAddProp && <Modal title="Add Property" onClose={() => setShowAddProp(false)} onSubmit={handleAddProp}><PropForm form={propForm} setForm={setPropForm} clubKeys={clubKeys} onSubmit={handleAddProp} onCancel={() => setShowAddProp(false)} label="Create" /></Modal>}
-      {showEditProp && <Modal title="Edit Property" onClose={() => setShowEditProp(false)} onSubmit={handleEditProp}><PropForm form={propForm} setForm={setPropForm} clubKeys={clubKeys} onSubmit={handleEditProp} onCancel={() => setShowEditProp(false)} label="Save" /></Modal>}
-      {showAddVal && <Modal title="Add Value" onClose={() => setShowAddVal(false)} onSubmit={handleAddVal}><ValForm form={valForm} setForm={setValForm} onSubmit={handleAddVal} onCancel={() => setShowAddVal(false)} label="Create" /></Modal>}
-      {showEditVal && <Modal title="Edit Value" onClose={() => setShowEditVal(false)} onSubmit={handleEditVal}><ValForm form={valForm} setForm={setValForm} onSubmit={handleEditVal} onCancel={() => setShowEditVal(false)} label="Save" /></Modal>}
+      {showAddProp && <Modal title="New" onClose={() => setShowAddProp(false)} onSubmit={handleAddProp}><PropForm form={propForm} setForm={setPropForm} clubKeys={clubKeys} onSubmit={handleAddProp} onCancel={() => setShowAddProp(false)} label="Create" /></Modal>}
+      {showEditProp && <Modal title="Edit" onClose={() => setShowEditProp(false)} onSubmit={handleEditProp}><PropForm form={propForm} setForm={setPropForm} clubKeys={clubKeys} onSubmit={handleEditProp} onCancel={() => setShowEditProp(false)} label="Save" /></Modal>}
+      {showAddVal && <Modal title="New" onClose={() => setShowAddVal(false)} onSubmit={handleAddVal}><ValForm form={valForm} setForm={setValForm} onSubmit={handleAddVal} onCancel={() => setShowAddVal(false)} label="Create" /></Modal>}
+      {showEditVal && <Modal title="Edit" onClose={() => setShowEditVal(false)} onSubmit={handleEditVal}><ValForm form={valForm} setForm={setValForm} onSubmit={handleEditVal} onCancel={() => setShowEditVal(false)} label="Save" /></Modal>}
       {confirmDel && (
         <ConfirmModal
           title={confirmDel.kind === 'prop' ? `Delete property "${confirmDel.row.name}"?` : `Delete value "${confirmDel.row.displayValue}"?`}

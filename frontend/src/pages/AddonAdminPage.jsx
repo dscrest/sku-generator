@@ -5,6 +5,7 @@ import RowMenu from '../components/RowMenu.jsx';
 
 const ADDON_LABELS = {
   'sku-generator': 'SKU Generator',
+  'recipe-engine': 'Product Configurator',
   'work-order': 'Work Order',
   'reserve': 'Reserve / De-reserve',
   'cheque-printing': 'Cheque Printing',

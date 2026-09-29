@@ -1,16 +1,14 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import toast from 'react-hot-toast';
 import Modal, { ModalFooter, ModalBtn } from './Modal.jsx';
 import { TrackingPicker } from './MaterialsGrid.jsx';
 
-// ---- assembly (CR-126, CR-150, CR-172, CR-176) ------------------------------
-// One Zoho bundle per confirm, from the Details → Assembly tab once every BOM
-// line is issued: raw materials leave the Issue warehouse, the finished good's
-// stock lands in Main with one serial per unit (KGV2026001…). Batch/serial-
-// tracked raw materials get the CR-123 picker on Proceed (FIFO prefilled).
-// Fully assembled FG → Closed; Close stays manual.
-export default function AssembleModal({ workOrderId, fg, whNames = {}, onClose, onDone }) {
+// ---- assembly (CR-126, CR-150, CR-172, CR-176, CR-243) ----------------------
+// Collects the count, serial prefix and (for tracked raw materials) the CR-123
+// batch/serial picks, then hands the POST body to the parent via onProceed —
+// the parent closes this modal and shows "Assembling…" on the Ready row while
+// the Zoho bundle is created (CR-243). Never posts itself.
+export default function AssembleModal({ workOrderId, fg, whNames = {}, onClose, onProceed }) {
   const remaining = (fg.qty || 0) - (fg.assembledQty || 0);
   // CR-174: the Assembly tab row's typed quantity (partial run) seeds the field.
   const [qty, setQty] = useState(String(fg.initialQty > 0 ? Math.min(fg.initialQty, remaining) : remaining));
@@ -52,29 +50,18 @@ export default function AssembleModal({ workOrderId, fg, whNames = {}, onClose, 
         } catch { /* pool lookup failed — the server auto-picks FIFO */ }
       }
       if (tracked.length) { setPicker(tracked); return; }
-      await post(null);
+      onProceed(body(null));
     } finally { setBusy(false); }
   }
 
-  async function post(trackingByKey) {
-    setBusy(true);
-    try {
-      const components = Object.entries(trackingByKey || {}).map(([itemId, tracking]) => ({ itemId, tracking }));
-      const { data } = await axios.post(`/api/wo/${workOrderId}/fg/${fg.id}/assemble`, { qty: Number(qty), prefix, components });
-      // CR-175: the bundle lands at Issue, a Transfer Order moves the FG to Main.
-      if (data.transferWarning) toast.error(data.transferWarning, { duration: 12000 });
-      onDone(
-        `Assembly ${data.bundleNumber} created — ${data.assembledQty}/${fg.qty} assembled`
-        + (data.serialRange ? ` · serials ${data.serialRange}` : '')
-        + (data.transferOrderNumber ? ` · moved to Main by ${data.transferOrderNumber}` : ''),
-      );
-    } catch (err) {
-      const d = err.response?.data;
-      (d?.details || [d?.error || 'Could not create the assembly']).forEach(m => toast.error(m, { duration: 8000 }));
-    } finally { setBusy(false); }
-  }
+  // POST body for /assemble; the parent sends it (CR-243).
+  const body = trackingByKey => ({
+    qty: Number(qty), prefix,
+    components: Object.entries(trackingByKey || {}).map(([itemId, tracking]) => ({ itemId, tracking })),
+  });
 
   // The picker replaces the modal (no nesting); Cancel returns here with qty/prefix intact.
+  // Its Proceed hands the picks up — the parent unmounts us, so the count form never reappears.
   if (picker) {
     return (
       <TrackingPicker
@@ -82,7 +69,7 @@ export default function AssembleModal({ workOrderId, fg, whNames = {}, onClose, 
         verb="Assembly"
         whNames={whNames}
         onCancel={() => setPicker(null)}
-        onConfirm={picks => { setPicker(null); post(picks); }}
+        onConfirm={picks => onProceed(body(picks))}
       />
     );
   }

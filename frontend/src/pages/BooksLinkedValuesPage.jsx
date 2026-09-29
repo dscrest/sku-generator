@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
-import GridFooter, { usePager, FilterSelect, distinct } from '../components/GridFooter.jsx';
+import GridFooter, { usePager, FilterSelect, SearchInput, matches, distinct } from '../components/GridFooter.jsx';
 import DataTable, { useGridColumns, ColumnChooser } from '../components/DataTable.jsx';
 
 // Read-only tracking grid for property values that were also created as standalone
@@ -14,6 +14,7 @@ export default function BooksLinkedValuesPage() {
   const [rows, setRows] = useState([]);
   const [sortCol, setSortCol] = useState('industryName');
   const [sortDir, setSortDir] = useState('asc');
+  const [q, setQ] = useState('');
   const [fIndustry, setFIndustry] = useState('');
   const navigate = useNavigate();
 
@@ -26,7 +27,8 @@ export default function BooksLinkedValuesPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const filtered = rows.filter(r => !fIndustry || r.industryName === fIndustry);
+  const filtered = rows.filter(r =>
+    matches(q, r.industryName, r.propertyCaption, r.displayValue, r.sku) && (!fIndustry || r.industryName === fIndustry));
   const sorted = [...filtered].sort((a, b) => {
     const av = a[sortCol] ?? '';
     const bv = b[sortCol] ?? '';
@@ -74,6 +76,7 @@ export default function BooksLinkedValuesPage() {
             right={
               <div style={{ display: 'flex', gap: 8 }}>
                 <ColumnChooser chooser={chooser} />
+                <SearchInput value={q} onChange={setQ} placeholder="Search values…" />
                 <FilterSelect label="industries" value={fIndustry} onChange={setFIndustry} options={distinct(rows, 'industryName')} />
               </div>
             }
@@ -83,7 +86,7 @@ export default function BooksLinkedValuesPage() {
             sort={{ key: sortCol, dir: sortDir }} onSort={toggleSort}
           />
           {pageRows.length === 0 && (
-            <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No values are linked to Books items yet.</div>
+            <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>{rows.length ? 'No matches.' : 'No values are linked to Books items yet.'}</div>
           )}
         </div>
       </div>
