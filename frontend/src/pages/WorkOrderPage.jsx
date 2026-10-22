@@ -685,13 +685,12 @@ function AssemblyTab({ workOrderId, wo, onChanged, user }) {
   }
 
   // The card stretches to the bottom of the tab (user rule: tables fill to the
-  // footer); the card, not the table, carries the border/radius — .grid-table's
-  // clip-path would clip the fixed-position ⋮ dropdown on the last row.
+  // footer); the card, not the table, carries the border/radius.
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '14px 20px 20px' }}>
       <div style={{ flex: 1, minHeight: 0, overflow: 'auto', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
       {!rows.length ? <Empty>Nothing assembled yet.</Empty> : (
-        <table className="grid-table" style={{ width: '100%', border: 'none', borderRadius: 0, clipPath: 'none' }}>
+        <table className="grid-table" style={{ width: '100%', border: 'none', borderRadius: 0 }}>
           <thead>
             <tr>{['Item', 'Assembly #', 'Qty', 'Transfer Order', 'Serials', 'When', ''].map((h, i) => (
               <th key={h || 'x'} style={{ ...thStyle, textAlign: i === 2 || i > 4 ? 'right' : 'left' }}>{h}</th>

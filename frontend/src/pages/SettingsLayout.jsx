@@ -93,7 +93,7 @@ export default function SettingsLayout({ user, addons, hasPerm, onSwitchOrg }) {
   const itemStyle = (isActive) => ({
     display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
     padding: '9px 16px', fontSize: 13, border: 'none', cursor: 'pointer', textDecoration: 'none',
-    background: isActive ? 'var(--blue-light, #eef2ff)' : 'transparent',
+    background: isActive ? 'var(--blue-light)' : 'transparent',
     color: isActive ? 'var(--blue)' : 'var(--text-secondary)',
     fontWeight: isActive ? 600 : 400,
     borderLeft: isActive ? '3px solid var(--blue)' : '3px solid transparent',

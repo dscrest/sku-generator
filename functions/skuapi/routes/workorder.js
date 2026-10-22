@@ -22,6 +22,10 @@ const {
 } = require("../workorder/store");
 const bom = require("../workorder/bom");
 const quoteBom = require("../workorder/quoteBom");
+const designBom = require("../workorder/designBom");
+// WorkOrderLine.source of a line resolved in the add-on, not copied from the Books composite.
+const TEMPLATE_SOURCES = ["quote", "design"];
+const { enabledAddons } = require("../addons");
 const { buildGrid, buildGridsBulk } = require("../workorder/grid");
 const txn = require("../workorder/txn");
 const purchase = require("../workorder/purchase");
@@ -155,7 +159,7 @@ router.get("/so/:soId", ok(async (req, res) => {
   const so = await getSalesOrder(req.catalyst, req.params.soId);
   const f = soFields(so);
   // The quote each valve was configured on; a failed lookup never blocks the form.
-  const configs = await quoteBom.configsForSo(req.catalyst, req.orgId, so).catch(() => new Map());
+  const { configs } = await soConfigs(req, so, []);
   res.json({
     id: String(so.salesorder_id),
     number: so.salesorder_number,
@@ -650,33 +654,43 @@ router.post("/", ok(async (req, res) => {
   } catch (err) {
     problems.push(`Sales order not updated with the WO number (${err.message})`);
   }
-  const configs = await soConfigs(req, so, problems);
+  const { on, configs } = await soConfigs(req, so, problems);
   for (const pick of fgLines) {
     const line = (so.line_items || []).find((l) => String(l.item_id) === String(pick.itemId));
     if (!line) { problems.push(`Item ${pick.itemId} is not on ${so.salesorder_number}`); continue; }
     if (isService(line)) { problems.push(`${line.name}: service item — not a finished good`); continue; }
-    await seedFg(req, wo, line, n(pick.qty) || n(line.quantity), seeded, problems, configs.get(String(line.line_item_id)));
+    await seedFg(req, wo, line, n(pick.qty) || n(line.quantity), seeded, problems, configs.get(String(line.line_item_id)), on);
   }
 
   await logActivity(req.catalyst, req.orgId, "WorkOrder", wo.ROWID, "wo.create", req.userId, { woNumber, seeded });
   res.status(201).json({ id: String(wo.ROWID), woNumber, status: "Draft", seeded, problems });
 }));
 
-// Quote configurations of an SO's lines; a failed lookup is reported, never blocks.
+// Does this org take its BOM from the template (`on`: add-on + the WO setting
+// "Work order raw material", CR-270), and the quote configurations of an SO's
+// lines; a failed lookup is reported, never blocks. Any other org is never
+// looked up — its BOM is the Books composite, untouched.
 async function soConfigs(req, so, problems) {
+  let on = false;
   try {
-    return await quoteBom.configsForSo(req.catalyst, req.orgId, so);
+    on = quoteBom.useQuote(await enabledAddons(req.catalyst, req.orgId), await settings(req.catalyst, req.orgId));
+    return { on, configs: on ? await quoteBom.configsForSo(req.catalyst, req.orgId, so) : new Map() };
   } catch (err) {
     problems.push(`Quote configuration not read (${err.message})`);
-    return new Map();
+    return { on, configs: new Map() };
   }
 }
 
 // One finished good from one SO line: the FG row + its BOM seeded from the
-// composite — or, for a valve configured on a quote, from that quote's answers
-// (CR-261: real items per MOC; the composite holds placeholders). Shared by create and
-// the CR-250 "SO has a new line → Add".
-async function seedFg(req, wo, line, fgQty, seeded, problems, config) {
+// composite — or, in a configurator org, from the quote's answers (CR-261: real
+// items per MOC) or the FG's Product Design (CR-270); the composite there holds
+// placeholders, so taking it is said out loud. Shared by create and the CR-250
+// "SO has a new line → Add".
+async function seedFg(req, wo, line, fgQty, seeded, problems, config, on) {
+  // Resolved before the FG row is written: the row freezes what fed its BOM.
+  const tpl = await quoteBom.resolve(req.catalyst, req.orgId, { fgItemId: line.item_id, fgQty, config, on });
+  problems.push(...tpl.problems.map((p) => `${line.name}: ${p}`));
+  config = tpl.config;
   // The Books item detail carries the "Size" custom field (list omits CFs) — one call per FG (CR-159).
   const item = await getItem(req.catalyst, line.item_id).catch(() => null);
   const fg = await req.catalyst.datastore().table("WorkOrderFG").insertRow({
@@ -694,21 +708,17 @@ async function seedFg(req, wo, line, fgQty, seeded, problems, config) {
     soAckQty: n(line.quantity),
     configJson: config ? JSON.stringify(config) : "",
   });
-  if (config) {
+  if (tpl.lines.length) {
     try {
-      const r = await quoteBom.linesFor(req.catalyst, config, fgQty);
-      problems.push(...r.problems.map((p) => `${line.name}: ${p}`));
-      if (r.lines.length) {
-        const diff = bom.diffBom([], r.lines);
-        await bom.applyBom(req.catalyst, req.orgId, wo, fg, diff.lines, { ...diff.summary, note: quoteBom.note(config) }, req.userId);
-        seeded.push({ fgId: String(fg.ROWID), name: line.name, lines: r.lines.length, source: "quote" });
-        return fg;
-      }
-      problems.push(`${line.name}: no items mapped for this configuration — BOM taken from the Books composite`);
+      const diff = bom.diffBom([], tpl.lines);
+      await bom.applyBom(req.catalyst, req.orgId, wo, fg, diff.lines, { ...diff.summary, note: tpl.note }, req.userId);
+      seeded.push({ fgId: String(fg.ROWID), name: line.name, lines: tpl.lines.length, source: tpl.source });
     } catch (err) {
-      problems.push(`${line.name}: quote configuration not used (${err.message})`);
+      problems.push(`${line.name}: BOM not seeded (${err.message})`);
     }
+    return fg;
   }
+  if (on) problems.push(`${line.name}: no quote configuration or product design gave items — BOM taken from the Books composite`);
   try {
     const comp = await bom.getComposite(req.catalyst, req.orgId, line.item_id, true);
     // No material components → the item itself is the one line (CR-159).
@@ -753,8 +763,8 @@ router.post("/:id/so-line", ok(async (req, res) => {
     const so = await getSalesOrder(req.catalyst, wo.salesOrderId);
     const line = (so.line_items || []).find((l) => String(l.line_item_id) === String(lineItemId));
     if (!line) { const e = new Error(`${p.name} is no longer on ${wo.salesOrderNumber}`); e.status = 409; throw e; }
-    const configs = await soConfigs(req, so, problems);
-    await seedFg(req, wo, line, n(qty) || n(line.quantity), seeded, problems, configs.get(String(line.line_item_id)));
+    const { on, configs } = await soConfigs(req, so, problems);
+    await seedFg(req, wo, line, n(qty) || n(line.quantity), seeded, problems, configs.get(String(line.line_item_id)), on);
   }
   const next = { seen: [...new Set([...state.seen.map(String), String(lineItemId)])].sort(), pending: state.pending.filter((x) => x !== p) };
   await req.catalyst.datastore().table("WorkOrder").updateRow({ ROWID: String(wo.ROWID), soLinesJson: soLinesJson(next) });
@@ -1158,13 +1168,15 @@ router.post("/:id/bom/preview", ok(async (req, res) => {
     incoming = matched.lines;
     unmatched = matched.unmatched;
   } else {
-    // A configured valve refreshes from its quote answers — the composite's
-    // placeholders must never replace the real items.
-    const config = quoteBom.fgConfig(fg);
-    const fromQuote = config ? (await quoteBom.linesFor(req.catalyst, config, n(fg.fgQty))) : null;
-    if (fromQuote && fromQuote.lines.length) {
-      incoming = fromQuote.lines;
-      problems = fromQuote.problems;
+    // A configurator org's FG refreshes from its quote answers or its Product
+    // Design (CR-270) — the composite's placeholders must never replace the real items.
+    const tpl = await quoteBom.resolve(req.catalyst, req.orgId, {
+      fgItemId: fg.fgItemId, fgQty: n(fg.fgQty), config: quoteBom.fgConfig(fg),
+      on: quoteBom.useQuote(await enabledAddons(req.catalyst, req.orgId), await settings(req.catalyst, req.orgId)),
+    });
+    problems = tpl.problems;
+    if (tpl.lines.length) {
+      incoming = tpl.lines;
     } else {
       const comp = await bom.getComposite(req.catalyst, req.orgId, fg.fgItemId, true);
       // Empty composite → the FG itself (CR-159); Refresh BOM heals WOs seeded before the fix.
@@ -1179,7 +1191,7 @@ router.post("/:id/bom/preview", ok(async (req, res) => {
   );
   res.json({
     fgId: String(fg.ROWID),
-    source: source === "excel" ? "excel" : (incoming.some((l) => l.source === "quote") ? "quote" : "composite"),
+    source: source === "excel" ? "excel" : ((incoming.find((l) => TEMPLATE_SOURCES.includes(l.source)) || {}).source || "composite"),
     ...diff,
     unmatched,
     problems,
@@ -1208,11 +1220,24 @@ router.post("/:id/bom/apply", ok(async (req, res) => {
 
   const applied = await bom.applyBom(req.catalyst, req.orgId, wo, fg, lines, summary, req.userId);
 
+  // Lines taken from the Product Design on an FG raised before CR-270: freeze
+  // the design on the FG, so assembly leaves the shared composite alone too.
+  const fromTemplate = lines.some((l) => l.diffStatus !== "removed" && TEMPLATE_SOURCES.includes(l.source));
+  if (fromTemplate && !quoteBom.fgConfig(fg)) {
+    const d = await designBom.findDesign(req.catalyst, req.orgId, fg.fgItemId).catch(() => null);
+    if (d) {
+      await req.catalyst.datastore().table("WorkOrderFG").updateRow({
+        ROWID: String(fg.ROWID),
+        configJson: JSON.stringify({ designId: String(d.id), designCode: d.code || "", designName: d.name || "" }),
+      });
+    }
+  }
+
   // Zoho stays the master: an accepted revision is pushed back to the composite
   // item unless the user opted out. A configured valve's composite is shared by
   // every MOC — one order's items are never written into it.
   let pushed = false;
-  if (pushToZoho !== false && !quoteBom.fgConfig(fg)) {
+  if (pushToZoho !== false && !fromTemplate && !quoteBom.fgConfig(fg)) {
     try {
       const keep = lines.filter((l) => l.diffStatus !== "removed");
       await updateCompositeItem(req.catalyst, fg.fgItemId, keep);

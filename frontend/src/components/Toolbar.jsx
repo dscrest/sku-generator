@@ -23,9 +23,9 @@ function Btn({ onClick, disabled, title, danger, children }) {
       }}
       onMouseEnter={e => {
         if (disabled) return;
-        e.currentTarget.style.background = danger ? '#fee2e2' : 'var(--border)';
-        e.currentTarget.style.color = danger ? '#dc2626' : 'var(--text-primary)';
-        if (danger) e.currentTarget.style.borderColor = '#fca5a5';
+        e.currentTarget.style.background = danger ? 'var(--danger-soft)' : 'var(--border)';
+        e.currentTarget.style.color = danger ? 'var(--danger)' : 'var(--text-primary)';
+        if (danger) e.currentTarget.style.borderColor = 'var(--danger)';
       }}
       onMouseLeave={e => {
         e.currentTarget.style.background = 'var(--bg-card)';
@@ -42,7 +42,7 @@ function Btn({ onClick, disabled, title, danger, children }) {
 // same control the Work Orders and BOM bars use, so every grid reads alike.
 const newBtn = {
   padding: '6px 11px', fontSize: 12, fontWeight: 600, marginLeft: 8, flexShrink: 0,
-  background: 'var(--blue)', color: '#fff', border: '1px solid var(--blue)',
+  background: 'var(--blue)', color: 'var(--on-accent)', border: '1px solid var(--blue)',
   borderRadius: 'var(--radius-md)', cursor: 'pointer',
 };
 

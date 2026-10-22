@@ -80,7 +80,7 @@ export default function PurchaseTab({ workOrderId, wo, onChanged, user }) {
             </span>
             <div style={{ flex: 1 }} />
             {mayCreate && (
-              <button onClick={raise} disabled={busy} style={{ ...btn, background: '#dc2626', color: '#fff', borderColor: '#dc2626', fontWeight: 600 }}>
+              <button onClick={raise} disabled={busy} style={{ ...btn, background: 'var(--danger)', color: 'var(--on-accent)', borderColor: 'var(--danger)', fontWeight: 600 }}>
                 Raise request
               </button>
             )}
@@ -176,10 +176,10 @@ export function PrCard({ pr, vendors, onLoadVendors, onChanged, onOpenPo, mayCre
         <div style={{ flex: 1 }} />
         {pr.status === 'Draft' && mayCreate && (
           <>
-            <button onClick={() => setConfirmDeletePr(pr)} disabled={busy} style={{ ...btn, color: '#b91c1c', borderColor: '#fca5a5' }}>
+            <button onClick={() => setConfirmDeletePr(pr)} disabled={busy} style={{ ...btn, color: 'var(--danger)', borderColor: 'var(--danger)' }}>
               Delete request
             </button>
-            <button onClick={() => confirm(pr.id)} disabled={busy} style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
+            <button onClick={() => confirm(pr.id)} disabled={busy} style={{ ...btn, background: 'var(--blue)', color: 'var(--on-accent)', borderColor: 'var(--blue)', fontWeight: 600 }}>
               Confirm → create draft POs
             </button>
           </>
@@ -196,6 +196,7 @@ export function PrCard({ pr, vendors, onLoadVendors, onChanged, onOpenPo, mayCre
             <tr key={l.id} style={{ borderBottom: '1px solid var(--border)' }}>
               <td style={cell}>
                 {l.rmName || l.rmItemId}
+                {l.srcName && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>from {l.srcName} × {l.srcQty}</div>}
               </td>
               <td style={cell}>
                 {l.poNumber ? (l.vendorName || '—') : (
@@ -206,7 +207,7 @@ export function PrCard({ pr, vendors, onLoadVendors, onChanged, onOpenPo, mayCre
                         const v = vendors.find(x => x.id === e.target.value);
                         setLine(l.id, { vendorId: v?.id || '', vendorName: v?.name || '' });
                       }}
-                      style={{ ...select, maxWidth: 220, borderColor: l.vendorId ? 'var(--border)' : '#fca5a5' }}
+                      style={{ ...select, maxWidth: 220, borderColor: l.vendorId ? 'var(--border)' : 'var(--danger)' }}
                     >
                       <option value="">Pick a vendor…</option>
                       {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
@@ -489,7 +490,7 @@ export function PoSplit({ pos, selectedPo, onSelect, onClose, onChanged }) {
                   onClick={() => setConfirmDelete(true)}
                   disabled={poBusy || deleteLocked}
                   title={deleteLocked ? 'Has receives/bills — cannot be deleted' : undefined}
-                  style={{ ...btn, color: '#b91c1c', borderColor: '#fca5a5', opacity: deleteLocked ? 0.4 : 1 }}
+                  style={{ ...btn, color: 'var(--danger)', borderColor: 'var(--danger)', opacity: deleteLocked ? 0.4 : 1 }}
                 >
                   {deleteLocked ? '🔒 ' : ''}Delete PO
                 </button>
@@ -502,7 +503,7 @@ export function PoSplit({ pos, selectedPo, onSelect, onClose, onChanged }) {
                 <button onClick={() => setStatus('cancelled')} disabled={poBusy} style={btn}>Mark Cancelled</button>
               )}
               {editable && dirty && (
-                <button onClick={save} disabled={poBusy} style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}>
+                <button onClick={save} disabled={poBusy} style={{ ...btn, background: 'var(--blue)', color: 'var(--on-accent)', borderColor: 'var(--blue)', fontWeight: 600 }}>
                   Save changes
                 </button>
               )}

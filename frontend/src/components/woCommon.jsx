@@ -111,7 +111,7 @@ export function DueDays({ date }) {
   const d = dueDays(date);
   if (d === null) return '—';
   return (
-    <span style={{ fontFamily: 'var(--font-mono)', color: d < 0 ? '#dc2626' : undefined, fontWeight: d < 0 ? 600 : 400 }}>
+    <span style={{ fontFamily: 'var(--font-mono)', color: d < 0 ? 'var(--danger)' : undefined, fontWeight: d < 0 ? 600 : 400 }}>
       {d < 0 ? `${-d} overdue` : d}
     </span>
   );
@@ -128,7 +128,7 @@ export function AccessNotice({ kind }) {
               The Work Order module reads warehouses, composite items and stock from Zoho Inventory. Your
               connection was authorized before that permission was added — reconnect once to grant it.
             </div>
-            <a href="/server/skuapi/auth/zoho" style={{ display: 'inline-block', padding: '8px 16px', background: 'var(--blue)', color: '#fff', borderRadius: 'var(--radius-md)', fontSize: 13, textDecoration: 'none' }}>
+            <a href="/server/skuapi/auth/zoho" style={{ display: 'inline-block', padding: '8px 16px', background: 'var(--blue)', color: 'var(--on-accent)', borderRadius: 'var(--radius-md)', fontSize: 13, textDecoration: 'none' }}>
               Reconnect Zoho
             </a>
           </>

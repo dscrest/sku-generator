@@ -13,7 +13,7 @@ export default function Menu({ trigger, triggerStyle, items, align = 'left' }) {
           <div style={{
             position: 'absolute', top: '100%', [align === 'right' ? 'right' : 'left']: 0, marginTop: 4, zIndex: 41,
             background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
-            boxShadow: '0 8px 24px rgba(0,0,0,.14)', minWidth: 200, padding: 4,
+            boxShadow: 'var(--shadow-lg)', minWidth: 200, padding: 4,
           }}>
             {items.map(it => (
               <button

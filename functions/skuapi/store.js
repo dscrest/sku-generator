@@ -14,11 +14,12 @@ const NUM_COLS = new Set([
   "qty", "sequence", "rate", "castWeight", "version", "recipeVersion",
   "marginPct", "discountPct", "gstPct", "unitCost", "unitPrice", "orderValue",
   "capacity", // SizingModel (CR-181)
+  "efficiency", // SizingMaterial (CR-281)
   "capMin", "capMax", // PropertyValue auto-pick band (CR-228)
 ]);
 // Columns that must surface as JS booleans (Data Store may hand them back as "true"/"false").
 const BOOL_COLS = new Set([
-  "required", "createAsItem", "createValuesAsItems", "isDefault", "showInWidget",
+  "required", "createAsItem", "createValuesAsItems", "valuesFromCf", "isDefault", "showInWidget",
   // Recipe Engine (CR-104)
   "allowMaterial", "allowQtyOverride", "allowComponentOverride", "enabled",
 ]);
@@ -105,4 +106,34 @@ async function findSkuRowId(catalyst, sku, excludeId) {
   return rows.length ? String(rows[0].ROWID) : null;
 }
 
-module.exports = { rowList, out, idOk, zStr, reqOrg, orgClause, ownsRow, findSkuRowId, isActive, nameFilter };
+// Where a property's values come from (CR-288): one of three sources, stored as
+// two booleans (createValuesAsItems = Books items of a category, CR-026/286;
+// valuesFromCf = options of the mapped Books dropdown field). The API speaks
+// `valueSource`; these two keep the booleans and the word in step.
+const VALUE_SOURCES = ["manual", "items", "options"];
+function valueSourceOf(row) {
+  if (!row) return "manual";
+  if (row.valuesFromCf === true || row.valuesFromCf === "true") return "options";
+  if (row.createValuesAsItems === true || row.createValuesAsItems === "true") return "items";
+  return "manual";
+}
+function sourceFlags(valueSource) {
+  if (!VALUE_SOURCES.includes(valueSource)) return null;
+  return { createValuesAsItems: valueSource === "items" ? "true" : "false", valuesFromCf: valueSource === "options" ? "true" : "false" };
+}
+
+module.exports = { rowList, out, idOk, zStr, reqOrg, orgClause, ownsRow, findSkuRowId, isActive, nameFilter, VALUE_SOURCES, valueSourceOf, sourceFlags };
+
+// ponytail self-check: `node store.js --selftest`
+if (require.main === module && process.argv.includes("--selftest")) {
+  const assert = require("assert");
+  assert.strictEqual(valueSourceOf(null), "manual");
+  assert.strictEqual(valueSourceOf({ createValuesAsItems: "true" }), "items");
+  assert.strictEqual(valueSourceOf({ createValuesAsItems: true, valuesFromCf: true }), "options"); // options wins if both ever set
+  assert.strictEqual(valueSourceOf({ createValuesAsItems: false, valuesFromCf: "false" }), "manual");
+  assert.deepStrictEqual(sourceFlags("items"), { createValuesAsItems: "true", valuesFromCf: "false" });
+  assert.deepStrictEqual(sourceFlags("options"), { createValuesAsItems: "false", valuesFromCf: "true" });
+  assert.deepStrictEqual(sourceFlags("manual"), { createValuesAsItems: "false", valuesFromCf: "false" });
+  assert.strictEqual(sourceFlags("bogus"), null);
+  console.log("store selftest ok");
+}

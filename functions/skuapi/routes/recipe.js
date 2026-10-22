@@ -14,13 +14,14 @@ const express = require("express");
 const { rowList, out, idOk, zStr, orgClause, ownsRow, findSkuRowId } = require("../store");
 const { nextNumber, byOrgAll, settings, logActivity } = require("../workorder/store");
 const { optionCost, computeQuote, selectByMaterial, bomLines } = require("../recipe/calc");
-const { DEFAULT_COST_ELEMENTS, SIZING_MODELS, RAV_QUESTIONS, RAV_MAP_SAMPLE } = require("../recipe/seedData");
+const { DEFAULT_COST_ELEMENTS, SIZING_MODELS, RAV_QUESTIONS, RAV_MAP_SAMPLE, RAV_MATERIALS, RAV_MOTORS } = require("../recipe/seedData");
 const { selectModels } = require("../recipe/sizing");
 const { matchComponents, selectedFromValues, groupRows, planSync, uomsOf, normUom } = require("../recipe/componentMap");
 const { searchItems, listCategories, listItemsByCategory, createItem } = require("../zoho/booksApi");
 const { listCompositeItems, createCompositeItem, updateCompositeItem } = require("../zoho/inventoryApi");
-const { syncComposites } = require("../zoho/import");
+const { syncComposites, refreshFromBooks } = require("../zoho/import");
 const bom = require("../workorder/bom");
+const { isServiceItem } = require("../workorder/designBom");
 
 const router = express.Router();
 
@@ -73,6 +74,11 @@ async function recipeById(req, id) {
 }
 
 // Whole recipe in flat org-scoped queries (options/attrs carry recipeId for this).
+// Books selling rate kept on the SKU-master row by Refresh (zoho/import.js); null when unknown.
+function booksRate(it) {
+  try { const r = JSON.parse(it.booksData || "{}").rate; return r === undefined || r === null || r === "" ? null : Number(r); } catch { return null; }
+}
+
 async function loadBundle(req, recipe) {
   const [components, options, attrs, materials, els] = [
     (await byOrgAll(req.catalyst, req.orgId, "RecipeComponent", `recipeId = ${zStr(recipe.id)}`))
@@ -270,6 +276,36 @@ router.get("/products/composites", wrap(async (req, res) => {
   res.json(await syncComposites(req.catalyst, req.orgId));
 }));
 
+// Item (ZB) list of the Product Designs v2 form (CR-275): the Books org's
+// goods that are not composites and not services, read from Books the way the
+// composites are — the SKU master is refreshed first (name / SKU / new items,
+// an item with no Books SKU lands under its name; no custom-field reads), so
+// the list is what Books has right now. [{ id, sku, name }].
+// ponytail: a full Books sweep per form open; cache it if it ever shows.
+// The sweep lands new Books items in the "Books items" industry (the import target), else the org's first.
+async function syncSkuMaster(req) {
+  const industries = (await byOrgAll(req.catalyst, req.orgId, "Industry")).map(out);
+  const ind = industries.find((i) => /books items/i.test(i.name || "")) || industries[0];
+  return ind ? refreshFromBooks(req.catalyst, String(ind.id), { detailCap: 0, skuFromName: true }) : null;
+}
+
+// Sync on demand (CR-283): the Component Map's item pickers read the local
+// SKU master, so a Books item added a minute ago is missing until this runs.
+router.post("/products/sync", wrap(async (req, res) => {
+  const report = await syncSkuMaster(req);
+  if (!report) return bad(res, 400, "No product to sync into — create one first");
+  res.json(report);
+}));
+
+router.get("/products/goods", wrap(async (req, res) => {
+  await syncSkuMaster(req);
+  const isService = (r) => { try { return JSON.parse(r.booksData || "{}").product_type === "service"; } catch { return false; } };
+  res.json((await byOrgAll(req.catalyst, req.orgId, "SKUItem")).map(out)
+    .filter((r) => r.zohoItemId && r.type !== "Manufacturing" && !isService(r))
+    .map((r) => ({ id: r.id, sku: r.sku, name: r.name }))
+    .sort((a, b) => String(a.sku).localeCompare(String(b.sku))));
+}));
+
 // Create a Books SERVICE item from the design / component forms (CR-254):
 // { name, sku, sac?, rate? } → Books item (product_type service, sales +
 // purchases, no inventory fields) + SKUItem row flagged service. Lands in the
@@ -332,7 +368,16 @@ router.get("/recipes", wrap(async (req, res) => {
   const rows = (await byOrgAll(req.catalyst, req.orgId, "RecipeTemplate")).map(out)
     .filter((r) => r.status !== "Superseded"); // pre-CR-266 old versions
   rows.sort((a, b) => String(a.code).localeCompare(String(b.code)));
-  res.json(rows);
+  // Product column = the SKU-master row as it reads now: a rename in Books (synced
+  // by Refresh) must not leave the copied productCode / productName behind.
+  const ids = [...new Set(rows.map((r) => r.productItemId).filter((v) => idOk(v)))];
+  const items = new Map(ids.length ? rowList(await req.catalyst.zcql().executeZCQLQuery(
+    `SELECT ROWID, sku, name FROM SKUItem WHERE ROWID IN (${ids.join(",")}) AND ${orgClause(req.catalyst)}`,
+  )).map(out).map((it) => [String(it.id), it]) : []);
+  res.json(rows.map((r) => {
+    const it = items.get(String(r.productItemId));
+    return it ? { ...r, productCode: it.sku || r.productCode, productName: it.name || r.productName } : r;
+  }));
 }));
 
 router.get("/recipes/:id", wrap(async (req, res) => {
@@ -355,20 +400,36 @@ async function skuItemRef(req, id) {
 }
 
 // CR-236: sync a component's allowed materials (RecipeComponentOption) to a
-// list of MaterialType ids. Diff, not replace — retained options keep their
-// castWeight / fixed costs. Unknown or cross-org ids are skipped.
-async function syncMaterials(req, recipe, compId, materialIds) {
+// list of MaterialType ids — or, from Product Designs (CR-272), of
+// `{ materialId, castWeight, skuItemId? }` so the qty per material and the
+// material's own Books item (item per material, no Materials-page hop) land
+// with the row. Diff, not replace — a retained option keeps its castWeight /
+// item / fixed costs unless a value is supplied. Unknown or cross-org ids are skipped.
+async function syncMaterials(req, recipe, compId, list) {
   const ds = req.catalyst.datastore();
-  const want = new Set(materialIds.map(String));
+  const wanted = new Map(list.map((m) => (m && typeof m === "object" ? [String(m.materialId), m] : [String(m), {}])));
   const have = (await byOrgAll(req.catalyst, req.orgId, "RecipeComponentOption", `componentId = ${zStr(compId)}`)).map(out);
-  for (const o of have) if (!want.has(String(o.materialId))) await ds.table("RecipeComponentOption").deleteRow(o.id);
+  const given = (v) => v !== undefined && v !== null && v !== "";
+  for (const o of have) {
+    const mid = String(o.materialId);
+    if (!wanted.has(mid)) { await ds.table("RecipeComponentOption").deleteRow(o.id); continue; }
+    const m = wanted.get(mid);
+    const patch = {};
+    if (given(m.castWeight) && Number(m.castWeight) !== Number(o.castWeight)) patch.castWeight = Number(m.castWeight) || 0;
+    if (m.skuItemId !== undefined) {
+      const ref = await skuItemRef(req, m.skuItemId);
+      if (ref !== String(o.skuItemId || "")) patch.skuItemId = ref;
+    }
+    if (Object.keys(patch).length) await ds.table("RecipeComponentOption").updateRow({ ROWID: o.id, ...patch });
+  }
   const haveIds = new Set(have.map((o) => String(o.materialId)));
-  for (const mid of want) {
+  for (const [mid, m] of wanted) {
     if (haveIds.has(mid) || !idOk(mid) || !(await ownsRow(req.catalyst, "MaterialType", mid))) continue;
     const mat = out(rowList(await req.catalyst.zcql().executeZCQLQuery(`SELECT * FROM MaterialType WHERE ROWID = ${mid}`))[0]);
     await ds.table("RecipeComponentOption").insertRow({
       componentId: compId, recipeId: recipe.id, materialId: mid, materialCode: mat.code,
-      castWeight: 0, fixedCostsJson: "{}", enabled: true, orgId: req.orgId,
+      castWeight: Number(m.castWeight) || 0, skuItemId: await skuItemRef(req, m.skuItemId),
+      fixedCostsJson: "{}", enabled: true, orgId: req.orgId,
     });
   }
 }
@@ -390,6 +451,7 @@ async function upsertComponents(req, recipe, rows) {
       allowComponentOverride: r.allowComponentOverride === true,
     };
     if (r.skuItemId !== undefined) fields.skuItemId = await skuItemRef(req, r.skuItemId);
+    if (r.price !== undefined) fields.price = Math.max(0, Number(r.price) || 0); // service sell price (CR-284)
     if (compId) {
       await ds.table("RecipeComponent").updateRow({ ROWID: compId, ...fields });
     } else {
@@ -399,7 +461,8 @@ async function upsertComponents(req, recipe, rows) {
       });
       compId = String(out(row).id);
     }
-    if (Array.isArray(r.materialIds)) await syncMaterials(req, recipe, compId, r.materialIds);
+    if (Array.isArray(r.materials)) await syncMaterials(req, recipe, compId, r.materials);
+    else if (Array.isArray(r.materialIds)) await syncMaterials(req, recipe, compId, r.materialIds);
     if (r.attrs === undefined) continue;
     // Attrs are full-replace per component — nothing references an attr row.
     for (const a of await byOrgAll(req.catalyst, req.orgId, "RecipeComponentAttr", `componentId = ${zStr(compId)}`)) {
@@ -727,7 +790,7 @@ router.get("/category-items", wrap(async (req, res) => {
   const cat = (await listCategories(req.catalyst)).find((c) => key(c.name) === child && key(c.parent_category_name) === parent);
   if (!cat) return res.json([]);
   res.json((await listItemsByCategory(req.catalyst, cat.category_id)).map((i) => ({
-    id: String(i.item_id), name: i.name, sku: i.sku || null, unit: i.unit || "",
+    id: String(i.item_id), name: i.name, sku: i.sku || null, unit: i.unit || "", rate: i.rate ?? null,
   })));
 }));
 
@@ -911,6 +974,189 @@ router.delete("/sizing-models/:id", wrap(async (req, res) => {
   res.status(204).end();
 }));
 
+// ---------- sizing materials (Product Configurator, CR-281) ----------
+// Material processed × efficiency %: the widget sizes for volume × efficiency ÷ 100.
+
+const MATERIAL_FIELDS = ["industryId", "name", "status"];
+const effOk = (v) => Number(v) > 0 && Number(v) <= 100;
+
+router.get("/sizing-materials", wrap(async (req, res) => {
+  const rows = (await byOrgAll(req.catalyst, req.orgId, "SizingMaterial")).map(out);
+  res.json(rows.sort((a, b) => String(a.name).localeCompare(String(b.name))));
+}));
+
+router.post("/sizing-materials", wrap(async (req, res) => {
+  const b = req.body || {};
+  if (!idOk(b.industryId) || !(await ownsRow(req.catalyst, "Industry", b.industryId))) return bad(res, 400, "Valid industryId is required");
+  if (!String(b.name || "").trim() || !effOk(b.efficiency)) return bad(res, 400, "name and an efficiency between 1 and 100 are required");
+  const row = await req.catalyst.datastore().table("SizingMaterial").insertRow({
+    industryId: String(b.industryId), name: String(b.name).trim(), efficiency: Number(b.efficiency),
+    status: b.status || "Active", orgId: req.orgId,
+  });
+  const m = out(row);
+  await log(req, "SizingMaterial", m.id, "sizing_material.create", { name: m.name });
+  res.status(201).json(m);
+}));
+
+router.put("/sizing-materials/:id", wrap(async (req, res) => {
+  const id = req.params.id;
+  if (!idOk(id) || !(await ownsRow(req.catalyst, "SizingMaterial", id))) return bad(res, 404, "Not found");
+  const b = req.body || {};
+  if (b.industryId !== undefined && (!idOk(b.industryId) || !(await ownsRow(req.catalyst, "Industry", b.industryId)))) return bad(res, 400, "Invalid industryId");
+  if (b.name !== undefined && !String(b.name).trim()) return bad(res, 400, "name is required");
+  if (b.efficiency !== undefined && !effOk(b.efficiency)) return bad(res, 400, "efficiency must be between 1 and 100");
+  const data = { ROWID: id };
+  for (const f of MATERIAL_FIELDS) if (b[f] !== undefined) data[f] = String(b[f]).trim();
+  if (b.efficiency !== undefined) data.efficiency = Number(b.efficiency);
+  const m = out(await req.catalyst.datastore().table("SizingMaterial").updateRow(data));
+  await log(req, "SizingMaterial", id, "sizing_material.update", { keys: Object.keys(data).filter((k) => k !== "ROWID") });
+  res.json(m);
+}));
+
+router.delete("/sizing-materials/:id", wrap(async (req, res) => {
+  const id = req.params.id;
+  if (!idOk(id) || !(await ownsRow(req.catalyst, "SizingMaterial", id))) return bad(res, 404, "Not found");
+  await req.catalyst.datastore().table("SizingMaterial").deleteRow(id);
+  await log(req, "SizingMaterial", id, "sizing_material.delete");
+  res.status(204).end();
+}));
+
+// Ricon's material sheet for the RAV product (CR-281); skipped once the product has any row.
+router.post("/seed-rav-materials", wrap(async (req, res) => {
+  const [industry] = (await byOrgAll(req.catalyst, req.orgId, "Industry", `name = 'RAV'`)).map(out);
+  if (!industry) return bad(res, 404, "Load RAV defaults first (Sizing Models)");
+  if ((await byOrgAll(req.catalyst, req.orgId, "SizingMaterial", `industryId = ${zStr(industry.id)}`)).length) return res.json({ ok: true, skipped: true });
+  await req.catalyst.datastore().table("SizingMaterial").insertRows(RAV_MATERIALS.map(([name, efficiency]) => ({
+    name, efficiency, status: "Active", industryId: String(industry.id), orgId: req.orgId,
+  })));
+  res.status(201).json({ ok: true, materials: RAV_MATERIALS.length });
+}));
+
+// ---------- geared motors (Product Configurator, CR-284) ----------
+// Ricon's geared-motor sheet: one row per brand × drive configuration × TPH band
+// × RPM band × HP → model. The widget narrows the rows client-side by the step-1
+// duty (TPH, RPM) and the picks (drive → RPM band → HP → model). skuItemId = the
+// Books motor item the work order takes for the pick (grid pick; the seed links
+// by item name = model).
+const MOTOR_FIELDS = ["industryId", "brand", "driveConfig", "hp", "model", "status", "skuItemId"];
+const MOTOR_NUMS = ["tphMin", "tphMax", "rpmMin", "rpmMax"];
+// Pure: numeric bands from the body → { data } or { error }. `partial` = PUT.
+function motorNums(b, partial) {
+  const data = {};
+  for (const f of MOTOR_NUMS) {
+    if (partial && b[f] === undefined) continue;
+    if (!(Number(b[f]) >= 0)) return { error: `${f} must be a number` };
+    data[f] = Number(b[f]);
+  }
+  const over = (lo, hi) => data[lo] !== undefined && data[hi] !== undefined && data[lo] > data[hi];
+  if (over("tphMin", "tphMax") || over("rpmMin", "rpmMax")) return { error: "min must not exceed max" };
+  return { data };
+}
+const motorSort = (a, b) => String(a.brand).localeCompare(String(b.brand)) || String(a.driveConfig).localeCompare(String(b.driveConfig))
+  || (Number(a.tphMin) - Number(b.tphMin)) || (Number(a.rpmMin) - Number(b.rpmMin));
+
+router.get("/geared-motors", wrap(async (req, res) => {
+  const rows = (await byOrgAll(req.catalyst, req.orgId, "GearedMotor")).map(out);
+  res.json(rows.sort(motorSort));
+}));
+
+// Books motor items (CR-284, second pass): every SKU-master item carrying the
+// org's Brand / Range / Capacity answers — the Books custom fields cf_brand /
+// cf_range / cf_capacity mapped on Properties (Property.zohoCfApiName) and
+// filled by Refresh from Zoho. Under Drive → TPH band → RPM band the widget
+// lists the items whose three fields equal a sheet row's brand / RPM band / HP;
+// the pick's item feeds the work order. `rate` = the Books rate when known.
+router.get("/geared-motors/items", wrap(async (req, res) => {
+  const props = (await byOrgAll(req.catalyst, req.orgId, "Property", "zohoCfApiName IS NOT NULL")).map(out)
+    .filter((p) => /^cf_(brand|range|capacity)$/.test(String(p.zohoCfApiName || "")));
+  if (!props.length) return res.json([]);
+  const field = new Map(props.map((p) => [String(p.id), String(p.zohoCfApiName).slice(3)]));
+  const vals = (await byOrgAll(req.catalyst, req.orgId, "SKUItemValue", `propertyId IN (${[...field.keys()].map(zStr).join(",")})`)).map(out);
+  const byItem = new Map();
+  for (const v of vals) {
+    const o = byItem.get(String(v.skuItemId)) || {};
+    o[field.get(String(v.propertyId))] = v.valueText;
+    byItem.set(String(v.skuItemId), o);
+  }
+  const ids = [...byItem.entries()].filter(([id, o]) => idOk(id) && o.brand && o.range).map(([id]) => id);
+  if (!ids.length) return res.json([]);
+  const items = rowList(await req.catalyst.zcql().executeZCQLQuery(
+    `SELECT ROWID, sku, name, zohoItemId, booksData FROM SKUItem WHERE ROWID IN (${ids.join(",")}) AND ${orgClause(req.catalyst)}`,
+  )).map(out);
+  res.json(items.map((it) => ({ id: String(it.id), sku: it.sku, name: it.name, inBooks: Boolean(it.zohoItemId), rate: booksRate(it), ...byItem.get(String(it.id)) })));
+}));
+
+// Refresh from Books from inside the CRM widget (user: "allow refresh button
+// on the CRM widget as well"): the same sweep as SKU Items → Refresh from
+// Zoho, custom-field details included (≤ 40 per run — the report says how many
+// still wait), so a motor item added in Books shows up in the Model list.
+router.post("/geared-motors/sync", wrap(async (req, res) => {
+  const industries = (await byOrgAll(req.catalyst, req.orgId, "Industry")).map(out);
+  const ind = industries.find((i) => /books items/i.test(i.name || "")) || industries[0];
+  if (!ind) return bad(res, 400, "No product to sync into — create one first");
+  res.json(await refreshFromBooks(req.catalyst, String(ind.id), { detailCap: 40, skuFromName: true }));
+}));
+
+router.post("/geared-motors", wrap(async (req, res) => {
+  const b = req.body || {};
+  if (!idOk(b.industryId) || !(await ownsRow(req.catalyst, "Industry", b.industryId))) return bad(res, 400, "Valid industryId is required");
+  if (!String(b.brand || "").trim() || !String(b.driveConfig || "").trim() || !String(b.model || "").trim()) return bad(res, 400, "brand, driveConfig and model are required");
+  if (!(await sizingItemOk(req, b.skuItemId))) return bad(res, 400, "Invalid skuItemId");
+  const nums = motorNums(b, false);
+  if (nums.error) return bad(res, 400, nums.error);
+  const row = await req.catalyst.datastore().table("GearedMotor").insertRow({
+    industryId: String(b.industryId), brand: String(b.brand).trim(), driveConfig: String(b.driveConfig).trim(),
+    hp: String(b.hp || "").trim(), model: String(b.model).trim(), ...nums.data,
+    status: b.status || "Active", skuItemId: b.skuItemId ? String(b.skuItemId) : "", orgId: req.orgId,
+  });
+  const m = out(row);
+  await log(req, "GearedMotor", m.id, "geared_motor.create", { model: m.model });
+  res.status(201).json(m);
+}));
+
+router.put("/geared-motors/:id", wrap(async (req, res) => {
+  const id = req.params.id;
+  if (!idOk(id) || !(await ownsRow(req.catalyst, "GearedMotor", id))) return bad(res, 404, "Not found");
+  const b = req.body || {};
+  if (b.industryId !== undefined && (!idOk(b.industryId) || !(await ownsRow(req.catalyst, "Industry", b.industryId)))) return bad(res, 400, "Invalid industryId");
+  for (const f of ["brand", "driveConfig", "model"]) if (b[f] !== undefined && !String(b[f]).trim()) return bad(res, 400, `${f} is required`);
+  if (b.skuItemId !== undefined && !(await sizingItemOk(req, b.skuItemId))) return bad(res, 400, "Invalid skuItemId");
+  const nums = motorNums(b, true);
+  if (nums.error) return bad(res, 400, nums.error);
+  const data = { ROWID: id, ...nums.data };
+  for (const f of MOTOR_FIELDS) if (b[f] !== undefined) data[f] = String(b[f]).trim();
+  const m = out(await req.catalyst.datastore().table("GearedMotor").updateRow(data));
+  await log(req, "GearedMotor", id, "geared_motor.update", { keys: Object.keys(data).filter((k) => k !== "ROWID") });
+  res.json(m);
+}));
+
+router.delete("/geared-motors/:id", wrap(async (req, res) => {
+  const id = req.params.id;
+  if (!idOk(id) || !(await ownsRow(req.catalyst, "GearedMotor", id))) return bad(res, 404, "Not found");
+  await req.catalyst.datastore().table("GearedMotor").deleteRow(id);
+  await log(req, "GearedMotor", id, "geared_motor.delete");
+  res.status(204).end();
+}));
+
+// Ricon's geared-motor sheet for the RAV product (CR-284); skipped once the
+// product has any row. Links each row to the SKU-master item whose name is the
+// sheet model (case-insensitive); the rest stay unlinked for the grid pick.
+router.post("/seed-rav-motors", wrap(async (req, res) => {
+  const [industry] = (await byOrgAll(req.catalyst, req.orgId, "Industry", `name = 'RAV'`)).map(out);
+  if (!industry) return bad(res, 404, "Load RAV defaults first (Sizing Models)");
+  if ((await byOrgAll(req.catalyst, req.orgId, "GearedMotor", `industryId = ${zStr(industry.id)}`)).length) return res.json({ ok: true, skipped: true });
+  const names = [...new Set(RAV_MOTORS.map((m) => m[7]))];
+  const byName = new Map(rowList(await req.catalyst.zcql().executeZCQLQuery(
+    `SELECT ROWID, name FROM SKUItem WHERE name IN (${names.map(zStr).join(",")}) AND ${orgClause(req.catalyst)}`,
+  )).map(out).map((it) => [String(it.name).trim().toLowerCase(), String(it.id)]));
+  const rows = RAV_MOTORS.map(([brand, driveConfig, tphMin, tphMax, rpmMin, rpmMax, hp, model]) => ({
+    brand, driveConfig, tphMin, tphMax, rpmMin, rpmMax, hp, model, status: "Active",
+    skuItemId: byName.get(model.toLowerCase()) || "", industryId: String(industry.id), orgId: req.orgId,
+  }));
+  await req.catalyst.datastore().table("GearedMotor").insertRows(rows);
+  res.status(201).json({ ok: true, motors: rows.length, linked: rows.filter((r) => r.skuItemId).length });
+}));
+
 // ---------- component map (Product Configurator: answers -> component items) ----------
 
 // conditions: [{propertyId, valueId}], AND-ed. Returns the JSON string, or null when invalid.
@@ -1078,13 +1324,13 @@ router.post("/component-map/resolve", wrap(async (req, res) => {
   const ids = [...new Set(lines.map((l) => l.skuItemId))].filter(idOk);
   const items = ids.length
     ? rowList(await req.catalyst.zcql().executeZCQLQuery(
-      `SELECT ROWID, sku, name, zohoItemId FROM SKUItem WHERE ROWID IN (${ids.join(",")}) AND ${orgClause(req.catalyst)}`)).map(out)
+      `SELECT ROWID, sku, name, zohoItemId, booksData FROM SKUItem WHERE ROWID IN (${ids.join(",")}) AND ${orgClause(req.catalyst)}`)).map(out)
     : [];
   const byId = new Map(items.map((it) => [String(it.id), it]));
   res.json({
     lines: lines.map((l) => {
       const it = byId.get(l.skuItemId);
-      return { ...l, sku: it ? it.sku : null, name: it ? it.name : null, inBooks: Boolean(it && it.zohoItemId) };
+      return { ...l, sku: it ? it.sku : null, name: it ? it.name : null, inBooks: Boolean(it && it.zohoItemId), rate: it ? booksRate(it) : null };
     }),
     missing,
   });
@@ -1095,10 +1341,19 @@ router.post("/component-map/resolve", wrap(async (req, res) => {
 // widget can fill those answers in.
 // ponytail: matched by display text; store value ids on SizingModel if renames become a problem.
 router.post("/sizing/select", wrap(async (req, res) => {
-  const { industryId, tph, bd, rpm, group } = req.body || {};
+  const { industryId, tph, bd, rpm, group, materialId } = req.body || {};
   if (!idOk(industryId)) return bad(res, 400, "Valid industryId is required");
+  // Material processed (CR-281): its efficiency % derates the duty. Absent = 100 %
+  // (lines saved before CR-281 re-open as they were).
+  let material = null;
+  if (materialId) {
+    if (!idOk(materialId)) return bad(res, 400, "Invalid materialId");
+    material = (await byOrgAll(req.catalyst, req.orgId, "SizingMaterial", `ROWID = ${materialId}`)).map(out)[0] || null;
+    if (!material) return bad(res, 400, "Unknown material");
+  }
   const models = (await byOrgAll(req.catalyst, req.orgId, "SizingModel", `industryId = ${zStr(industryId)}`)).map(out);
-  const result = selectModels({ tph, bd, rpm: rpm || undefined, group, models });
+  const result = selectModels({ tph, bd, rpm: rpm || undefined, eff: material ? material.efficiency : 100, group, models });
+  result.material = material ? { id: material.id, name: material.name, efficiency: material.efficiency } : null;
   const props = (await byOrgAll(req.catalyst, req.orgId, "Property", `industryId = ${zStr(industryId)}`)).map(out);
   const valueIds = async (role) => {
     const prop = props.find((p) => p.sizingRole === role);
@@ -1167,9 +1422,11 @@ router.post("/sizing/price", wrap(async (req, res) => {
 // box (CR-227). Design = SizingModel.recipeCode, else the design whose Product
 // is the picked Books item. Display only: never gated by cfgDesignRate, never
 // 400s on an unmatched material — the material cell just stays blank until
-// an answer (MOC) names one. Item per line: the component's linked SKU-master
-// item (RecipeComponent.skuItemId, CR-221), else the picked material's Books
-// item (MaterialType.zohoItemName), else nothing.
+// an answer (MOC) names one. Item per line (the designBom.js rule): the picked
+// material's own item (RecipeComponentOption.skuItemId), else the component's
+// item (RecipeComponent.skuItemId), else the material's Materials-page link
+// (MaterialType.zohoItemId, read back through the SKU master), else nothing.
+// Every line carries the item's Books `rate` (SKUItem.booksData) for display.
 router.post("/sizing/bom", wrap(async (req, res) => {
   const { recipeCode, skuItemId, answers } = req.body || {};
   let recipe = recipeCode ? await templateBy(req, `code = ${zStr(recipeCode)}`) : null;
@@ -1180,22 +1437,29 @@ router.post("/sizing/bom", wrap(async (req, res) => {
   const { components, options, materials } = await loadBundle(req, recipe);
   const want = new Set((Array.isArray(answers) ? answers : []).map((a) => String(a).trim().toLowerCase()).filter(Boolean));
   const matById = new Map(materials.map((m) => [String(m.id), m]));
-  const itemIds = [...new Set(components.map((c) => c.skuItemId).filter((v) => idOk(v)))];
-  const items = new Map(itemIds.length ? rowList(await req.catalyst.zcql().executeZCQLQuery(
-    `SELECT ROWID, sku, name, zohoItemId FROM SKUItem WHERE ROWID IN (${itemIds.join(",")}) AND ${orgClause(req.catalyst)}`,
-  )).map(out).map((it) => [String(it.id), it]) : []);
+  const itemIds = [...new Set([...components, ...options].map((c) => c.skuItemId).filter((v) => idOk(v)))];
+  const zohoIds = [...new Set(options.map((o) => matById.get(String(o.materialId))).filter((m) => m && m.zohoItemId).map((m) => zStr(String(m.zohoItemId))))];
+  const where = [itemIds.length ? `ROWID IN (${itemIds.join(",")})` : "", zohoIds.length ? `zohoItemId IN (${zohoIds.join(",")})` : ""].filter(Boolean).join(" OR ");
+  const found = where ? rowList(await req.catalyst.zcql().executeZCQLQuery(
+    `SELECT ROWID, sku, name, zohoItemId, booksData FROM SKUItem WHERE (${where}) AND ${orgClause(req.catalyst)}`,
+  )).map(out) : [];
+  const items = new Map(found.map((it) => [String(it.id), it]));
+  const byZoho = new Map(found.filter((it) => it.zohoItemId).map((it) => [String(it.zohoItemId), it]));
   const lines = components.map((c) => {
     const opts = options.filter((o) => String(o.componentId) === String(c.id) && o.enabled !== false);
     const opt = c.allowMaterial === false ? null
       : opts.find((o) => want.has(String(o.materialCode || "").trim().toLowerCase())) || (opts.length === 1 ? opts[0] : null);
     const mat = opt ? matById.get(String(opt.materialId)) || null : null;
-    const it = items.get(String(c.skuItemId)) || null;
+    const it = (opt && items.get(String(opt.skuItemId))) || items.get(String(c.skuItemId)) || (mat && byZoho.get(String(mat.zohoItemId))) || null;
     return {
       component: c.name || c.code || "", qty: Number(c.qty) || 1, uom: c.uom || "Nos", required: c.required !== false,
       material: (mat && mat.code) || (opt && opt.materialCode) || null,
       sku: it ? it.sku : null,
       name: it ? it.name : (mat && mat.zohoItemName) || null,
       inBooks: it ? Boolean(it.zohoItemId) : Boolean(mat && mat.zohoItemId),
+      rate: it ? booksRate(it) : null,
+      // Associated Service (CR-284): optional in the widget; the ticked price rides the valve line.
+      service: Boolean(it && isServiceItem(it)), price: Number(c.price) || 0, skuItemId: it ? String(it.id) : null,
     };
   });
   res.json({ recipe: { id: recipe.id, code: recipe.code, name: recipe.name, version: recipe.version, status: recipe.status }, lines });
@@ -1300,7 +1564,8 @@ router.post("/seed-rav", wrap(async (req, res) => {
   }));
   await ds.table("PropertyValue").insertRows(values);
   await ds.table("SizingModel").insertRows(SIZING_MODELS.map((m) => ({ ...m, recipeCode: "", industryId: String(industry.id), orgId: req.orgId })));
-  res.status(201).json({ ok: true, industryId: industry.id, properties: props.length, values: values.length, models: SIZING_MODELS.length });
+  await ds.table("SizingMaterial").insertRows(RAV_MATERIALS.map(([name, efficiency]) => ({ name, efficiency, status: "Active", industryId: String(industry.id), orgId: req.orgId }))); // CR-281
+  res.status(201).json({ ok: true, industryId: industry.id, properties: props.length, values: values.length, models: SIZING_MODELS.length, materials: RAV_MATERIALS.length });
 }));
 
 // Idempotent Component Map starter for RAV (CR-195): the sample sheet's rows,

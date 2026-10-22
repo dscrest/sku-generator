@@ -1,8 +1,11 @@
 import { HashRouter, Routes, Route, Navigate, NavLink, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import toast from 'react-hot-toast';
 import GlobalSearch from './components/GlobalSearch.jsx';
 import TabBar from './components/TabBar.jsx';
+import Popover from './components/Popover.jsx';
+import Modal from './components/Modal.jsx';
+import { useTheme } from './theme.js';
 // Auth-flow pages stay eager — they render before anything else and are tiny.
 import ZohoConnectPage from './pages/ZohoConnectPage.jsx';
 import OrgSelectPage from './pages/OrgSelectPage.jsx';
@@ -26,17 +29,20 @@ const RecipeWizardPage = lazy(() => import('./pages/RecipeWizardPage.jsx'));
 const RecipeQuotationsPage = lazy(() => import('./pages/RecipeQuotationsPage.jsx'));
 const RecipeSnapshotPage = lazy(() => import('./pages/RecipeSnapshotPage.jsx'));
 const RecipeMfgPage = lazy(() => import('./pages/RecipeMfgPage.jsx'));
-const RecipeListPage = lazy(() => import('./pages/RecipeListPage.jsx'));
-const RecipeBuilderPage = lazy(() => import('./pages/RecipeBuilderPage.jsx'));
-const RecipeNewPage = lazy(() => import('./pages/RecipeNewPage.jsx'));
+const RecipeV2ListPage = lazy(() => import('./pages/RecipeV2ListPage.jsx'));
+const RecipeV2NewPage = lazy(() => import('./pages/RecipeV2NewPage.jsx'));
 const RecipeMaterialsPage = lazy(() => import('./pages/RecipeMaterialsPage.jsx'));
 const RecipeCostMasterPage = lazy(() => import('./pages/RecipeCostMasterPage.jsx'));
 const RecipeSizingModelsPage = lazy(() => import('./pages/RecipeSizingModelsPage.jsx'));
+const RecipeSizingMaterialsPage = lazy(() => import('./pages/RecipeSizingMaterialsPage.jsx')); // CR-281
+const RecipeGearedMotorsPage = lazy(() => import('./pages/RecipeGearedMotorsPage.jsx')); // CR-284
 const RecipeComponentMapPage = lazy(() => import('./pages/RecipeComponentMapPage.jsx'));
 // Master details pages (CR-233): each master file also exports its Detail page.
 const MaterialDetail = lazy(() => import('./pages/RecipeMaterialsPage.jsx').then(m => ({ default: m.Detail })));
 const CostElementDetail = lazy(() => import('./pages/RecipeCostMasterPage.jsx').then(m => ({ default: m.Detail })));
 const SizingModelDetail = lazy(() => import('./pages/RecipeSizingModelsPage.jsx').then(m => ({ default: m.Detail })));
+const SizingMaterialDetail = lazy(() => import('./pages/RecipeSizingMaterialsPage.jsx').then(m => ({ default: m.Detail })));
+const GearedMotorDetail = lazy(() => import('./pages/RecipeGearedMotorsPage.jsx').then(m => ({ default: m.Detail })));
 const ComponentMapDetail = lazy(() => import('./pages/RecipeComponentMapPage.jsx').then(m => ({ default: m.Detail })));
 const ComponentEditPage = lazy(() => import('./pages/ComponentEditPage.jsx'));
 // Settings hub: one chunk holding all settings pages (see SettingsLayout.jsx).
@@ -82,7 +88,7 @@ const S = {
   logoIcon: {
     width: 32, height: 32, background: 'var(--blue)', borderRadius: 8,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    color: '#fff', fontSize: 14, fontWeight: 600,
+    color: 'var(--on-accent)', fontSize: 14, fontWeight: 600,
     letterSpacing: '-0.5px', flexShrink: 0,
   },
   nav: { padding: '10px', flex: 1 },
@@ -90,14 +96,7 @@ const S = {
     fontSize: 10, fontWeight: 600, color: 'var(--text-muted)',
     letterSpacing: '0.08em', textTransform: 'uppercase', padding: '10px 10px 5px',
   },
-  // Same 44px as GridFooter so the two bottom bars share one line across the app.
-  footer: { height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 16px', borderTop: '1px solid var(--border)' },
   main: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 },
-  header: {
-    height: 52, flexShrink: 0, display: 'flex', alignItems: 'center',
-    justifyContent: 'flex-end', gap: 8, padding: '0 20px',
-    background: 'var(--bg-card)', borderBottom: '1px solid var(--border)',
-  },
 };
 
 function navItemStyle({ isActive }, collapsed) {
@@ -113,131 +112,109 @@ function navItemStyle({ isActive }, collapsed) {
   };
 }
 
-// Account menu (top-right): org avatar + name + chevron → dropdown with org
-// details, switch-org and logout.
-function HeaderBar({ zoho, onLogout, onSwitchOrg }) {
-  const [open, setOpen] = useState(false);
-  const [loggingOut, setLoggingOut] = useState(false);
-  const navigate = useNavigate();
-  const orgName = zoho.orgName || 'Zoho Books';
-  const initials = orgName.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+const SHORTCUTS = [
+  ['⌘K', 'Search items & properties (SKU pages)'],
+  ['⌘,', 'Open Settings'],
+  ['Esc', 'Close dialog or menu'],
+];
 
-  async function handleLogout() {
+function ShortcutsModal({ onClose }) {
+  return (
+    <Modal glass title="Keyboard shortcuts" width={380} onClose={onClose}>
+      {SHORTCUTS.map(([k, label]) => (
+        <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 13, color: 'var(--text-secondary)' }}>
+          <kbd style={{ fontFamily: 'var(--font-mono)', fontSize: 11, padding: '2px 6px', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-primary)', minWidth: 36, textAlign: 'center' }}>{k}</kbd>
+          {label}
+        </div>
+      ))}
+      <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>On Windows and Linux use Ctrl in place of ⌘.</div>
+    </Modal>
+  );
+}
+
+const THEMES = [['light', 'Light'], ['dark', 'Dark'], ['system', 'Match system']];
+
+// Sidebar user card (CR-294, replaces the header account menu): avatar
+// initials + name + role, opens a glass popover with Settings, shortcuts, the
+// theme radio, helpdesk, switch-org and logout. ⌘, opens Settings from anywhere.
+function UserCard({ user, collapsed, onLogout, onSwitchOrg }) {
+  const [open, setOpen] = useState(false);
+  const [shortcuts, setShortcuts] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [pref, setPref] = useTheme();
+  const navigate = useNavigate();
+  const ref = useRef(null);
+
+  const name = user.name || user.email;
+  const initials = (user.name || user.email.split('@')[0]).split(/[\s._-]+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  // ponytail: role names aren't on /auth/me and /api/access is admin-gated; ["*"] = Admin role or unconfigured org
+  const role = user.isAdmin || (user.perms ?? []).includes('*') ? 'Admin' : 'Member';
+
+  useEffect(() => {
+    const onKey = e => { if ((e.metaKey || e.ctrlKey) && e.key === ',') { e.preventDefault(); navigate('/settings'); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  async function logout() {
     setLoggingOut(true);
     await fetch(`${API}/auth/logout`, { method: 'POST' }).catch(() => {});
     onLogout();
   }
-
-  const menuItem = {
-    display: 'flex', alignItems: 'center', gap: 10, width: '100%',
-    padding: '8px 12px', background: 'transparent', border: 'none',
-    borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 13,
-    color: 'var(--text-secondary)', textAlign: 'left',
-  };
+  const go = fn => () => { setOpen(false); fn(); };
+  const icon = d => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>{d}</svg>;
 
   return (
-    <header style={S.header}>
-      <button
-        onClick={() => navigate('/settings')}
-        title="Settings"
-        style={{
-          width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'transparent', border: 'none', borderRadius: 'var(--radius-md)',
-          cursor: 'pointer', color: 'var(--text-secondary)', transition: 'background 0.12s',
-        }}
-        onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
-        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/>
-        </svg>
-      </button>
-      <div style={{ position: 'relative' }}>
-        <button
-          onClick={() => setOpen(o => !o)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px',
-            background: open ? 'var(--bg-secondary)' : 'transparent', border: 'none',
-            borderRadius: 'var(--radius-md)', cursor: 'pointer', transition: 'background 0.12s',
-          }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; }}
-          onMouseLeave={e => { if (!open) e.currentTarget.style.background = 'transparent'; }}
-        >
-          <span style={{
-            width: 26, height: 26, borderRadius: '50%', background: 'var(--blue)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff', fontSize: 10, fontWeight: 700, letterSpacing: '0.02em', flexShrink: 0,
-          }}>{initials}</span>
-          <span style={{
-            fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', maxWidth: 200,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>{orgName}</span>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
-            style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
-            <path d="M6 9l6 6 6-6" />
-          </svg>
-        </button>
-
-        {open && (
+    <>
+      <button ref={ref} className="user-card" aria-expanded={open} aria-haspopup="menu" title={name}
+        onClick={() => setOpen(o => !o)}
+        style={collapsed ? { justifyContent: 'center', padding: 0 } : undefined}>
+        <span className="avatar">{initials}</span>
+        {!collapsed && (
           <>
-            <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 90 }} />
-            <div style={{
-              position: 'absolute', top: 'calc(100% + 6px)', right: 0, width: 248, zIndex: 100,
-              background: 'var(--bg-card)', border: '1px solid var(--border)',
-              borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)', padding: 6,
-            }}>
-              <div style={{ padding: '10px 12px 8px' }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {orgName}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#16a34a', flexShrink: 0 }} />
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    Zoho Books · <span style={{ fontFamily: 'var(--font-mono)' }}>{zoho.orgId}</span>
-                  </span>
-                </div>
-              </div>
-              <div style={{ height: 1, background: 'var(--border)', margin: '2px 6px 6px' }} />
-              <button
-                style={menuItem}
-                onClick={() => { setOpen(false); window.location.href = 'mailto:dhiraj.s@octfis.com?subject=SKU%20Generator%20support'; }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-                </svg>
-                Submit to Helpdesk
-              </button>
-              <button
-                style={menuItem}
-                onClick={() => { setOpen(false); onSwitchOrg(); }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-                </svg>
-                Switch Organization
-              </button>
-              <button
-                style={{ ...menuItem, cursor: loggingOut ? 'wait' : 'pointer' }}
-                disabled={loggingOut}
-                onClick={handleLogout}
-                onMouseEnter={e => { e.currentTarget.style.background = '#fee2e2'; e.currentTarget.style.color = '#dc2626'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
-                </svg>
-                {loggingOut ? 'Logging out…' : 'Log Out'}
-              </button>
-            </div>
+            <span style={{ minWidth: 0, flex: 1 }}>
+              <span style={{ display: 'block', fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+              <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)' }}>{role}</span>
+            </span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+              style={{ flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
+              <path d="M6 9l6 6 6-6" />
+            </svg>
           </>
         )}
-      </div>
-    </header>
+      </button>
+      <Popover anchorRef={ref} open={open} onClose={() => setOpen(false)} width={collapsed ? 240 : undefined}>
+        <button className="pop-item" role="menuitem" onClick={go(() => navigate('/settings'))}>
+          {icon(<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33h0a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51h0a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82v0a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></>)}
+          Settings <kbd>⌘,</kbd>
+        </button>
+        <button className="pop-item" role="menuitem" onClick={go(() => setShortcuts(true))}>
+          {icon(<><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></>)}
+          Keyboard shortcuts
+        </button>
+        <div className="pop-sep" />
+        {THEMES.map(([v, label]) => (
+          <button key={v} className="pop-item" role="menuitemradio" aria-checked={pref === v} onClick={() => setPref(v)}>
+            {label}
+            {pref === v && <svg className="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>}
+          </button>
+        ))}
+        <div className="pop-sep" />
+        <button className="pop-item" role="menuitem" onClick={go(() => { window.location.href = 'mailto:dhiraj.s@octfis.com?subject=SKU%20Generator%20support'; })}>
+          {icon(<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>)}
+          Submit to Helpdesk
+        </button>
+        <button className="pop-item" role="menuitem" onClick={go(onSwitchOrg)}>
+          {icon(<path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>)}
+          Switch Organization
+        </button>
+        <button className="pop-item danger" role="menuitem" disabled={loggingOut} onClick={logout}>
+          {icon(<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>)}
+          {loggingOut ? 'Logging out…' : 'Log Out'}
+        </button>
+      </Popover>
+      {shortcuts && <ShortcutsModal onClose={() => setShortcuts(false)} />}
+    </>
   );
 }
 
@@ -258,16 +235,18 @@ const NAV_LINKS = [
   // Product-first order: build the recipe, then configure & quote it.
   { to: '/recipe/recipes', match: '/recipe', addon: 'recipe-engine', label: 'Product Configurator', icon: <><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></>,
     children: [
-      { to: '/recipe/recipes', label: 'Product Designs', perm: 'recipe.recipes' },
+      { to: '/recipe/recipes', label: 'Product Designs', perm: 'recipe.recipes' }, // the v2 form took over (v1 builder retired)
       { to: '/recipe/materials', label: 'Materials', perm: 'recipe.materials' },
       { to: '/recipe/costs', label: 'Cost Master', perm: 'recipe.costs' },
       { to: '/recipe/sizing', label: 'Sizing Models', perm: 'recipe.sizing' },
+      { to: '/recipe/sizing-materials', label: 'Material Efficiency', perm: 'recipe.sizing' }, // CR-281
+      { to: '/recipe/geared-motors', label: 'Geared Motors', perm: 'recipe.sizing' }, // CR-284
       { to: '/recipe/component-map', label: 'Components', perm: 'recipe.sizing' },
       // Configure & Quote (/recipe/configure) and Quotations (/recipe/quotations)
       // are deep-link only (CR-229): quoting happens in the CRM widgets.
     ] },
   // Users & Roles, org settings and add-on admin live in the Settings hub
-  // (header gear → /settings).
+  // (sidebar user card → Settings, or ⌘,).
 ];
 
 // Industries, Properties and SKU Settings live in the Settings hub
@@ -314,16 +293,20 @@ function RecipeLayout({ hasPerm }) {
         <Route path="quotations" element={g('recipe.quotations', <RecipeQuotationsPage />)} />
         <Route path="quotations/:id" element={g('recipe.quotations', <RecipeSnapshotPage />)} />
         <Route path="quotations/:id/mfg" element={g('recipe.quotations', <RecipeMfgPage />)} />
-        <Route path="recipes" element={g('recipe.recipes', <RecipeListPage />)} />
-        <Route path="recipes/new" element={g('recipe.recipes', <RecipeNewPage />)} />
-        <Route path="recipes/:id/edit" element={g('recipe.recipes', <RecipeNewPage />)} />
-        <Route path="recipes/:id" element={g('recipe.recipes', <RecipeBuilderPage />)} />
+        <Route path="recipes" element={g('recipe.recipes', <RecipeV2ListPage />)} />
+        <Route path="recipes/new" element={g('recipe.recipes', <RecipeV2NewPage />)} />
+        <Route path="recipes/:id/edit" element={g('recipe.recipes', <RecipeV2NewPage />)} />
+        <Route path="recipes/:id" element={<Navigate to="edit" replace />} />
         <Route path="materials" element={g('recipe.materials', <RecipeMaterialsPage />)} />
         <Route path="materials/:id" element={g('recipe.materials', <MaterialDetail />)} />
         <Route path="costs" element={g('recipe.costs', <RecipeCostMasterPage />)} />
         <Route path="costs/:id" element={g('recipe.costs', <CostElementDetail />)} />
         <Route path="sizing" element={g('recipe.sizing', <RecipeSizingModelsPage />)} />
         <Route path="sizing/:id" element={g('recipe.sizing', <SizingModelDetail />)} />
+        <Route path="sizing-materials" element={g('recipe.sizing', <RecipeSizingMaterialsPage />)} />
+        <Route path="sizing-materials/:id" element={g('recipe.sizing', <SizingMaterialDetail />)} />
+        <Route path="geared-motors" element={g('recipe.sizing', <RecipeGearedMotorsPage />)} />
+        <Route path="geared-motors/:id" element={g('recipe.sizing', <GearedMotorDetail />)} />
         <Route path="component-map" element={g('recipe.sizing', <RecipeComponentMapPage />)} />
         <Route path="component-map/new" element={g('recipe.sizing', <ComponentEditPage />)} />
         <Route path="component-map/edit" element={g('recipe.sizing', <ComponentEditPage />)} />
@@ -353,7 +336,7 @@ function SkuLayout() {
   );
 }
 
-function Sidebar({ addons, isAdmin, hasPerm, badges = {} }) {
+function Sidebar({ user, addons, isAdmin, hasPerm, badges = {}, onLogout, onSwitchOrg }) {
   const { pathname } = useLocation();
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebarCollapsed') === '1');
   // Logo file is dropped by the user at frontend/public/octfis-logo.png; until
@@ -436,7 +419,7 @@ function Sidebar({ addons, isAdmin, hasPerm, badges = {} }) {
                     {c.label}
                     {/* CR-203: pending store issues, fetched on navigation (no timer) */}
                     {badges[c.to] > 0 && (
-                      <span style={{ marginLeft: 'auto', minWidth: 18, padding: '0 6px', borderRadius: 9, fontSize: 10.5, fontWeight: 700, textAlign: 'center', background: '#dc2626', color: '#fff' }}>
+                      <span style={{ marginLeft: 'auto', minWidth: 18, padding: '0 6px', borderRadius: 9, fontSize: 10.5, fontWeight: 700, textAlign: 'center', background: 'var(--danger)', color: 'var(--on-accent)' }}>
                         {badges[c.to]}
                       </span>
                     )}
@@ -446,11 +429,7 @@ function Sidebar({ addons, isAdmin, hasPerm, badges = {} }) {
             );
           })}
       </nav>
-      {!collapsed && <div style={S.footer}>
-        <div style={{ fontSize: 10, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          Powered by OCTFIS Techno LLP
-        </div>
-      </div>}
+      <UserCard user={user} collapsed={collapsed} onLogout={onLogout} onSwitchOrg={onSwitchOrg} />
     </aside>
   );
 }
@@ -498,19 +477,18 @@ function AppShell({ user, refreshUser, onLogout }) {
     );
   }
 
-  const zoho = { connected: true, orgId: user.orgId, orgName: user.orgName };
   const addons = user.addons ?? ['sku-generator']; // until /auth/me sends addons
   const hasPerm = makeHasPerm(user.perms ?? ['*']); // until /auth/me sends perms
   // Settings hub replaces the module nav with its own section panel (Zoho
-  // Setup style, CR-229); the header bar stays.
+  // Setup style, CR-229). No header bar (CR-294): the account menu is the
+  // sidebar user card.
   const inSettings = location.pathname.startsWith('/settings');
   return (
     <>
-      {!inSettings && <Sidebar addons={addons} isAdmin={user.isAdmin} hasPerm={hasPerm} badges={badges} />}
+      {!inSettings && <Sidebar user={user} addons={addons} isAdmin={user.isAdmin} hasPerm={hasPerm} badges={badges} onLogout={onLogout} onSwitchOrg={() => setSwitchOrg(true)} />}
       {/* key on orgId: switching org remounts the pages so they refetch the new
           org's catalog instead of showing the previous org's data. */}
       <div style={S.main} key={user.orgId}>
-        <HeaderBar zoho={zoho} onLogout={onLogout} onSwitchOrg={() => setSwitchOrg(true)} />
         <Suspense fallback={<PageLoading />}>
         <Routes>
           <Route path="/" element={<Navigate to="/sku/items" replace />} />
@@ -522,7 +500,7 @@ function AppShell({ user, refreshUser, onLogout }) {
           <Route path="/reserve" element={hasPerm('reserve') ? <ReservePage /> : <NoAccess />} />
           {/* Deep link from a CRM deal: /#/estimate?dealId=… — no sidebar entry */}
           <Route path="/estimate" element={hasPerm('estimate') ? <EstimatePage /> : <NoAccess />} />
-          {/* Settings hub (header gear): org, users & roles, SKU, work order. */}
+          {/* Settings hub (user card / ⌘,): org, users & roles, SKU, work order. */}
           <Route path="/settings/*" element={<SettingsLayout user={user} addons={addons} hasPerm={hasPerm} onSwitchOrg={() => setSwitchOrg(true)} />} />
           {/* moved into the settings hub — static segments outrank /sku/* */}
           <Route path="/sku/industries" element={<Navigate to="/settings/sku/industries" replace />} />

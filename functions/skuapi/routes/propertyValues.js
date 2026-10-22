@@ -1,6 +1,6 @@
 "use strict";
 const express = require("express");
-const { rowList, out, idOk, orgClause, ownsRow } = require("../store");
+const { rowList, out, idOk, orgClause, ownsRow, valueSourceOf } = require("../store");
 const { pushValueToZoho } = require("../zoho/push");
 
 const router = express.Router();
@@ -77,9 +77,12 @@ router.post("/property-values", async (req, res) => {
     const value = out(row);
     // Only one default per property — clear the flag on the siblings.
     if (isDefault) await clearOtherDefaults(req.catalyst, propertyId, value.id);
-    // Gate: a value becomes a Books item only when its parent property is
-    // flagged. Best-effort — a Books failure must never fail the value save.
-    if (await propertyMakesItems(req.catalyst, propertyId)) await createBooksItem(req.catalyst, value);
+    // Gate by the property's value source (CR-026 items / CR-288 options).
+    // Best-effort — a Books failure must never fail the value save.
+    const prop = await propertyRow(req.catalyst, propertyId);
+    const source = valueSourceOf(prop);
+    if (source === "items") await createBooksItem(req.catalyst, value);
+    else if (source === "options") await pushOption(req.catalyst, prop, value);
     res.status(201).json(value);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -101,15 +104,39 @@ async function clearOtherDefaults(catalyst, propertyId, keepId) {
   }
 }
 
-// Property-level gate (CR-026): true when this property's values should sync to
-// Books as items. Replaces the old per-value createAsItem checkbox.
-async function propertyMakesItems(catalyst, propertyId) {
+// The parent property (one read feeds both gates): valueSourceOf(row) says
+// whether a value becomes a Books item (CR-026) or a Books field option (CR-288).
+async function propertyRow(catalyst, propertyId) {
   const rows = rowList(
     await catalyst.zcql().executeZCQLQuery(
-      `SELECT createValuesAsItems FROM Property WHERE ROWID = ${propertyId} AND ${orgClause(catalyst)}`,
+      `SELECT createValuesAsItems, valuesFromCf, zohoCfApiName, caption FROM Property WHERE ROWID = ${propertyId} AND ${orgClause(catalyst)}`,
     ),
   ).map(out);
-  return rows.length ? rows[0].createValuesAsItems === true : false;
+  return rows[0] || null;
+}
+
+// Append the value as an option of the property's Books dropdown field (CR-288).
+// Swallows Zoho errors into `value.zohoWarning` — the save already succeeded.
+// A Books org that refuses the (undocumented) field update is remembered for
+// the life of the instance, so later saves do not retry it (CR-268 pattern).
+const _optionPushOff = new Map(); // orgId -> reason
+async function pushOption(catalyst, prop, value) {
+  const { listItemCustomFields, addCustomFieldOption, isOptionField } = require("../zoho/booksApi");
+  const orgKey = String(value.orgId || "");
+  const manual = `Add "${value.displayValue}" to the options of the Books item field ${prop.zohoCfApiName} (Books → Settings → Items → Custom fields)`;
+  if (_optionPushOff.has(orgKey)) { value.zohoWarning = `${manual} — ${_optionPushOff.get(orgKey)}`; return; }
+  try {
+    const field = (await listItemCustomFields(catalyst)).find((f) => f.api_name === prop.zohoCfApiName);
+    if (!field) throw new Error(`Zoho Books has no item field ${prop.zohoCfApiName}`);
+    if (!isOptionField(field)) throw new Error(`Zoho Books field ${field.label} is not a dropdown`);
+    const r = await addCustomFieldOption(catalyst, field, value.displayValue);
+    value.zohoOption = r.added ? "added" : "exists";
+  } catch (e) {
+    console.error("[Zoho] option push failed:", e.message);
+    // 404 / 405 / "invalid URL" = the org's Books does not take this call at all
+    if (e.httpStatus === 404 || e.httpStatus === 405 || /invalid url|not found/i.test(e.message)) _optionPushOff.set(orgKey, e.message);
+    value.zohoWarning = `${manual} — ${e.message}`;
+  }
 }
 
 // Push a value as a standalone Books item, mutating `value` with the resolved
@@ -146,7 +173,14 @@ router.put("/property-values/:id", async (req, res) => {
     ).map(out)[0];
     // Only one default per property — clear the flag on the siblings.
     if (isDefault && full) await clearOtherDefaults(req.catalyst, full.propertyId, id);
-    if (full && !full.zohoItemId && (await propertyMakesItems(req.catalyst, full.propertyId))) await createBooksItem(req.catalyst, full);
+    if (full) {
+      const prop = await propertyRow(req.catalyst, full.propertyId);
+      const source = valueSourceOf(prop);
+      if (source === "items" && !full.zohoItemId) await createBooksItem(req.catalyst, full);
+      // A renamed option-backed value: Books cannot rename an in-use option
+      // (120111), so the new name is appended as an option; the old stays.
+      else if (source === "options" && displayValue) await pushOption(req.catalyst, prop, full);
+    }
     res.json(full);
   } catch (err) {
     res.status(500).json({ error: err.message });

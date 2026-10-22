@@ -109,6 +109,12 @@
     #res-comps .c-name { flex: 0 0 120px; color: #64748b; }
     #res-comps .c-item { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #res-comps .c-qty { font-family: 'IBM Plex Mono', monospace; }
+    #res-comps .c-rate, #pop .bom .c-rate { flex: 0 0 84px; text-align: right; font-family: 'IBM Plex Mono', monospace; color: #64748b; white-space: nowrap; }
+    #pop .bom .svc { color: #4C1D95; }
+    /* optional design services (CR-284): tick = its own priced quote line */
+    #res-comps .svc label { flex-direction: row; align-items: center; gap: 6px; font-size: 12px; color: #0f172a; font-weight: 500; cursor: pointer; }
+    #res-comps .svc input { width: auto; accent-color: #0f766e; margin: 0; }
+    #res-comps .svc .c-qty { color: #64748b; }
     .badge.exists { color: #15803d; background: #dcfce7; }
     .badge.fresh { color: #b45309; background: #fef3c7; }
     #result label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; color: #64748b; font-weight: 500; }
@@ -146,6 +152,7 @@
     .badge.cls { font-weight: 600; text-transform: uppercase; font-size: 10.5px; padding: 2px 6px; }
     .badge.cls.mfg { background: #FCE8D8; color: #7A3E10; border: 1px solid #f0c9ad; }
     .badge.cls.bo { background: #D9ECF3; color: #0F4C66; border: 1px solid #b9d9e6; }
+    .badge.cls.svc { background: #EDE9FE; color: #4C1D95; border: 1px solid #d9d0f5; }
     .l-card.mfg .badge.cls, .l-card.bo .badge.cls { background: #fff; }
     /* card actions (CR-246): Edit · BOM · Price detail — no unit caption, the total already shows it */
     .l-unit { grid-column: 1 / -1; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
@@ -529,9 +536,11 @@ function applyLadder(base, pcts) {
   out.unit = v;
   return out;
 }
-function classOf(type) { return type === 'Manufacturing' ? 'mfg' : 'bo'; }
+function classOf(type) { return type === 'Manufacturing' ? 'mfg' : type === 'Service' ? 'svc' : 'bo'; }
+// Service lines (CR-284) carry the design's price as-is: no ladder % is set for 'svc'.
+function clsName(cls) { return cls === 'mfg' ? 'Mfg' : cls === 'svc' ? 'Service' : 'BO'; }
 function ladderOf(l) { return applyLadder(l.rate, priceLadder[l.cls]); }
-function unitPrice(l) { return ladderOf(l).unit; }
+function unitPrice(l) { return ladderOf(l).unit + svcTotal(l); } // + included services, outside the ladder
 function fmtMoney(v) { return Math.round(Number(v) || 0).toLocaleString('en-IN'); }
 // Units for Qty (CR-206). Default list inlined (CR-214: /api/recipe/uoms sits
 // behind the Recipe Engine add-on); the org's own list (SKU Settings → Units
@@ -706,6 +715,14 @@ var valuesByProp = {};   // propertyId -> [{ id, displayValue, isDefault }]
 var sel = {};            // propertyId -> valueId (List) | number text (Range)
 var sizing = null;       // last /sizing/select response
 var picked = null;       // chosen option: { modelCode, series, capacity, requiredRpm, valueId }
+var materials = [];      // active SizingMaterial rows of the product (CR-281)
+var materialId = null;   // chosen material: its efficiency % derates the duty (CR-281)
+var motors = [];         // active GearedMotor rows of the product (CR-284)
+var gmotor = null;       // picked geared-motor row (CR-284); `.item` = the Books motor item when one matched
+var mitems = [];         // Books motor items with Brand / Range / Capacity (CR-284, second pass)
+var mpick = {};          // geared-motor narrowing picks: drive, tph (band key), rpm (band key)
+var svcLines = [];       // the picked model's design services (CR-284)
+var svcOn = {};          // ticked services by skuItemId → BOM rows + price on the valve line itself
 var gen = null;          // last /api/sku/generate response
 var existing = null;     // catalog item already carrying gen.sku
 var genKey = null;       // guards against stale generate responses
@@ -788,7 +805,8 @@ function loadProduct(after) {
   var id = String($('product').value);
   var same = id === industryId && props.length > 0;
   industryId = id;
-  sel = {}; sizing = null; picked = null; gen = null; existing = null; genKey = null;
+  sel = {}; sizing = null; picked = null; materialId = null; gen = null; existing = null; genKey = null;
+  gmotor = null; mpick = {}; svcOn = {};
   step = 1;
   var ready = function () {
     props.forEach(function (p) {
@@ -804,14 +822,20 @@ function loadProduct(after) {
   props = [];
   $('form').innerHTML = '<p class="muted">Loading questions…</p>';
   renderResult();
-  // Two calls total (properties + batched values) — never one per property,
-  // the Dev concurrency cap can't take it.
+  // Five calls total (properties + batched values + materials + geared motors
+  // + motor items) — never one per property, the Dev concurrency cap can't take it.
   Promise.all([
     api('/api/industries/' + industryId + '/properties').then(function (r) { return r.ok ? r.json() : []; }),
     api('/api/industries/' + industryId + '/property-values').then(function (r) { return r.ok ? r.json() : {}; }),
+    api('/api/recipe/sizing-materials').then(function (r) { return r.ok ? r.json() : []; }),
+    api('/api/recipe/geared-motors').then(function (r) { return r.ok ? r.json() : []; }),
+    api('/api/recipe/geared-motors/items').then(function (r) { return r.ok ? r.json() : []; }),
   ]).then(function (res) {
     props = (Array.isArray(res[0]) ? res[0] : []).filter(function (p) { return p.showInWidget || p.sizingRole; });
     valuesByProp = res[1] || {};
+    materials = (Array.isArray(res[2]) ? res[2] : []).filter(function (m) { return String(m.industryId) === industryId && m.status !== 'Inactive'; });
+    motors = (Array.isArray(res[3]) ? res[3] : []).filter(function (m) { return String(m.industryId) === industryId && m.status !== 'Inactive'; });
+    mitems = Array.isArray(res[4]) ? res[4] : [];
     ready();
   }).catch(function () { $('form').innerHTML = '<p class="error">Failed to load questions.</p>'; });
 }
@@ -877,16 +901,19 @@ function autoPick(tph) {
   });
 }
 
+// A blank title = no caption row (CR-284: no page labels).
 function section(title, list) {
   if (!list.length) return null;
   var box = document.createElement('div');
-  var h = document.createElement('div');
-  h.className = 'sec';
-  h.textContent = title;
+  if (title) {
+    var h = document.createElement('div');
+    h.className = 'sec';
+    h.textContent = title;
+    box.appendChild(h);
+  }
   var g = document.createElement('div');
   g.className = 'grid';
   list.forEach(function (p) { g.appendChild(field(p)); });
-  box.appendChild(h);
   box.appendChild(g);
   return box;
 }
@@ -994,18 +1021,213 @@ function openNextQ(after) {
   var next = all.slice(after ? all.indexOf(after) + 1 : 0).find(function (e) { return !e.classList.contains('set'); });
   toggleQ(next || null);
 }
-// The Configuration card: MOC + other questions, then Motor Selection rows.
+/* ---------- geared-motor selection (CR-284) ---------- */
+// The sheet rows (GearedMotor) that hold step 1's TPH, narrowed by the picks
+// made so far: Drive → TPH band → (RPM, read-only) → Range (RPM band) → model. A pick upstream clears the
+// picks below it. Picking a model fills the real Motor HP / Gear Make / Drive
+// answers by display text (Motor HP keeps the Books cf_capacity push); the row
+// itself rides the line as config.motor and feeds the work order.
+var OWNED_RE = /^(motor hp|gear make|drive)$/i; // questions the motor rows answer
+var capOf = function (p) { return String(p.caption || '').trim().toLowerCase(); };
+function tphNow() { var p = roleProp('capacity'); return p ? Number(sel[p.id]) || 0 : 0; }
+function rpmNow() { var p = roleProp('speed'); return (p && Number(sel[p.id])) || 20; }
+function inBand(v, lo, hi) { return Number(lo) <= v && v <= Number(hi); }
+function bandKey(m) { return Number(m.rpmMin) === Number(m.rpmMax) ? String(Number(m.rpmMin)) : Number(m.rpmMin) + '–' + Number(m.rpmMax); }
+// Rows narrowed by the picks so far — Drive → TPH band → RPM band → model (the
+// Excel filter order). A band not picked yet is read from step 1: the rows
+// whose band holds the valve's TPH / Speed. stage 0 = all · 1 = + drive ·
+// 2 = + TPH band · 3 = + RPM band.
+function tphKey(m) { return Number(m.tphMin) + '–' + Number(m.tphMax); }
+function motorPool(stage) {
+  var tph = tphNow(), rpm = rpmNow();
+  return motors.filter(function (m) {
+    if (stage > 0 && mpick.drive && m.driveConfig !== mpick.drive) return false;
+    if (stage > 1 && (mpick.tph ? tphKey(m) !== mpick.tph : (tph > 0 && !inBand(tph, m.tphMin, m.tphMax)))) return false;
+    if (stage > 2 && (mpick.rpm ? bandKey(m) !== mpick.rpm : !inBand(rpm, m.rpmMin, m.rpmMax))) return false;
+    return true;
+  });
+}
+function uniq(list) { var seen = {}; return list.filter(function (v) { if (seen[v]) return false; seen[v] = true; return true; }); }
+// Distinct bands of `rows`, in band order.
+function bandsOf(rows, keyFn, minField) {
+  return uniq(rows.slice().sort(function (a, b) { return Number(a[minField]) - Number(b[minField]); }).map(keyFn));
+}
+function driveWord(d) { d = String(d).toLowerCase(); return d.indexOf('coupl') > -1 ? 'Couple' : d.indexOf('direct') > -1 ? 'Direct' : 'Chain'; }
+// Answer the question captioned `caption` with the value whose text is `text`
+// (or that `text` starts with — "PBL (Elecon)" answers Gear Make "PBL").
+function setByText(caption, text) {
+  var p = props.find(function (x) { return capOf(x) === caption; });
+  if (!p) return;
+  var t = String(text).trim().toLowerCase();
+  var hit = (valuesByProp[p.id] || []).find(function (v) {
+    var d = String(v.displayValue).trim().toLowerCase();
+    return d === t || t.indexOf(d + ' ') === 0;
+  });
+  if (hit) sel[p.id] = String(hit.id);
+}
+// Books motor items vs sheet rows (second pass): an item belongs to a row when
+// its Brand / Range / Capacity custom fields equal the row's brand / RPM band /
+// HP. Range text comes in the sheet's words ("15 to 25", "Below 12") or as a
+// band ("15–25"); Capacity with or without "HP"; "PBL (Elecon)" matches "PBL".
+function rangeKeyOf(text) {
+  var s = String(text || '').trim().toLowerCase();
+  var m = /^below\s*([\d.]+)/.exec(s);
+  if (m) return '1–' + (Number(m[1]) - 1);
+  m = /^([\d.]+)\s*(?:to|-|–)\s*([\d.]+)$/.exec(s);
+  if (m) return Number(m[1]) === Number(m[2]) ? String(Number(m[1])) : Number(m[1]) + '–' + Number(m[2]);
+  m = /^([\d.]+)$/.exec(s);
+  return m ? String(Number(m[1])) : s;
+}
+function hpKey(v) { var s = String(v || '').replace(/hp/i, '').trim(); return s === '' || isNaN(Number(s)) ? s.toLowerCase() : String(Number(s)); }
+function brandKey(b) { return String(b || '').trim().toLowerCase().replace(/\s*\(.*\)\s*$/, ''); }
+function rowFits(m, it) { return brandKey(m.brand) === brandKey(it.brand) && bandKey(m) === rangeKeyOf(it.range) && hpKey(m.hp) === hpKey(it.capacity); }
+function itemsFor(rows) { return mitems.filter(function (it) { return rows.some(function (m) { return rowFits(m, it); }); }); }
+function pickMotor(m, it) {
+  gmotor = it ? Object.assign({}, m, { skuItemId: it.id, item: it }) : m;
+  mpick = { drive: m.driveConfig, tph: tphKey(m), rpm: bandKey(m) };
+  setByText('motor hp', m.hp + ' HP');
+  setByText('gear make', m.brand);
+  setByText('drive', driveWord(m.driveConfig));
+}
+// Re-render step 2 after a motor pick (the rows below it change), keeping the scroll.
+function motorChanged() {
+  var form = $('form'), top = form.scrollTop;
+  renderForm();
+  form.scrollTop = top;
+  refreshResult();
+}
+// One narrowing row in the question-row look: caption · pick · ✕; options under
+// it. `hint` shows in place of the pick while nothing is picked.
+function mRow(n, caption, val, opts, onPick, onClear, empty, hint) {
+  var q = document.createElement('div');
+  q.className = 'q' + (val ? ' set' : '');
+  var row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'q-row';
+  row.innerHTML = '<span class="num"></span><span class="cap"></span><span class="val"></span><span class="x" title="Clear">✕</span>';
+  row.querySelector('.num').textContent = n;
+  row.querySelector('.cap').textContent = caption;
+  row.querySelector('.val').textContent = val || hint || '—';
+  var body = document.createElement('div');
+  body.className = 'q-body hidden';
+  if (!opts.length) {
+    body.innerHTML = '<div class="q-opt muted"></div>';
+    body.firstChild.textContent = empty;
+  } else {
+    var find = document.createElement('input');
+    find.type = 'search'; find.placeholder = 'Filter…'; find.className = 'q-find';
+    find.addEventListener('input', function () {
+      var s = find.value.trim().toLowerCase();
+      Array.prototype.forEach.call(body.querySelectorAll('.q-opt'), function (o) { o.style.display = !s || o.textContent.toLowerCase().indexOf(s) !== -1 ? '' : 'none'; });
+    });
+    body.appendChild(find);
+    opts.forEach(function (o) {
+      var d = document.createElement('div');
+      d.className = 'q-opt' + (o.label === val ? ' on' : '');
+      d.textContent = o.label;
+      d.addEventListener('click', function () { onPick(o.v); });
+      body.appendChild(d);
+    });
+  }
+  row.querySelector('.x').addEventListener('click', function (e) { e.stopPropagation(); onClear(); });
+  row.addEventListener('click', function () { toggleQ(q.classList.contains('open') ? null : q); });
+  q._paint = function () {};
+  q.appendChild(row);
+  q.appendChild(body);
+  return q;
+}
+function motorRows(qs, n) {
+  var tph = tphNow(), rpm = rpmNow();
+  var none = 'No sheet row for these picks.';
+  // Pre-picks from step 1, only when exactly one band holds the value; several
+  // (1.1–4 and 1.1–4.5 both hold 2 TPH) leave the row open and the list shows
+  // every row holding it until a band is picked.
+  if (!mpick.tph && tph > 0) {
+    var tb = bandsOf(motorPool(1).filter(function (m) { return inBand(tph, m.tphMin, m.tphMax); }), tphKey, 'tphMin');
+    if (tb.length === 1) mpick.tph = tb[0];
+  }
+  if (!mpick.rpm) {
+    var rb = bandsOf(motorPool(2).filter(function (m) { return inBand(rpm, m.rpmMin, m.rpmMax); }), bandKey, 'rpmMin');
+    if (rb.length === 1) mpick.rpm = rb[0];
+  }
+  var clearFrom = function (k) {
+    if (k === 'drive') mpick = {};
+    else if (k === 'tph') mpick = { drive: mpick.drive };
+    else if (k === 'rpm') mpick = { drive: mpick.drive, tph: mpick.tph };
+    gmotor = null;
+    motorChanged();
+  };
+  var pickAt = function (k) { return function (v) { clearFrom(k); mpick[k] = v; motorChanged(); }; };
+  var asOpt = function (v) { return { v: v, label: v }; };
+  qs.appendChild(mRow(++n, 'Drive', mpick.drive || '', uniq(motors.map(function (m) { return m.driveConfig; })).map(asOpt),
+    pickAt('drive'), function () { clearFrom('drive'); }, 'No geared motors on the sheet.'));
+  qs.appendChild(mRow(++n, 'TPH range', mpick.tph || '', bandsOf(motorPool(1), tphKey, 'tphMin').map(asOpt),
+    pickAt('tph'), function () { clearFrom('tph'); }, none, tph > 0 ? 'holding ' + tph + ' TPH' : ''));
+  // RPM = the valve speed answered in step 1, shown read-only so sales see what narrowed the bands.
+  var rpmRow = mRow(++n, 'RPM', rpm + ' RPM', [], function () {}, function () {}, 'Set by Speed in step 1.');
+  rpmRow.querySelector('.x').remove();
+  qs.appendChild(rpmRow);
+  qs.appendChild(mRow(++n, 'Range', mpick.rpm || '', bandsOf(motorPool(2), bandKey, 'rpmMin').map(asOpt),
+    pickAt('rpm'), function () { clearFrom('rpm'); }, none, 'holding ' + rpm + ' RPM'));
+  // Model = the Books motor items matching the narrowed rows (Brand · Range ·
+  // Capacity); the sheet rows themselves only when no item matches yet.
+  var rowLabel = function (m) { return m.brand + ' · ' + m.model + ' · ' + m.hp + ' HP · no Books item'; };
+  var itemLabel = function (it) { return it.name + ' · ' + it.brand + ' · ' + hpKey(it.capacity) + ' HP' + (it.rate > 0 ? ' · ₹ ' + fmtMoney(it.rate) : '') + (it.inBooks ? '' : ' · not in Books'); };
+  var label = function (g) { return g.item ? itemLabel(g.item) : rowLabel(g); };
+  var rows = motorPool(3).slice().sort(function (a, b) { return String(a.brand).localeCompare(String(b.brand)) || String(a.model).localeCompare(String(b.model)); });
+  var its = itemsFor(rows).sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); });
+  var opts = its.length
+    ? its.map(function (it) { return { v: { it: it, m: rows.find(function (m) { return rowFits(m, it); }) }, label: itemLabel(it) }; })
+    : rows.map(function (m) { return { v: { m: m }, label: rowLabel(m) }; });
+  var count = its.length || rows.length;
+  var mq = mRow(++n, 'Model', gmotor ? label(gmotor) : '', opts,
+    function (v) { pickMotor(v.m, v.it); motorChanged(); }, function () { gmotor = null; motorChanged(); }, none,
+    count ? count + (its.length ? ' item' : ' sheet model') + (count === 1 ? '' : 's') + ' match' : '');
+  // Refresh from Books, right under the list: a motor item added in Books a
+  // minute ago is missing until the SKU master is refreshed.
+  var sync = document.createElement('div');
+  sync.className = 'q-opt muted';
+  sync.textContent = '⟳ Refresh from Books';
+  sync.addEventListener('click', function (e) { e.stopPropagation(); syncMotors(sync); });
+  mq.querySelector('.q-body').appendChild(sync);
+  qs.appendChild(mq);
+  return n;
+}
+function syncMotors(el) {
+  el.textContent = 'Refreshing from Books…';
+  api('/api/recipe/geared-motors/sync', { method: 'POST' })
+    .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+    .then(function (res) {
+      if (!res.ok) { setStatus(res.d.error || 'Refresh from Books failed.', true); el.textContent = '⟳ Refresh from Books'; return; }
+      return api('/api/recipe/geared-motors/items').then(function (r) { return r.ok ? r.json() : []; }).then(function (list) {
+        mitems = Array.isArray(list) ? list : [];
+        var d = res.d;
+        setStatus('Books refreshed — ' + (d.created || 0) + ' new, ' + (d.updated || 0) + ' updated, ' + (d.values || 0) + ' field values read'
+          + (d.detailsPending ? '; ' + d.detailsPending + ' item details still pending — refresh again' : '') + '.');
+        motorChanged();
+      });
+    })
+    .catch(function () { setStatus('Refresh from Books failed — network error.', true); el.textContent = '⟳ Refresh from Books'; });
+}
+
+// The Configuration card, in the order Ricon configures a valve: MOC, then the
+// Motor Selection rows (the geared-motor rows first when the product has a
+// sheet, CR-284), then the other questions in their Property Manager order.
 function step2Box(rest, motor) {
   var box = document.createElement('div');
   box.className = 'hl';
   box.innerHTML = '<div class="sec">Configuration</div><div id="qs"></div>';
   var qs = box.querySelector('#qs');
   var n = 0;
-  rest.forEach(function (p) { qs.appendChild(qRow(p, ++n)); });
-  if (motor.length) {
-    qs.insertAdjacentHTML('beforeend', '<div class="sec">Motor Selection</div>');
-    motor.forEach(function (p) { qs.appendChild(qRow(p, ++n)); });
-  }
+  var moc = mocProp();
+  rest.filter(function (p) { return p === moc; }).forEach(function (p) { qs.appendChild(qRow(p, ++n)); });
+  var sheet = motorOp && sized && motors.length > 0;
+  var others = rest.filter(function (p) { return p !== moc; });
+  if (motor.length || sheet) qs.insertAdjacentHTML('beforeend', '<div class="sec">Motor Selection</div>');
+  if (sheet) n = motorRows(qs, n);
+  motor.forEach(function (p) { qs.appendChild(qRow(p, ++n)); });
+  if ((motor.length || sheet) && others.length) qs.insertAdjacentHTML('beforeend', '<div class="sec">Other</div>');
+  others.forEach(function (p) { qs.appendChild(qRow(p, ++n)); });
   if (!n) qs.innerHTML = '<p class="muted">This product has no questions yet.</p>';
   return box;
 }
@@ -1031,14 +1253,17 @@ function renderForm() {
   var isPick = function (p) { return p.sizingRole === 'model' || p.sizingRole === 'series'; };
   var group = roleProp('group');
   var feed = props.filter(function (p) { return !isPick(p) && !isMotor(p) && p !== group && (DUTY_ROLES.indexOf(p.sizingRole) > -1 || p.skuPosition < model.skuPosition); });
-  var motor = props.filter(isMotor);
+  // With a geared-motor sheet (CR-284) the model pick answers Motor HP / Gear
+  // Make / Drive by text and the other motor questions are not asked (user:
+  // remove Motor Make / Motor Type / Gear type) — no motor rows at all.
+  var motor = motors.length ? [] : props.filter(isMotor);
   var rest = props.filter(function (p) { return !isPick(p) && !isMotor(p) && p !== group && feed.indexOf(p) === -1; });
   // Bare Shaft: Configuration is MOC only.
   var bareHidden = motorOp ? [] : rest.filter(function (p) { return p !== mocProp(); });
   if (!motorOp) rest = rest.filter(function (p) { return bareHidden.indexOf(p) === -1; });
   var s1 = document.createElement('div');
   s1.id = 'step1';
-  var feedBox = section('Valve Selection Section', feed);
+  var feedBox = section('', feed); // no caption (CR-284)
   feedBox.classList.add('hl');
   // Volume (Ltr/Min) = TPH×1000 ÷ BD ÷ (RPM×60), shown right after Speed (CR-218).
   var vol = document.createElement('label');
@@ -1047,6 +1272,36 @@ function renderForm() {
   var speedAt = feed.indexOf(roleProp('speed'));
   var grid = feedBox.querySelector('.grid');
   if (speedAt > -1 && grid.children[speedAt]) grid.children[speedAt].after(vol); else grid.appendChild(vol);
+  // Material processed (CR-281): mandatory; its efficiency % derates the duty
+  // (Volume × eff ÷ 100). First field of the row (CR-284): the material is
+  // the first pick, then the duty.
+  if (materials.length) {
+    var mat = document.createElement('label');
+    mat.className = 'fld' + (materialId ? ' set' : '');
+    mat.innerHTML = '<span>Material processed<span class="req"> *</span></span>';
+    var msel = document.createElement('select');
+    msel.id = 'material';
+    msel.innerHTML = '<option value="">—</option>';
+    materials.forEach(function (m) {
+      var o = document.createElement('option');
+      o.value = m.id;
+      o.textContent = m.name + ' · ' + Number(m.efficiency) + '%';
+      msel.appendChild(o);
+    });
+    msel.value = materialId || '';
+    msel.addEventListener('change', function () {
+      materialId = msel.value || null;
+      mat.classList.toggle('set', Boolean(materialId));
+      sizing = null; picked = null; renderSizing(); updateVolume(); refreshResult();
+    });
+    mat.appendChild(msel);
+    grid.prepend(mat);
+    // Five fields, one row. Numeric fields hold 2–4 chars, so they take 1fr each
+    // and Material processed takes 2fr: its option text must never clip.
+    grid.style.gridTemplateColumns = Array.prototype.map.call(grid.children, function (c) {
+      return c === mat ? 'minmax(0, 2fr)' : 'minmax(0, 1fr)';
+    }).join(' ');
+  }
   // Last row of the card: RAV type · Motor/Bare Shaft radio · Find button.
   var findRow = document.createElement('div');
   findRow.id = 'find-row';
@@ -1062,7 +1317,7 @@ function renderForm() {
   op.addEventListener('change', function (e) {
     motorOp = e.target.value === 'motor';
     // Bare shaft = the valve alone: motor/gear answers and every non-MOC configuration answer go.
-    if (!motorOp) motor.concat(rest.filter(function (p) { return p !== mocProp(); })).forEach(function (p) { delete sel[p.id]; });
+    if (!motorOp) { props.filter(isMotor).concat(rest.filter(function (p) { return p !== mocProp(); })).forEach(function (p) { delete sel[p.id]; }); gmotor = null; mpick = {}; }
     var top = form.scrollTop;
     renderForm();
     form.scrollTop = top;
@@ -1077,7 +1332,7 @@ function renderForm() {
   s1.insertAdjacentHTML('beforeend', '<div id="sizing-box" class="hl hidden"><div class="sec">Model Selection</div><div id="sizing"></div></div>');
   s1.insertAdjacentHTML('beforeend', '<div id="step-foot"><button id="next-btn" class="primary" type="button" disabled>Configuration →</button></div>');
   form.appendChild(s1);
-  // Step 2: Configuration rows (MOC first); Motor Selection rows only when Motor Operated.
+  // Step 2: MOC, Motor Selection (only when Motor Operated), then the other rows.
   var s2 = document.createElement('div');
   s2.id = 'step2';
   s2.innerHTML = '<button id="back-link" type="button">← Valve</button>';
@@ -1098,9 +1353,13 @@ function updateVolume() {
   var num = function (role) { var p = roleProp(role); return p ? Number(sel[p.id]) : 0; };
   var tph = num('capacity'), bd = num('density'), rpm = num('speed') || 20;
   var ok = tph > 0 && bd > 0 && rpm > 0;
-  inp.value = ok ? ((tph * 1000) / bd / (rpm * 60)).toFixed(2) : '';
+  var raw = ok ? (tph * 1000) / bd / (rpm * 60) : 0;
+  var m = material();
+  // With a material (CR-281) the box shows the derated duty and says so.
+  inp.value = !ok ? '' : m ? (raw * Number(m.efficiency) / 100).toFixed(2) + ' (' + Number(m.efficiency) + '% of ' + raw.toFixed(2) + ')' : raw.toFixed(2);
   inp.parentNode.classList.toggle('set', ok);
 }
+function material() { return materials.find(function (m) { return String(m.id) === String(materialId); }) || null; }
 
 // `preset` = a saved line's sizing input (edit mode); returns the request promise.
 function findModels(preset) {
@@ -1108,11 +1367,14 @@ function findModels(preset) {
   var group = roleProp('group');
   var body = preset || {
     industryId: industryId, tph: num('capacity'), bd: num('density'), rpm: num('speed') || 20,
-    group: group ? displayOf(group) : '',
+    group: group ? displayOf(group) : '', materialId: materialId || null,
   };
   $('find-msg').textContent = '';
   if (!(body.tph > 0) || !(body.bd > 0)) { $('find-msg').textContent = 'Enter ' + roleProp('capacity').caption + ' and ' + roleProp('density').caption + ' first.'; return Promise.resolve(); }
   if (group && !body.group) { $('find-msg').textContent = 'Choose ' + group.caption + ' first.'; return Promise.resolve(); }
+  // Mandatory when the product has materials (CR-281); a saved line's preset
+  // from before CR-281 still re-opens (server sizes it at 100 %).
+  if (!preset && materials.length && !body.materialId) { $('find-msg').textContent = 'Choose Material processed first.'; return Promise.resolve(); }
   var btn = $('find-btn');
   btn.disabled = true;
   return api('/api/recipe/sizing/select', { method: 'POST', body: JSON.stringify(body) })
@@ -1159,7 +1421,8 @@ function renderSizing() {
   var i = sizing.input;
   cap.innerHTML = 'Req. Cap <b></b><span></span>';
   cap.querySelector('b').textContent = sizing.reqCap.toFixed(2) + ' ltr/rev';
-  cap.querySelector('span').textContent = i.tph + ' TPH · ' + i.bd + ' kg/ltr · ' + i.rpm + ' RPM' + (i.group ? ' · ' + i.group : '');
+  cap.querySelector('span').textContent = i.tph + ' TPH · ' + i.bd + ' kg/ltr · ' + i.rpm + ' RPM' + (i.group ? ' · ' + i.group : '')
+    + (sizing.material ? ' · ' + sizing.material.name + ' ' + Number(sizing.material.efficiency) + '%' : '');
   box.appendChild(cap);
   // Options arrive capacity-sorted; show them grouped by series.
   var seriesSeen = [];
@@ -1212,7 +1475,11 @@ function lineValues() {
   if (picked && sizing) {
     v['Req. Cap'] = sizing.reqCap.toFixed(2) + ' ltr/rev';
     v['Required Speed'] = picked.requiredRpm + ' RPM';
+    // Material (CR-281): lands in the line Description and in any Quoted_Items
+    // column labelled "Material" / "Efficiency" (applyParamCols matches by label).
+    if (sizing.material) { v['Material'] = sizing.material.name; v['Efficiency'] = Number(sizing.material.efficiency) + ' %'; }
   }
+  if (gmotor) v['Geared Motor'] = gmotor.item ? gmotor.item.name : gmotor.brand + ' ' + gmotor.model; // CR-284
   return v;
 }
 
@@ -1255,7 +1522,8 @@ function renderResult(msg, isError) {
 // builds the Books BOM when the item is pushed.
 var compKey = null;
 var compLines = [];      // last resolved component lines — asQuoteLine ones become their own quote lines (CR-195)
-var compView = [];       // what the list shows, [{c, item, qty, cls}] — frozen on the line as its BOM (CR-246)
+var compView = [];       // what the list shows, [{c, item, qty, rate, cls}] — frozen on the line as its BOM (CR-246)
+function rateText(v) { return Number(v) > 0 ? '₹ ' + fmtMoney(v) : ''; } // Books selling rate of the item, when known
 function compRow(cells, cls, title) {
   var row = document.createElement('div');
   cells.forEach(function (c) {
@@ -1274,16 +1542,17 @@ function refreshComponents() {
   var mocDone = Boolean(moc && sel[moc.id]);
   var design = picked && (picked.recipeCode || picked.item) ? { recipeCode: picked.recipeCode, skuItemId: picked.item ? picked.item.id : null } : null;
   if (!mocDone && !design) { compKey = null; compLines = []; compView = []; box.innerHTML = ''; return; }
-  var key = industryId + '|' + JSON.stringify(sel) + '|' + JSON.stringify(design);
+  var key = industryId + '|' + JSON.stringify(sel) + '|' + JSON.stringify(design) + '|' + (gmotor ? gmotor.id : '');
   if (key === compKey) return;
   compKey = key;
   compLines = [];
   compView = [];
+  svcLines = [];
   box.innerHTML = '';
   // Every row shown is also remembered for the line's BOM snapshot.
   var addRow = function (cells, cls, title) {
     box.appendChild(compRow(cells, cls, title));
-    compView.push({ c: cells[0][1], item: cells[1][1], qty: cells[2][1], cls: cls || '' });
+    compView.push({ c: cells[0][1], item: cells[1][1], qty: cells[2][1], rate: cells[3] ? cells[3][1] : '', cls: cls || '' });
   };
   var child = mocDone ? displayOf(moc) : '';
   var none = function () { return Promise.resolve(null); };
@@ -1302,14 +1571,23 @@ function refreshComponents() {
     var covered = {};
     ((res[0] && res[0].lines) || []).forEach(function (l) {
       covered[String(l.component).trim().toLowerCase()] = true;
+      // Associated Service (CR-284): optional — a tick row, not a BOM row.
+      if (l.service) { svcLines.push(l); return addSvcRow(l); }
       var linked = Boolean(l.sku || l.name || l.material);
       var item = l.sku ? l.sku + ' · ' + (l.name || '') : (l.name || l.material || 'no item linked');
       addRow(
-        [['c-name', l.component], ['c-item', item], ['c-qty', '× ' + l.qty + ' ' + (l.uom || 'Nos')]],
+        [['c-name', l.component], ['c-item', item], ['c-qty', '× ' + l.qty + ' ' + (l.uom || 'Nos')], ['c-rate', rateText(l.rate)]],
         linked && !l.inBooks ? 'error' : '', linked && !l.inBooks ? 'Not in Zoho Books yet.' : '');
     });
+    // Geared motor (CR-284): the pick, linked item or not — the WO takes the item by id.
+    if (gmotor) {
+      var git = gmotor.item;
+      var gbad = git ? !git.inBooks : !gmotor.skuItemId;
+      addRow([['c-name', 'Geared Motor'], ['c-item', git ? git.sku + ' · ' + git.name : gmotor.brand + ' · ' + gmotor.model + (gmotor.skuItemId ? '' : ' · no Books item')], ['c-qty', '× 1 Nos'], ['c-rate', rateText(git && git.rate)]],
+        gbad ? 'error' : '', gbad ? (git ? 'Not in Zoho Books yet.' : 'No Books item carries this brand, range and capacity — run Refresh from Zoho.') : '');
+    }
     (Array.isArray(res[1]) ? res[1] : []).forEach(function (it) {
-      addRow([['c-name', child], ['c-item', (it.sku ? it.sku + ' · ' : '') + (it.name || '')], ['c-qty', '']]);
+      addRow([['c-name', child], ['c-item', (it.sku ? it.sku + ' · ' : '') + (it.name || '')], ['c-qty', ''], ['c-rate', rateText(it.rate)]]);
     });
     var d = res[2];
     if (!d) return; // no access / MOC not chosen — the map list is optional
@@ -1317,7 +1595,7 @@ function refreshComponents() {
     compLines.forEach(function (l) {
       var bad = !l.sku || !l.inBooks;
       addRow(
-        [['c-name', l.component], ['c-item', l.sku ? l.sku + ' · ' + (l.name || '') : 'item deleted'], ['c-qty', '× ' + l.qty + ' ' + (l.uom || 'Nos') + (l.asQuoteLine ? ' · separate line' : '')]],
+        [['c-name', l.component], ['c-item', l.sku ? l.sku + ' · ' + (l.name || '') : 'item deleted'], ['c-qty', '× ' + l.qty + ' ' + (l.uom || 'Nos') + (l.asQuoteLine ? ' · separate line' : '')], ['c-rate', rateText(l.rate)]],
         bad ? 'error' : '', bad && l.sku ? 'Not in Zoho Books yet — the Books push will fail until it is.' : '');
     });
     // A component the design already lists is not "unmapped".
@@ -1326,6 +1604,43 @@ function refreshComponents() {
     });
   });
 }
+
+// Optional service of the picked model's design (CR-284): a tick adds it to the
+// valve line — a BOM row plus its price on top of the unit price. Price = the
+// design's (Product Designs → Services), else the service item's Books rate.
+function addSvcRow(l) {
+  l.unitPrice = Number(l.price) > 0 ? Number(l.price) : Number(l.rate) > 0 ? Number(l.rate) : 0;
+  var row = document.createElement('div');
+  row.className = 'svc';
+  var lab = document.createElement('label');
+  var cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = Boolean(svcOn[l.skuItemId]);
+  cb.addEventListener('change', function () { if (cb.checked) svcOn[l.skuItemId] = true; else delete svcOn[l.skuItemId]; });
+  lab.appendChild(cb);
+  lab.appendChild(document.createTextNode(l.component + ' · optional'));
+  row.appendChild(lab);
+  var pr = document.createElement('span');
+  pr.className = 'c-qty';
+  pr.textContent = l.unitPrice > 0 ? '₹ ' + fmtMoney(l.unitPrice) : (l.sku ? 'no price' : 'no item linked');
+  row.appendChild(pr);
+  $('res-comps').appendChild(row);
+}
+// Ticked services ride the valve line (user: "it is part of the item config"):
+// config.services = [{ skuItemId, sku, name, component, price }], each also a
+// BOM row (cls svc); the prices add on top of the ladder'd unit price — no
+// ladder % on a service (CR-284). Older saved carts hold plain id strings
+// (their services were child lines) — those count 0 here and still load.
+function pickedServices() {
+  return svcLines.filter(function (l) { return svcOn[l.skuItemId] && l.sku; }).map(function (l) {
+    return { skuItemId: l.skuItemId, sku: l.sku, name: l.name || l.sku, component: l.component, price: Number(l.unitPrice) || 0 };
+  });
+}
+function svcBomRows(list) {
+  return (list || []).map(function (s) { return { c: s.component, item: s.sku + ' · ' + s.name + ' · service', qty: '× 1 Nos', rate: rateText(s.price), cls: 'svc' }; });
+}
+function svcObjs(l) { return ((l.config && l.config.services) || []).filter(function (s) { return s && typeof s === 'object'; }); }
+function svcTotal(l) { return svcObjs(l).reduce(function (t, s) { return t + (Number(s.price) || 0); }, 0); }
 
 /* ---------- design cost (CR-211) ---------- */
 // Rate from the picked model's Product Design (SizingModel.recipeCode →
@@ -1414,8 +1729,11 @@ $('res-add').addEventListener('click', async function () {
     var config = {
       industryId: industryId, sel: JSON.parse(JSON.stringify(sel)), motorOp: motorOp,
       sizingInput: sizing ? sizing.input : null, pick: picked ? { modelCode: picked.modelCode, series: picked.series } : null,
+      // CR-284: the geared-motor pick (the WO takes skuItemId) and the ticked services.
+      motor: gmotor ? { id: gmotor.id, brand: gmotor.brand, model: gmotor.model, hp: gmotor.hp, driveConfig: gmotor.driveConfig, skuItemId: gmotor.skuItemId || null, sku: gmotor.item ? gmotor.item.sku : null } : null,
+      services: pickedServices(),
     };
-    var it = { sku: item.sku, name: item.name, type: item.type || 'Manufacturing', values: lineValues(), config: config, bom: compView.slice() };
+    var it = { sku: item.sku, name: item.name, type: item.type || 'Manufacturing', values: lineValues(), config: config, bom: compView.concat(svcBomRows(config.services)) };
     var line = editingId && findLine(editingId);
     if (line) {
       // Update in place: answers, item and BOM change; qty / UOM / disc stay.
@@ -1469,6 +1787,16 @@ function editLine(line) {
   loadProduct(function () {
     Object.keys(cfg.sel || {}).forEach(function (k) { sel[k] = cfg.sel[k]; });
     motorOp = cfg.motorOp !== false;
+    materialId = (cfg.sizingInput && cfg.sizingInput.materialId) || null; // CR-281
+    // CR-284: the saved motor pick (by sheet row id) and ticked services.
+    gmotor = cfg.motor ? motors.find(function (m) { return String(m.id) === String(cfg.motor.id); }) || null : null;
+    if (gmotor && cfg.motor.skuItemId) {
+      var mit = mitems.find(function (it) { return String(it.id) === String(cfg.motor.skuItemId); });
+      if (mit) gmotor = Object.assign({}, gmotor, { skuItemId: mit.id, item: mit });
+    }
+    mpick = gmotor ? { drive: gmotor.driveConfig, tph: tphKey(gmotor), rpm: bandKey(gmotor) } : {};
+    svcOn = {};
+    (cfg.services || []).forEach(function (s) { svcOn[typeof s === 'string' ? s : s.skuItemId] = true; });
     renderForm();
     var done = function () { goStep(2); refreshResult(); };
     if (!cfg.sizingInput || !cfg.pick) return done();
@@ -1607,7 +1935,7 @@ function renderCart() {
     sk.textContent = it.sku;
     var cb = document.createElement('span');
     cb.className = 'badge cls ' + it.cls;
-    cb.textContent = it.cls === 'mfg' ? 'Mfg' : 'BO';
+    cb.textContent = clsName(it.cls);
     sk.appendChild(cb);
     if (it.type) {
       var tb = document.createElement('span');
@@ -1620,6 +1948,15 @@ function renderCart() {
       bd.className = 'badge ' + (it.badge === 'pending' ? 'pending' : 'books');
       bd.textContent = it.badge === 'pending' ? 'NEW — NOT PUSHED' : 'NEW IN BOOKS';
       sk.appendChild(bd);
+    }
+    // Included services (hint): "+2 services", the names on hover; the BOM popover lists them.
+    var svcs = svcObjs(it);
+    if (svcs.length) {
+      var sb = document.createElement('span');
+      sb.className = 'badge cls svc';
+      sb.textContent = '+' + svcs.length + ' service' + (svcs.length === 1 ? '' : 's');
+      sb.title = 'Included: ' + svcs.map(function (x) { return x.component || x.name; }).join(', ');
+      sk.appendChild(sb);
     }
     nm.appendChild(sk);
     var x = document.createElement('button');
@@ -1717,11 +2054,11 @@ function openBom(line, card) {
   pop.querySelector('.p-head span').textContent = line.sku;
   var box = pop.querySelector('.bom');
   (line.bom || []).forEach(function (r) {
-    box.appendChild(compRow([['c-name', r.c], ['c-item', r.item], ['c-qty', r.qty]], r.cls || '', ''));
+    box.appendChild(compRow([['c-name', r.c], ['c-item', r.item], ['c-qty', r.qty], ['c-rate', r.rate || '']], r.cls || '', ''));
   });
 }
 function drawPop(line, pop, flash) {
-  var clsName = line.cls === 'mfg' ? 'Mfg' : 'BO';
+  var clsLabel = clsName(line.cls);
   pop.innerHTML = '';
   var head = document.createElement('div');
   head.className = 'p-head';
@@ -1769,10 +2106,10 @@ function drawPop(line, pop, flash) {
   var foot = document.createElement('div');
   foot.className = 'p-foot';
   var l = document.createElement('span');
-  l.textContent = clsName + ' % set from org settings';
+  l.textContent = clsLabel + ' % set from org settings';
   var n = document.createElement('span');
   n.className = 'note';
-  n.textContent = flash ? '% set switched to ' + clsName : '';
+  n.textContent = flash ? '% set switched to ' + clsLabel : '';
   foot.appendChild(l); foot.appendChild(n);
   pop.appendChild(foot);
   clearTimeout(popFlash);
@@ -1788,7 +2125,9 @@ function fillPopTable(line, tbl, flash) {
   LADDER_STEPS.forEach(function (s) {
     rows += '<tr' + (flash ? ' class="flash"' : '') + '><td>' + s[1] + '</td><td class="pct">' + (Number(pcts[s[0]]) || 0) + '%</td><td>' + fmtMoney(lad[s[0]]) + '</td></tr>';
   });
-  rows += '<tr class="tot"><td>Total / unit</td><td></td><td>' + fmtMoney(lad.unit) + '</td></tr>';
+  var svc = svcTotal(line);
+  if (svc > 0) rows += '<tr><td>Services (' + svcObjs(line).length + ')</td><td class="pct">+</td><td>' + fmtMoney(svc) + '</td></tr>';
+  rows += '<tr class="tot"><td>Total / unit</td><td></td><td>' + fmtMoney(lad.unit + svc) + '</td></tr>';
   tbl.innerHTML = rows;
 }
 
@@ -2112,7 +2451,10 @@ function getQuotesLineMeta() {
 // parser splits on.
 function lineDesc(l) {
   var vals = l.values || {};
-  return Object.keys(vals).map(function (c) { return c + ': ' + vals[c]; }).join('\n');
+  var d = Object.keys(vals).map(function (c) { return c + ': ' + vals[c]; });
+  var svcs = svcObjs(l);
+  if (svcs.length) d.push('Services: ' + svcs.map(function (s) { return s.component || s.name; }).join(', '));
+  return d.join('\n');
 }
 
 // Map the item's parameter values onto matching subform columns by label
@@ -2132,7 +2474,7 @@ function paramVals(line) {
   // "Other", "Disc"). Not in line.values, which would leak into the description.
   if (line.cls) {
     var lad = ladderOf(line);
-    vals.itemclass = vals.class = line.cls === 'mfg' ? 'Mfg' : 'BO';
+    vals.itemclass = vals.class = clsName(line.cls);
     vals.baseprice = vals.base = lad.base;
     vals.oh = vals.overhead = lad.oh;
     vals.margin = lad.margin;

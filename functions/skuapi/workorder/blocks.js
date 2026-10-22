@@ -23,20 +23,29 @@ function parseTracking(json) {
   try { return JSON.parse(json); } catch { return null; }
 }
 
-// Pure: DefectReturn rows → Map<itemId, entry> (open rows only).
+// Pure: DefectReturn rows → Map<itemId, entry> (open rows only). The entry's
+// qty/batches are the units at Main (returnedAt set). Units whose return TO has
+// not fired yet (CR-280: returnedAt null) still sit in the Issue warehouse and
+// go under `issue`, with a per-WO×FG qty so the grid can keep them out of
+// assembly. Serials are specific units — blocked wherever they are.
 function blockMap(rows) {
   const map = new Map();
   for (const r of rows || []) {
     if (!OPEN.includes(String(r.status))) continue;
     const id = String(r.itemId);
     let e = map.get(id);
-    if (!e) map.set(id, (e = { qty: 0, batches: new Map(), serials: new Set() }));
-    e.qty += n(r.qty);
+    if (!e) map.set(id, (e = { qty: 0, batches: new Map(), serials: new Set(), issue: { qty: 0, batches: new Map(), byFg: new Map() } }));
+    const at = r.returnedAt ? e : e.issue;
+    at.qty += n(r.qty);
     const t = parseTracking(r.trackingJson);
     for (const s of (t && t.serials) || []) e.serials.add(String(s));
     for (const b of (t && t.batches) || []) {
       const k = String(b.batch_id || "");
-      e.batches.set(k, (e.batches.get(k) || 0) + n(b.qty));
+      at.batches.set(k, (at.batches.get(k) || 0) + n(b.qty));
+    }
+    if (!r.returnedAt) {
+      const fk = `${r.workOrderId}|${r.workOrderFgId}`;
+      e.issue.byFg.set(fk, (e.issue.byFg.get(fk) || 0) + n(r.qty));
     }
   }
   return map;
@@ -51,14 +60,18 @@ async function blockedFor(catalyst, orgId) {
 
 /**
  * Pure: the entry that applies to a pool read at `fromWarehouseId`. Serials
- * are specific units — blocked everywhere. Batch quantities are only
- * subtracted at Main, where the defective units physically sit; the same
- * batch's units in Reserve/Issue are already committed to a work order.
+ * are specific units — blocked everywhere. Batch quantities are subtracted
+ * where the defective units physically sit: at Main once returned, at Issue
+ * while the return is still a draft (CR-280); the same batch's units in
+ * Reserve are already committed to a work order.
  */
-function entryFor(blocked, itemId, fromWarehouseId, mainWarehouseId) {
+function entryFor(blocked, itemId, fromWarehouseId, mainWarehouseId, issueWarehouseId) {
   const e = blocked && blocked.get(String(itemId));
   if (!e) return null;
   if (String(fromWarehouseId) === String(mainWarehouseId)) return e;
+  if (issueWarehouseId && String(fromWarehouseId) === String(issueWarehouseId)) {
+    return { qty: e.issue.qty, batches: e.issue.batches, serials: e.serials };
+  }
   return { qty: 0, batches: new Map(), serials: e.serials };
 }
 
@@ -115,23 +128,34 @@ module.exports = { blockMap, blockedFor, entryFor, applyBlocks, blockedPick };
 if (require.main === module && process.argv.includes("--selftest")) {
   const assert = require("assert");
 
+  const AT = "2026-10-07 10:00:00";
   const rows = [
-    { itemId: "11", status: "pending", qty: 2, trackingJson: JSON.stringify({ batches: [{ batch_id: "b1", batch_number: "B1", qty: 2 }] }) },
-    { itemId: "11", status: "returned_to_vendor", qty: 1, trackingJson: JSON.stringify({ batches: [{ batch_id: "b1", batch_number: "B1", qty: 1 }] }) },
-    { itemId: "11", status: "repaired", qty: 9, trackingJson: JSON.stringify({ batches: [{ batch_id: "b1", qty: 9 }] }) },
-    { itemId: "22", status: "pending", qty: 1, trackingJson: JSON.stringify({ serials: ["S2"] }) },
-    { itemId: "33", status: "pending", qty: 4, trackingJson: "" },
+    { itemId: "11", status: "pending", qty: 2, returnedAt: AT, trackingJson: JSON.stringify({ batches: [{ batch_id: "b1", batch_number: "B1", qty: 2 }] }) },
+    { itemId: "11", status: "returned_to_vendor", qty: 1, returnedAt: AT, trackingJson: JSON.stringify({ batches: [{ batch_id: "b1", batch_number: "B1", qty: 1 }] }) },
+    { itemId: "11", status: "repaired", qty: 9, returnedAt: AT, trackingJson: JSON.stringify({ batches: [{ batch_id: "b1", qty: 9 }] }) },
+    { itemId: "22", status: "pending", qty: 1, returnedAt: AT, trackingJson: JSON.stringify({ serials: ["S2"] }) },
+    { itemId: "33", status: "pending", qty: 4, returnedAt: AT, trackingJson: "" },
+    // CR-280: return not fired yet → the units are still in Issue, for WO1/FGA.
+    { itemId: "11", status: "pending", qty: 5, returnedAt: null, workOrderId: "WO1", workOrderFgId: "FGA", trackingJson: JSON.stringify({ batches: [{ batch_id: "b2", batch_number: "B2", qty: 5 }], serials: ["S7"] }) },
   ];
   const blocked = blockMap(rows);
   assert.strictEqual(blocked.get("11").qty, 3, "two open rows of one item add up; repaired ignored");
   assert.strictEqual(blocked.get("11").batches.get("b1"), 3);
   assert.ok(blocked.get("22").serials.has("S2"));
   assert.strictEqual(blocked.get("33").qty, 4, "untracked item blocks by qty only");
+  assert.strictEqual(blocked.get("11").issue.qty, 5, "unreturned units counted at Issue, not Main");
+  assert.strictEqual(blocked.get("11").issue.batches.get("b2"), 5);
+  assert.strictEqual(blocked.get("11").batches.get("b2"), undefined, "…and not at Main");
+  assert.strictEqual(blocked.get("11").issue.byFg.get("WO1|FGA"), 5, "per WO×FG for the grid");
+  assert.ok(blocked.get("11").serials.has("S7"), "serials blocked regardless of where they sit");
 
-  // entryFor: batches only at Main, serials everywhere.
+  // entryFor: batches where the units sit (Main / Issue), serials everywhere.
   assert.strictEqual(entryFor(blocked, "99", "W1", "W1"), null);
   assert.strictEqual(entryFor(blocked, "11", "W1", "W1").batches.get("b1"), 3);
-  assert.strictEqual(entryFor(blocked, "11", "W3", "W1").batches.size, 0, "batch block not applied away from Main");
+  assert.strictEqual(entryFor(blocked, "11", "W3", "W1").batches.size, 0, "batch block not applied away from Main without an Issue id");
+  assert.strictEqual(entryFor(blocked, "11", "W3", "W1", "W3").batches.get("b2"), 5, "at Issue: the unreturned batch");
+  assert.strictEqual(entryFor(blocked, "11", "W3", "W1", "W3").batches.get("b1"), undefined, "…not the Main one");
+  assert.strictEqual(entryFor(blocked, "11", "W2", "W1", "W3").batches.size, 0, "Reserve: serials only");
   assert.ok(entryFor(blocked, "22", "W3", "W1").serials.has("S2"), "serial block applies everywhere");
 
   // applyBlocks: pools reduced in place.

@@ -93,6 +93,12 @@ function settingsOut(s) {
     // decides whether it is also pushed to Books at once (else later, from the
     // SKU Items page). Stored inverted so blank = on.
     widgetAutoPush: s.cfgNoAutoPush !== "true",
+    // Quote Maker widget, Books-first mode (CR-287, MSUN): the Books item
+    // category whose items are the Finished Goods the widget looks up (blank =
+    // whole catalog), and whether a miss shows "create it in Books" instead of
+    // the in-widget create card.
+    fgCategoryId: s.cfgFgCategoryId || "",
+    widgetBooksOnly: s.cfgWidgetBooksOnly === "true",
     // Product Configurator (CR-211): fill the widget's Rate from the picked
     // model's product-design costing (SizingModel.recipeCode → computeQuote).
     designRate: s.cfgDesignRate === "true",
@@ -156,6 +162,12 @@ router.put("/settings", async (req, res) => {
     if (b.designRate !== undefined) {
       await setSetting(req.catalyst, req.orgId, "cfgDesignRate", b.designRate ? "true" : "");
     }
+    if (b.fgCategoryId !== undefined) {
+      await setSetting(req.catalyst, req.orgId, "cfgFgCategoryId", /^\d*$/.test(String(b.fgCategoryId || "")) ? String(b.fgCategoryId || "") : "");
+    }
+    if (b.widgetBooksOnly !== undefined) {
+      await setSetting(req.catalyst, req.orgId, "cfgWidgetBooksOnly", b.widgetBooksOnly ? "true" : "");
+    }
     if (b.priceLadder !== undefined) {
       // ~110 chars of JSON — fits settingValue (varchar 255); parse clamps 0 ≤ pct < 100.
       await setSetting(req.catalyst, req.orgId, "priceLadder", JSON.stringify(parseLadder(b.priceLadder)));
@@ -200,11 +212,22 @@ router.post("/import-zoho", async (req, res) => {
 
 // Re-sync the SKU master from Zoho Books (CR-226): names / SKUs / composite type
 // updated in place, new Books items created in { industryId }. Books is the truth.
+// Books-first org (CR-287/CR-295, MSUN): the Finished Goods are the Books
+// composite items (a category, when set, narrows them), their BOM lines feed
+// the category-backed parameters, and the per-run read cap is lower — the
+// widget fires this on open and must stay inside the 30 s function limit; the
+// rest come on the next refresh. Category only (no Books-only toggle): that
+// category, as before. Neither: the whole catalog (SKU Items page, Ricon).
 router.post("/refresh-zoho", async (req, res) => {
   const { industryId } = req.body || {};
   if (!idOk(industryId)) return res.status(400).json({ error: "Invalid industryId" });
   try {
-    res.json(await refreshFromBooks(req.catalyst, industryId));
+    const s = await settings(req.catalyst, req.orgId);
+    const categoryId = s.cfgFgCategoryId || "";
+    const opts = s.cfgWidgetBooksOnly === "true"
+      ? { compositesOnly: true, detailCap: 15, skuFromName: true, ...(categoryId ? { categoryId } : {}) }
+      : categoryId ? { categoryId, detailCap: 15 } : {};
+    res.json(await refreshFromBooks(req.catalyst, industryId, opts));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

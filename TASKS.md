@@ -10,11 +10,78 @@ Related docs: [CHANGES.md](CHANGES.md) (change requests + shipped log),
 [SCHEMA.md](SCHEMA.md) (DB), [ARCHITECTURE.md](ARCHITECTURE.md) (system),
 [ZOHO_AUTH.md](ZOHO_AUTH.md) (OAuth setup).
 
-Last updated: 2026-09-29 (CR-266).
+Last updated: 2026-10-22 (CR-294).
 
 ---
 
 ## In progress
+
+### CR-294 — Sidebar user card, glass settings popover, dark theme (branch `feat/zoho-field-mapping`)
+- [x] `theme.js` + `index.html` bootstrap, `index.css` dark tokens / `.glass-panel` / `.user-card` / `.pop-item`, `components/Popover.jsx`, `Modal glass`, `UserCard` + `ShortcutsModal` in `App.jsx`, `HeaderBar` removed, shared-component token swaps; frontend build clean (2026-10-22)
+- [x] Deploy to Dev — `catalyst deploy` (2026-10-22, also shipped CR-288–293 from the same working tree)
+- [ ] Verify (browser): `localStorage.theme='dark'` + hard refresh → no white flash; popover Light / Dark / Match system flip `<html data-theme>` live, persist on reload, Match system follows macOS; popover opens above the card, not clipped, closes on outside click / Esc / scroll; collapsed sidebar = avatar only, popover still opens; `⌘,` → Settings from SKU / WO / Recipe pages, `⌘K` still works on SKU pages; shortcuts modal glass in both themes; Log Out → login, Switch Organization → org picker; dark sweep of grid (sticky header), RowMenu, Modal, Toolbar delete, DateInput, PickList, native `<select>`, MaterialsGrid, Purchase tab; DevTools "emulate reduced transparency" → opaque popover
+- [ ] Follow-up: page-level hardcoded colours for dark (~70 hits / 27 pages — `SKUGeneratorPage` 9, `WorkOrderPage` 6, `ZohoConnectPage` 5, `WorkOrderListPage` 5, `ReservePage` 5, `ImportItemsPage` 5, `LoginPage` 4, `OrgSelectPage` 3; mid-tone `#b91c1c` / `#15803d` status text in `MaterialsGrid` / `PurchaseTab` / `WoItemsTab` / `BomTab` kept as is) and `public/octfis-logo.png` contrast on the dark sidebar (dark variant or `filter: invert(1)`)
+
+### CR-289–293 — Product Designs takeover, item per material, configurator order / prices / folded services (branch `feat/zoho-field-mapping`)
+- [x] `RecipeComponentOption.skuItemId` on Dev via Catalyst MCP (69851000000353374, 2026-10-22)
+- [x] CR-289 `App.jsx` routes + nav, `RecipeV2ListPage.jsx` ⋮ menu (Mark Inactive/Active, Delete), v1 pages removed
+- [x] CR-290 `syncMaterials` / `GET /recipes` / `POST /sizing/bom`, `designBom.js` (+ selftest), form Item (ZB) per material sub-line
+- [x] CR-291 `step2Box` MOC → Motor Selection (Drive, TPH range, RPM read-only, Range, Model) → Other
+- [x] CR-292 `import.js` keeps `rate`; `/sizing/bom`, `/component-map/resolve`, `/category-items` return it; `c-rate` cell + BOM popover
+- [x] CR-293 `config.services` objects, svc BOM rows, `unitPrice = ladder + services`, `+N services` chip, Price detail row, description line
+- [x] `designBom.js --selftest`, `routes/recipe.js --selftest`, frontend build (2026-10-22)
+- [x] Deploy to Dev — `catalyst deploy` (2026-10-22, with CR-294)
+- [ ] Verify (app): Product Designs → Ricon RAV design → Casing: CI → item X, WCF → item Y → Save → reopen; ⋮ Mark Inactive / Active / Delete on a scratch design; no "v2" nav entry; SKU Items → Refresh from Zoho once (fills `rate`)
+- [ ] Verify (widget, Ricon quote): step 2 = MOC → Motor Selection (Drive, TPH range, RPM read-only, Range, Model) → Other (Shaft, Proximity, Inlet, Outlet); ₹ per resolved row; tick Coating → one line, `+1 service` chip, BOM lists Coating + price, Price detail "Services (1)", footer = ladder + service; push → one `Quoted_Items` row, List_Price includes the service, description ends "Services: Coating"; Save → Edit → Coating still ticked
+- [ ] Verify (WO): SO from that quote → New work order → Casing = item X for MOC CI (`source: design`), no service line
+- [ ] After Ricon verifies: update memory `sandbox-copy-page-ricon-first` (v2 is the page now)
+
+### CR-288 — Property ↔ Zoho Books field mapping: three value sources + Mapping view (branch `feat/zoho-field-mapping`)
+- [x] `Property.valuesFromCf` on Dev via Catalyst MCP (2026-10-19)
+- [x] `store.js` valueSource helpers, `booksApi` field options + `addCustomFieldOption`, `valueSync.planOptionSync`, `routes/properties.js` + `routes/propertyValues.js`; selftests, route loads, frontend build clean (2026-10-19)
+- [x] `PropertyManagerPage.jsx`: Books field select, Values-come-from radio, Properties | Mapping toggle, Sync / Sync all
+- [ ] **Probe `PUT /books/v3/settings/fields/{customfield_id}` live** (needs the user's OK to mint a token, `e2e-api-test-harness`): make a throwaway dropdown field in Books, PUT it back with one extra `values` entry, record the accepted body (or the refusal) in CHANGES.md, delete the field. If refused: the add-value hook already degrades to the manual-path warning
+- [x] Deploy to Dev — `catalyst deploy` (2026-10-22, with CR-294)
+- [ ] Verify (API, sequential): `GET /api/zoho/item-custom-fields` shows `values` on a dropdown field; `PUT /properties/:id { valueSource: "options", zohoCfApiName }`; `POST /properties/:id/sync-books` → `N new`; `GET /industries/:id/property-values` carries them; `POST /property-values` → Books field lists the option (or `zohoWarning`); `POST /properties/sync-books-all` reports both source kinds
+- [ ] Verify (UI): Property Manager → Mapping → change source / field inline → saved on reload; Sync all; Properties view chip + Sync; form radio + field select; Quote Maker Refresh from Books shows the synced option; SKU Generator pick list shows it
+- [ ] Follow-ups: Ricon hardcodes `cf_brand/range/capacity` (`routes/recipe.js` geared-motors/items) + `cf_valve_type` (`workorder/serial.js`) → property roles; `configurator.html` to call `sync-books-all` on open like the Quote Maker; `import.js customFieldMap` is org-wide (two industries on one api name → last wins)
+
+### CR-295 — Quote Maker (MSUN): FG = Books composites, BOM-based match for material parameters (branch `feat/zoho-field-mapping`)
+- [x] `refreshFromBooks({ compositesOnly })` + `bomValues` / `bomContext` / `replaceBomValues`; `refresh-zoho` reads both settings; widget fires the FG refresh on Books-only; SKU Settings copy. Self-tests, route load, widget parse, build clean (2026-10-22)
+- [x] Data: `OrgSetting cfgWidgetBooksOnly = true` for MSUN (2026-10-22)
+- [x] Deployed to Dev with CR-288…294 (user's go, 2026-10-22)
+- [x] Stray `SKUItem 69851000000366056` + 19 values deleted (user confirmed, 2026-10-22); the quote line / CRM Product, if the widget pushed one, is the user's to remove
+- [x] Verified (API, MSUN user): refresh → 28 composites, 27 created, `bomValues 38`, 16 s, 13 pending for the next run; `KGVBIHO` carries all 19 picked values; search with the 19 filters → exactly the Knife Gate FG; `CompositeItemCache` row present (2026-10-22)
+- [x] Treatments need no field mapping — `Hard Chrome Plating Service - 200MM` / `Plasma Nitriding - 200MM` are BOM lines of the composite, matched through the BOM path (2026-10-22)
+- [ ] Verify (widget, user): the 19 picks → `KNIFE GATE VALVE BI-DIRECTIONAL HANDWHEEL OPERATED` listed; change Body Material → not-found message + Refresh, no create card; second open shows the remaining 13 composites indexed
+- [ ] Access log: open-time refresh stayed at 16 s for 15 composites — watch it when every composite is current (only changed ones are re-read, so steady state is ~2 s)
+
+### CR-287 — Quote Maker: Finished Goods / BOM lookup against Books, MSUN MV1-T277 (branch `feat/zoho-field-mapping`)
+- [x] Settings keys `cfgFgCategoryId` / `cfgWidgetBooksOnly` + SKU Settings Books tab; `refreshFromBooks({ categoryId })`; `POST /api/properties/sync-books-all`; widget refresh-on-open + Refresh button + NOT_FOUND box. Route load, selftest, widget parse, frontend build clean (2026-10-19)
+- [x] Probed MSUN live: list rows carry flat `cf_<api>` keys (omitted when blank) → `customFieldsFromRow`, no detail reads; 154 items, 24 parameter categories, no FG category, no parameter custom field filled yet (2026-10-19)
+- [x] Deployed to Dev (CR-285 + CR-286 + CR-287 together, 2026-10-19); `GET /sku-items/settings` shows `fgCategoryId` / `widgetBooksOnly`; `sync-books-all` → `{properties:0}`
+- [x] Setup (superseded by CR-295, 2026-10-22): no CAT custom fields and no Finished Goods category needed — FG = composite items, materials matched through the BOM; Books-only toggle set via MCP. 7 field-backed properties are mapped and filled on the FGs; the two treatment mappings are the only open setup item (CR-295)
+- [ ] Verify (API, sequential): `PUT /sku-items/settings`, `POST /properties/sync-books-all`, `POST /sku-items/refresh-zoho` report, `POST /sku-items/search` with the REQ example → item; widget on a Quote: values from categories, match → Add, miss → message + Refresh, create in Books → Refresh → found; toggle off → create card back
+- [ ] Access log: open-time refresh under 30 s on Dev; raise/lower `detailCap 15` if needed
+- [ ] Client owes the expected item for the REQ example (Q9) and the I / S split decision (Q2)
+
+### CR-285 — Unit conversion WO → PR → PO, MSUN (branch `feat/zoho-field-mapping`)
+- [x] `PurchaseRequestLine` + `srcItemId` / `srcName` / `srcQty` / `convFactor` on Dev via Catalyst MCP (2026-10-19)
+- [x] `booksApi.itemConversion` / `resolveConvertItem` / `weightKg` (moved from packing); `purchase.convertLines` on every PR path, grid + draft coverage track the source item; `--selftest` purchase + packing pass; frontend build clean
+- [x] Deploy to Dev — `catalyst deploy` (2026-10-22, with CR-294)
+- [ ] User verify (MSUN): Stem Nut shortfall → Proceed Purchase → PR line = SG Iron × weight with "from Stem Nut × N"; Confirm → Books PO line; grid Stem Nut on-order = N; by-item Raise path; checkbox off → unchanged; checkbox on + blank Convert Item → 400 naming the item
+- [ ] Confirm the Convert Item lookup value shape on the first real PR (id vs display name) and note it in CHANGES.md
+- [ ] Next: Ricon PR timing unchanged (no `/items/:id` calls in the access log)
+
+### CR-284 — Ricon configurator: Material first, priced services, geared-motor selection (branch `feat/zoho-field-mapping`)
+- [x] `GearedMotor` table + `RecipeComponent.price` on Dev via Catalyst MCP (2026-10-09)
+- [x] Routes `/api/recipe/geared-motors`, `/seed-rav-motors`, `/sizing/bom` service fields, `components-bulk` price; perms; `quoteBom` motor line; selftests pass
+- [x] `RecipeGearedMotorsPage.jsx` + routes/menu; Product Designs v2 Services → Price column; frontend build clean
+- [x] `configurator.html`: no caption, Material first, Drive → RPM range → HP → Geared motor rows, service tick rows → Service lines, edit mode, Bare Shaft clears
+- [x] Deployed to Dev (2026-10-09)
+- [x] 107 rows seeded via Catalyst MCP (2026-10-09); [ ] link Books items on the Geared Motors grid (no item name matched a model)
+- [ ] Product Designs v2: enter the Coating price on each Ricon design
+- [ ] Verify on a Ricon quote: material first / no heading; Chain Drive Only → 0.1–1 TPH → 15–25 RPM → PBL M0122 + SEW R27DIBE71M4 listed; tick Coating → own priced line on `Quoted_Items`; Edit re-opens both; WO from the SO shows the motor item line
 
 ### Zoho SSAF-T3 — Bulk item import → auto SKU → Zoho Books (Studio Sairish, task 1414095000028569207)
 - [x] Import tab + Books item-sheet import, auto-push setting, item-wise suffix series, auto-registered values (CR-092 / 127 / 128 / 132 / 133 / 136 / 189)
@@ -62,6 +129,112 @@ Last updated: 2026-09-29 (CR-266).
 - [x] `npm run build` clean
 - [ ] Click-through in the browser (not done — built only)
 - [x] Deploy to Dev (2026-09-29)
+
+### CR-281 — Ricon configurator: Material processed × Efficiency %, Material Efficiency master (branch `feat/zoho-field-mapping`)
+- [x] `SizingMaterial` table added (Dev, Catalyst MCP)
+- [x] `recipe.js` sizing-materials CRUD + `seed-rav-materials`; `sizing/select` takes `materialId`; `sizing.js` `eff`; `perms.js` map; self-tests pass
+- [x] `RecipeSizingMaterialsPage.jsx` + routes/nav; `configurator.html` material select, derated Volume, Find gate, quote values, edit restore; build clean
+- [x] Deploy to Dev (2026-10-08)
+- [ ] User: create Quoted_Items column "Material" (and optionally "Efficiency") in CRM, or give the go to create it via the CRM MCP
+- [ ] User verify: Material Efficiency → Load RAV materials (83) → edit one; widget 5 TPH · 0.6 · 20 RPM + Bolier Fly Ash → Volume `5.56 (80% of 6.94)`, Find without material blocked, with material Req. Cap 5.56 → smaller valve; line Description shows Material/Efficiency; saved line re-opens with the material
+
+### CR-280 — Store issues: return TO on first action, Replace modal same-item default + batch list + no-stock message (branch `feat/zoho-field-mapping`)
+- [x] `DefectReturn.returnedAt` added (Dev, Catalyst MCP)
+- [x] `defects.js` raise = draft only, `settleReturn` in replace/action; `blocks.js` Issue view + `entryFor` issue id; `gridRow.defective` → `assemblable`; self-tests pass
+- [x] `WoDefectsPage.jsx` prefilled item, inline batches, no-stock line, "still at Issue"; `MaterialsGrid.jsx` copy; build clean
+- [x] Deploy to Dev (2026-10-07)
+- [ ] User verify (WO-0028): Replace → no TO in Zoho, History shows Draft return, Store issues "still at Issue", Make Assembly Ready drops; Store issues → Reserve & Issue opens with the same item + batches → Proceed → return TO then reserve/issue TOs; Restock on another row fires its TO first; 0-stock item shows the no-stock line and raises a PR
+
+### CR-279 — Store issue number series, WO as secondary column (branch `feat/zoho-field-mapping`)
+- [x] `DefectReturn.issueNumber` added (Dev, Catalyst MCP); `siNumberPrefix` setting; `nextNumber` ignores blank rows
+- [x] `defects.js` raise/list/email carry the number; `WoDefectsPage.jsx` Store issue first, Work Order second; build clean
+- [ ] Deploy to Dev
+- [ ] User verify: Replace on a WO → toast "Store issue SI-0001 …"; Store issues grid shows SI-0001 first, WO link second; Settings → Document numbering shows "Store issue prefix"
+
+### CR-278 — WO Replace: batch picker first, the reason + photo dialog sends (branch `feat/zoho-field-mapping`)
+- [x] `MaterialsGrid.jsx`: Replace → `pickThenMove` → picker → `submitMoves` opens `ReplaceDialog` with the picks → Proceed → `submitReplace`; `replaceMeta` removed; build clean
+- [x] Deploy to Dev (2026-10-07)
+- [ ] User verify (WO-0028, WCB KGV Body 50mm × 1): Proceed Replace → picker shows batch Dummy (2), prefilled 1 → Proceed → reason + photo → Proceed → toast "Sent to Store issues — Transfer Order TO-000xx created"; Store issues (Open) lists the row, badge 1; `DefectReturn` has one `pending` row; cancelling the picker or the dialog records nothing
+
+### CR-277 — WO: one Transfer Order per action, partial FG assembly, ⋮ menu flips up (branch `feat/zoho-field-mapping`)
+- [x] `MaterialTxnLine.workOrderFgId` added (Dev, Catalyst MCP)
+- [x] `txn.js`: multi-FG drafts/confirm, `mergeByItem`, per-line balances, one sweep txn per type; `formulas.js assemblable`; `grid.js` payload `assembly`; `assembly.js` gate + preview `maxQty`; self-tests pass
+- [x] `MaterialsGrid.jsx`: one `/txn` post, Assembly tab Ready / Blocked / Waiting on; `AssembleModal` cap; `RowMenu` portalled to body + flip (fixes every grid incl. Store issues); build clean
+- [x] Deploy to Dev (2026-10-07, with CR-278)
+- [ ] User verify (WO-0028): Issue lines under two FGs → one TO; Make Assembly shows FG2/FG3 Ready 1 · Blocked 1 · Waiting on RM; assemble 1; Complete → one de-reserve/return TO; ⋮ on the last row of a long grid opens upward
+
+### CR-276 — Product Designs v2: material sub-lines per component, single-name pickers (branch `feat/zoho-field-mapping`)
+- [x] `RecipeV2NewPage.jsx`: rowSpan component rows, material sub-lines with qty + unit, + add material by code, name-only pickers; build clean
+- [x] Deploy to Dev (2026-09-30)
+- [ ] User verify (Ricon): Casing → CI 55, WSB 70; Gland → CI 100, WSB 20 → Save → reopen shows both rows with sub-lines; old builder shows the same cast weights; WO from a quote with MOC = CI → Casing 55 KG, Gland 100 KG
+
+### CR-275 — Product Designs v2: Item (ZB) from Books (no composites), Name merged into Main ERP item (branch `feat/zoho-field-mapping`)
+- [x] `GET /api/recipe/products/goods`; `refreshFromBooks` `skuFromName` option (default off); `import.js --selftest`, routes load
+- [x] `RecipeV2NewPage.jsx`: Main ERP item* replaces Name*, SKU filled from it; Item (ZB) from `/products/goods`; build clean
+- [x] Deploy to Dev (2026-09-30)
+- [ ] User verify (Ricon): v2 → New → Main ERP item lists DHIRAJ COMP 1; Item (ZB) lists Dhiraj RM 1 / Dhiraj RM 2 and not DHIRAJ COMP 1; Create → design name = DHIRAJ COMP 1
+
+### CR-274 — Product Designs v2: one material per row, qty in the column (branch `feat/zoho-field-mapping`)
+- [x] `RecipeV2NewPage.jsx`: Material select per row, same-name rows → one component; build clean
+- [x] Deploy to Dev (2026-09-30)
+- [ ] User verify (Ricon): rows `Casing · CI · 55 · KG` + `Casing · CF8 · 100 · KG` → Save → reopen shows two rows; old builder shows Casing with CI 55 / CF8 100; WO from a quote with MOC = CI → 55 KG per unit
+
+### CR-273 — Product Designs v2: one qty per material, row unit shared (branch `feat/zoho-field-mapping`)
+- [x] `RecipeV2NewPage.jsx`: chip qty is the qty, row Quantity reads *per material*, unit from the first material; build clean
+- [x] Deploy to Dev (2026-09-30)
+- [ ] User verify (Ricon): row Casing → add CI (unit becomes KG) → CI 55, CF8 100 → Save → reopen shows the same; WO from a quote with MOC = CI → 55 KG per unit
+
+### CR-272 — Product Designs v2: qty per material on the row (branch `feat/zoho-field-mapping`)
+- [x] `RecipeV2NewPage.jsx` chip qty input; `routes/recipe.js` `syncMaterials` takes `{ materialId, castWeight }`; build clean, routes load
+- [x] Deploy to Dev (2026-09-30); layout superseded by CR-273
+
+### CR-271 — Product Designs v2: direct Books items on a design + daily SKU-master refresh (branch `feat/zoho-field-mapping`)
+- [x] `RecipeV2ListPage.jsx`, `RecipeV2NewPage.jsx` (Item (ZB) column), nav + routes; current pages untouched; `npm run build` clean
+- [x] `workorder/designBom.js`: item on a component wins over its materials; `--selftest` passes
+- [x] `zoho/import.js`: custom-field read-back on refresh (changed items only, ≤ 40 per run), `refreshAllOrgs`; `--selftest` passes
+- [x] `index.js` `POST /internal/refresh-items`
+- [x] Deploy to Dev (2026-09-30)
+- [ ] **User: register the daily cron** — Catalyst console → Cron → URL type, daily: `POST https://sku-gen-octfis-925638796.development.catalystserverless.com/server/skuapi/internal/refresh-items`, header `X-Sync-Secret: <SYNC_SECRET>` (the nightly `/internal/reconcile` cron from CR-155 is still unregistered too)
+- [ ] User verify (Ricon): Product Designs v2 → open TEST12345 → Item (ZB) = Dhiraj RM 1 / Dhiraj RM 2 on the two rows, materials removed → Save → new WO from an SO with DHIRAJ COMP 1 seeds the same two lines; the old Product Designs page still opens the design unchanged
+- [ ] User verify (Ricon): Books Items → Refresh from Zoho still works (report now carries `values` / `detailsPending`)
+- [ ] Next: CR-B (match by MOC + qty matrix + MOC pick on the WO), CR-C (cost sheet + configured SKU on the WO)
+
+### CR-270 — WO raw material from the finished good's Product Design (branch `feat/zoho-field-mapping`)
+- [x] `workorder/designBom.js` (new): `findDesign`, `loadDesign`, `designLines`, `linesForFg`; `--selftest` passes
+- [x] `workorder/quoteBom.js`: `resolve()` (quote → design → composite), design config in `fgConfig` / `display` / `note`; `--selftest` passes
+- [x] WO setting `woBomSource` (Direct from Books / Direct from Template) in `SETTING_KEYS`; `useQuote(addonKeys, settings)` needs add-on + setting
+- [x] Ricon on Dev set to Direct from Template (`OrgSetting` row via Catalyst MCP); every other org stays on Books
+- [x] `routes/workorder.js`: create, SO new line, BOM preview and apply go through `resolve`; design / quote lines never pushed to the Books composite
+- [x] `BomTab.jsx`, `WorkOrderNewPage.jsx`; `npm run build` clean
+- [x] Deploy to Dev (2026-09-29, functions + client)
+- [ ] User verify (Ricon): WO-0002 → BOM → Compare → `RM-1` / `RM-2` removed, `Dhiraj RM 1` / `Dhiraj RM 2` added, no *Apply & update Zoho* → Apply here only
+- [ ] User verify (Ricon): new work order from an SO with `DHIRAJ COMP 1` → lines from the design, Source = design; Books composite still lists `RM-1` / `RM-2`
+- [ ] User verify (MSUN): create + BOM Compare unchanged (composite)
+- [ ] User verify (Ricon): Settings → Work order shows *Work order raw material* = Direct from Template; switch to Direct from Books → BOM Compare shows the composite's lines
+- [ ] Roll out to other organisations only after Ricon is verified
+- [ ] Next: several materials per component picked by MOC — needs a MOC pick on the work order when the SO names no saved quote
+- [ ] Open from CR-261: Books bundle whose lines are not in the composite's BOM — not verified
+
+### CR-269 — WO list crash on an org with no purchase lines + raw runtime errors scrubbed (branch `feat/zoho-field-mapping`)
+- [x] `workorder/purchase.js` `procStatusByWo`: `receiptAt` set before the early return; `--selftest` passes
+- [x] `scrubErrors.js` (new) + mounted first in `index.js`; `--selftest` passes
+- [x] Deploy to Dev (2026-09-29, `catalyst deploy --only functions`); function answers, live checks below not run yet
+- [ ] Verify on Ricon: Work Orders list opens (was "Cannot read properties of undefined (reading 'get')")
+- [ ] After deploy: search the Catalyst log for `[raw-error]` — each hit is a bug to fix at its source
+
+### CR-268 — SO WO stamp skipped for an org without the custom field (branch `feat/zoho-field-mapping`)
+- [x] `zoho/booksApi.js` `stampSalesOrderWo` / `stampWith`: Books 120138 → skip, no fallback, org remembered per instance; `--selftest` passes
+- [x] Deploy to Dev (2026-09-29, `catalyst deploy --only functions`)
+- [ ] Verify on Ricon: create a work order from an SO → no "Sales order not updated with the WO number" toast
+- [ ] Verify on MSUN: create a work order → SO field shows `WO-xxxx / dd/mm/yyyy`; cancel → field clears
+
+### CR-267 — WO BOM source: Books composite (MSUN) or template (Ricon), by add-on then by SO line (branch `feat/zoho-field-mapping`)
+- [x] `quoteBom.useQuote(addonKeys)` + `--selftest` cases
+- [x] `routes/workorder.js` `soConfigs()`: no quote lookup unless the org has `recipe-engine`; warning when the add-on is on and the SO names no saved quote; `GET /api/wo/so/:soId` through the same gate
+- [x] `bom.js`, `quoteBom.js` `--selftest` + `push.test.js` pass; route module loads
+- [x] Deploy to Dev (2026-09-29)
+- [ ] User verify (MSUN org): New WO from a confirmed SO → lines = the composite's component items × qty, no Configuration column, no warning
+- [ ] User verify (Ricon org): SO converted from a saved quote → lines are the MOC's items, Source = quote; SO with no saved quote → composite lines + the warning
 
 ### CR-262 — Search + filters on every grid that lacked them (branch `feat/zoho-field-mapping`)
 - [x] Shared `matches()` (`gridCols.js`) + `<SearchInput>` (`GridFooter.jsx`); `gridCols.test.js` passes

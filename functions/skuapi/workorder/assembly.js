@@ -16,7 +16,7 @@ const { warehouses, logActivity, byOrg } = require("./store");
 const bom = require("./bom");
 const { loadContext, trackingProblem } = require("./txn");
 const { buildGrid } = require("./grid");
-const { fullyIssued, componentQtys } = require("./formulas");
+const { assemblable, componentQtys } = require("./formulas");
 const { serialPrefix, normalizePrefix, nextSerials } = require("./serial");
 // CR-172: any shop-floor stage, once the FG's material is fully issued; Completed requires one.
 const { ASSEMBLABLE } = require("./status");
@@ -81,22 +81,29 @@ async function previewAssembly(catalyst, orgId, workOrderId, fgId, qty, prefix) 
     .map((c) => ({ itemId: c.rmItemId, name: c.name, qty: c.qty }));
   return {
     prefix: p, serials, serialRange: serialRange(serials), remaining,
+    // CR-277: what the issued material allows — the modal caps the count at it.
+    maxQty: assemblable((await buildGrid(catalyst, orgId, wo, fg)).rows, fg).maxQty,
     components, fromWarehouseId: (await warehouses(catalyst, orgId, wo)).issue,
   };
+}
+
+// CR-277: the partial-assembly gate. Replaces CR-172's "every line fully issued".
+function assertCovered(grid, fg, qty) {
+  const { maxQty, blockers } = assemblable(grid.rows, fg);
+  if (qty <= maxQty) return;
+  const waiting = blockers.map((b) => `${b.name} (${b.shortQty} more)`).join(", ");
+  const e = new Error(maxQty > 0
+    ? `"${fg.fgName}": only ${maxQty} unit${maxQty === 1 ? "" : "s"} can be assembled from issued material — waiting on ${waiting}`
+    : `"${fg.fgName}": issue material first — waiting on ${waiting || "its BOM lines"}`);
+  e.status = 409; throw e;
 }
 
 async function assembleFg(catalyst, orgId, workOrderId, fgId, qty, userId, prefixIn, picks) {
   qty = n(qty);
   const { wo, fg } = await loadContext(catalyst, orgId, workOrderId, fgId);
   const { fgQty, assembled } = checkAssemblable(wo, fg, qty);
-  // Every BOM line issued before anything is consumed (CR-172). Not in the
-  // preview — that fires per keystroke and the tab already lists only ready FGs.
-  const grid = await buildGrid(catalyst, orgId, wo, fg);
-  if (!fullyIssued(grid.rows)) {
-    const open = grid.rows.filter((r) => r.bom > 0 && r.issued < r.bom).length;
-    const e = new Error(`"${fg.fgName}": issue all material first — ${open} line(s) not fully issued`);
-    e.status = 409; throw e;
-  }
+  // The issued material must cover `qty` units before anything is consumed (CR-277).
+  assertCovered(await buildGrid(catalyst, orgId, wo, fg), fg, qty);
   const prefix = await resolvePrefix(catalyst, orgId, fg, prefixIn, false);
 
   // Assembly consumes the WO's CURRENT bom. Picks are checked here, before

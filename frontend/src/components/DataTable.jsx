@@ -195,7 +195,7 @@ export function ColumnChooser({ chooser }) {
             <button
               onClick={apply} disabled={saving}
               style={{
-                border: 'none', background: 'var(--blue)', color: '#fff', cursor: 'pointer', fontSize: 13,
+                border: 'none', background: 'var(--blue)', color: 'var(--on-accent)', cursor: 'pointer', fontSize: 13,
                 fontWeight: 500, padding: '4px 14px', borderRadius: 'var(--radius-sm)', opacity: saving ? 0.6 : 1,
               }}
             >

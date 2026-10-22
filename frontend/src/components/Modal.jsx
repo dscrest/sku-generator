@@ -7,7 +7,8 @@ export function CloseX({ onClick, title = 'Close' }) {
 
 // Pass `onSubmit` to make Enter in any field trigger the primary action —
 // the children render inside a <form> with a hidden submit button.
-export default function Modal({ title, onClose, onSubmit, children, width = 480 }) {
+// `glass` (CR-294): frosted .glass-panel surface instead of the solid card.
+export default function Modal({ title, onClose, onSubmit, children, width = 480, glass = false }) {
   useEffect(() => {
     const h = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', h);
@@ -19,18 +20,19 @@ export default function Modal({ title, onClose, onSubmit, children, width = 480 
       onClick={onClose}
       style={{
         position: 'fixed', inset: 0,
-        background: 'rgba(15,23,42,0.5)',
+        background: 'var(--overlay)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         zIndex: 500,
       }}
     >
       <div
         onClick={e => e.stopPropagation()}
+        className={glass ? 'glass-panel' : undefined}
         style={{
-          background: 'var(--bg-card)',
+          // inline bg/shadow would override the glass class
+          ...(glass ? {} : { background: 'var(--bg-card)', boxShadow: 'var(--shadow-lg)' }),
           borderRadius: 'var(--radius-xl)',
           width, maxWidth: '95vw',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
           overflow: 'hidden',
           // No `forwards`: a lingering transform would trap position:fixed
           // popovers (DateInput, RowMenu) inside the overflow:hidden box.
@@ -99,7 +101,7 @@ export function ModalBtn({ onClick, variant = 'ghost', children, disabled }) {
     opacity: disabled ? 0.5 : 1, transition: 'all 0.12s',
   };
   const styles = {
-    primary: { ...base, background: 'var(--blue)', color: '#fff' },
+    primary: { ...base, background: 'var(--blue)', color: 'var(--on-accent)' },
     ghost: { ...base, background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border-mid)' },
   };
   return <button type="button" onClick={onClick} disabled={disabled} style={styles[variant]}>{children}</button>;

@@ -16,6 +16,7 @@ const DEFAULTS = {
   woNumberPrefix: "WO-",
   prNumberPrefix: "PR-",
   txnNumberPrefix: "MT-",
+  siNumberPrefix: "SI-",     // CR-279 — Store issue series
 };
 
 const WAREHOUSE_KEYS = { main: "mainWarehouseId", reserve: "reserveWarehouseId", issue: "issueWarehouseId" };
@@ -43,6 +44,16 @@ const SETTING_KEYS = [
       { value: "true", label: "On" },
     ],
   },
+  {
+    // CR-270: where a work order's raw material comes from. Off by default —
+    // an org is switched to the template only once it has designs to read.
+    key: "woBomSource", label: "Work order raw material", type: "select", group: "Work order",
+    hint: "Template needs the Product Configurator add-on: quote answers or the finished good's Product Design give the items; the Books composite is used only when neither does",
+    options: [
+      { value: "", label: "Direct from Books — the composite item's BOM" },
+      { value: "template", label: "Direct from Template — quote configuration / Product Design" },
+    ],
+  },
   { key: "purchaseTeamEmail", label: "Purchase team email", type: "email", hint: "Receives material shortfall alerts", group: "Alerts" },
   { key: "storeIssueEmail", label: "Store issue email", type: "email", hint: "Receives defective-material alerts (Store issues page)", group: "Alerts" },
   { key: "approverL1Email", label: "Approver — level 1", type: "email", group: "Approvals" },
@@ -62,6 +73,7 @@ const SETTING_KEYS = [
   { key: "woNumberPrefix", label: "Work order prefix", type: "text", group: "Document numbering" },
   { key: "prNumberPrefix", label: "Purchase request prefix", type: "text", group: "Document numbering" },
   { key: "txnNumberPrefix", label: "Material transaction prefix", type: "text", group: "Document numbering" },
+  { key: "siNumberPrefix", label: "Store issue prefix", type: "text", group: "Document numbering" },
   // Company block on printed documents (CR-122). Logo is a plain URL —
   // ponytail: Stratus upload if anyone ever needs hosted logos.
   { key: "companyName", label: "Company name", type: "text", group: "Company details", hint: "Shown on printed work orders and movement slips" },
@@ -157,7 +169,8 @@ async function routeFor(catalyst, orgId, type, wo) {
 async function nextNumber(catalyst, orgId, table, column, prefix) {
   const rows = rowList(
     await catalyst.zcql().executeZCQLQuery(
-      `SELECT ${column} FROM ${table} WHERE orgId = ${zStr(String(orgId))} ORDER BY ${column} DESC LIMIT 1`,
+      // IS NOT NULL: a series added to an existing table (DefectReturn.issueNumber, CR-279) has blank legacy rows.
+      `SELECT ${column} FROM ${table} WHERE orgId = ${zStr(String(orgId))} AND ${column} IS NOT NULL ORDER BY ${column} DESC LIMIT 1`,
     ),
   );
   let n = 0;

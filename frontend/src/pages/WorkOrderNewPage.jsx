@@ -138,7 +138,9 @@ export default function WorkOrderNewPage() {
         navigate(`/wo/${id}`);
       } else {
         const fromQuote = data.seeded.filter(x => x.source === 'quote').length;
-        toast.success(`${data.woNumber} created — ${data.seeded.length} BOM(s) seeded${fromQuote ? ` (${fromQuote} from the quote configuration)` : ' from Zoho'}`);
+        const fromDesign = data.seeded.filter(x => x.source === 'design').length;
+        const from = [fromQuote && `${fromQuote} from the quote configuration`, fromDesign && `${fromDesign} from the product design`].filter(Boolean).join(', ');
+        toast.success(`${data.woNumber} created — ${data.seeded.length} BOM(s) seeded${from ? ` (${from})` : ' from Zoho'}`);
         (data.problems || []).forEach(p => toast.error(p, { duration: 7000 }));
         navigate(`/wo/${data.id}`);
       }
@@ -323,9 +325,11 @@ export default function WorkOrderNewPage() {
                       <td style={{ ...cell, fontSize: 12, color: l.config ? 'inherit' : 'var(--text-muted)' }}>
                         {!l.config ? '—' : (
                           <>
-                            {l.config.quoteNo && <span style={{ fontWeight: 600 }}>{l.config.quoteNo}</span>}
+                            {(l.config.quoteNo || l.config.design) && (
+                              <span style={{ fontWeight: 600 }}>{[l.config.quoteNo, l.config.design].filter(Boolean).join(' · ')}</span>
+                            )}
                             <span style={{ color: 'var(--text-muted)' }}>
-                              {l.config.quoteNo && ' · '}
+                              {(l.config.quoteNo || l.config.design) && Object.keys(l.config.values || {}).length > 0 && ' · '}
                               {Object.entries(l.config.values || {}).map(([k, v]) => `${k}: ${v}`).join(' · ')}
                             </span>
                           </>

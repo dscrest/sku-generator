@@ -12,6 +12,7 @@ properties/values, storing the generated items, and syncing them to Zoho Books.
 | [TASKS.md](TASKS.md) | The single task list (open / deferred / done) | Work starts, finishes, or gets deferred |
 | ARCHITECTURE.md (this file) | System shape: stack, API surface, modules, pages, config | Routes, modules, pages, or env vars change |
 | [WORKORDER.md](WORKORDER.md) | Work Order module: A–I formulas, warehouse map, per-org setup (cron + Books webhooks), role SOPs | Work Order behaviour or setup changes |
+| [DATA-FLOW.md](DATA-FLOW.md) | Provenance per datum (source → store → trigger → write-back) across CRM, Books, Catalyst; ranked gap list; data-flow best practices; trigger matrix | Any new Zoho read/write, denormalised column, cron, webhook, or sync rule |
 | [RESERVE-TASKS.md](RESERVE-TASKS.md) | **Superseded by WORKORDER.md** — kept for the CR-005 history | — |
 | [ZOHO_AUTH.md](ZOHO_AUTH.md) | Zoho OAuth setup & troubleshooting | OAuth flow, scopes, or redirect URIs change |
 
@@ -123,7 +124,19 @@ record id found in the SO's Reference#, custom fields or `zcrm_*` fields) gets
 its WO lines from `resolveBomLines` on the quote's frozen answers
 (`WorkOrderFG.configJson`, `workorder/quoteBom.js`), not from the valve's
 composite, which keeps its placeholder raw material and is never written from
-such a WO (assembly, BOM apply). The same route also resolves **by item** (`{ skuItemId }`, CR-200) from
+such a WO (assembly, BOM apply). The lookup runs only for an org with the
+`recipe-engine` add-on (`quoteBom.useQuote`, CR-267); every other org's WO
+copies the Books composite and never queries `ConfigQuote`. Since CR-270 the
+add-on alone is not enough: the org must also have the WO setting
+`woBomSource = template` ("Direct from Template"; blank = "Direct from Books",
+the default — Ricon only for now). In such an org the
+source order is one function, `quoteBom.resolve` (CR-270): quote answers →
+Component Map, then the **Product Design** whose Main product is the FG
+(`workorder/designBom.js`: SO line `item_id` = `SKUItem.zohoItemId` →
+`RecipeTemplate.productItemId` → components → options → `MaterialType.zohoItemId`;
+`WorkOrderLine.source = "design"`), then the composite. What fed the BOM is
+frozen in `WorkOrderFG.configJson`; an FG that carries it never writes to the
+Books composite. The same route also resolves **by item** (`{ skuItemId }`, CR-200) from
 the SKU's stored answers, which is how the Quote Maker gets the same list. The rule is data, not code: `ComponentMap` rows ("when these answers hold,
 component X is item Y × qty", most conditions wins — `recipe/componentMap.js`),
 maintained in **Product Configurator → Components** (CR-253): the end user
@@ -140,12 +153,40 @@ Map conditions use SKU-active questions only — duty answers are not stored on
 the item. A condition on a question hidden from the widget (`showInWidget`
 off) never matches from the configurator — the widget does not send it (CR-228
 re-keyed Ricon's Motor rows for that reason).
+**Material processed (CR-281).** A product with `SizingMaterial` rows gets a
+mandatory "Material processed" select — the first field of the step-1 card
+since CR-284 (the card has no caption) — and the duty is
+Volume × efficiency ÷ 100 (80 % of 100 ltr/min sizes for 80 — the smaller
+valve, as Ricon asked). The material rides in the saved line's `sizingInput`
+and reaches the quote line as `Material` / `Efficiency` values (Description +
+any Quoted_Items column with that label).
 **Capacity-banded answers (CR-228).** A List value may carry `capMin` /
 `capMax` (Properties page value form): whenever the `capacity`-role input
 changes, `autoPick` selects, per question, the value whose band contains the
 TPH (overlapping edges → the higher band) and leaves questions with no hit
 alone; the select stays editable. Ricon's Motor HP follows its geared-motor
 sheet this way.
+**Geared-motor selection (CR-284).** A product with `GearedMotor` rows (Ricon's
+brand sheet: brand × drive configuration × TPH band × RPM band × HP → model,
+Recipe → Geared Motors) starts step 2's Motor Selection with four narrowing
+rows — Drive → TPH range → RPM range → Geared motor (the Excel filter order);
+a band not picked yet reads from step 1 (rows whose band holds the valve's TPH
+/ Speed, pre-picked when exactly one band holds it), the model row lists every
+matching **Books motor item** — the SKU-master items whose Brand / Range /
+Capacity answers (Books custom fields `cf_brand` / `cf_range` / `cf_capacity`
+mapped on Properties, filled by Refresh from Zoho; `GET
+/api/recipe/geared-motors/items`) equal a row's brand / RPM band / HP — as
+name · brand · HP · rate (the sheet rows themselves only while no item matches),
+a pick upstream clears the ones below, and no motor question row is asked (the
+pick fills Motor HP / Gear Make / Drive by display text, so the Books
+`cf_capacity` push is unchanged). The pick is a BOM
+row, `Geared Motor` on the line values and `config.motor` on the saved line;
+`workorder/quoteBom.js` freezes `motorItemId` and adds that item × FG qty to the
+work order. **Optional services (CR-284).** The picked model's design services
+(`RecipeComponent.allowMaterial = false` + a Books service item, with
+`RecipeComponent.price`) are tick rows under the BOM box; a ticked one is its
+own `Service` line under the valve (qty × valves, rate = the design price, no
+ladder %) and lands on the quote as its own `Quoted_Items` row.
 **Design cost (CR-211).** When the org's SKU setting `cfgDesignRate` is on and
 the picked sizing model carries a `recipeCode`, the widget posts the code plus
 every answer text to `POST /api/recipe/sizing/price`; the server picks each
@@ -214,6 +255,32 @@ type *Dashboard* (Home → Add Component → Widget). There `PageLoad` carries n
 record id, Create Quote only — a fresh Draft quote (no Deal/Account/Contact,
 Subject = first line name) that is opened via `ZOHO.CRM.UI.Record.open` after
 create, since there is no popup to close-and-reload.
+**Books-first lookup (CR-287/CR-295, MSUN).** The parameter lists stay DB-driven;
+properties flagged "Values are Zoho Books items" pull their values from a
+Books item category (CR-286). The widget refreshes from Books on action only:
+once after the local lists are on screen and on the **Refresh from Books**
+button — `POST /api/properties/sync-books-all` (every category-backed
+property, sequential) then `POST /api/sku-items/refresh-zoho` (fired when SKU
+Settings `cfgWidgetBooksOnly` is on or `cfgFgCategoryId` is set; neither = the
+widget skips this call — the route itself still means whole catalog for the
+SKU Items page), then the value lists reload with the picks kept and the
+search re-runs. **Finished Goods = the Books composite items** (CR-295): a
+Books-only org's refresh runs `refreshFromBooks({ compositesOnly, skuFromName,
+detailCap 15, categoryId? })` — only composite rows are indexed, a category
+(optional) narrows them. The match contract is the SKU master search
+(`searchItemIds`, every picked value id): a property with a Books field
+(`zohoCfApiName`) matches the item's custom-field text (the Books items list
+carries them as flat `cf_<api_name>` keys, omitted when blank —
+`customFieldsFromRow`; `GET /items/:id` only for a row with no `cf_` key at
+all); a category-backed property matches the **composite's BOM lines** — every
+changed composite (`last_modified_time`) has its BOM read through
+`workorder/bom.js getComposite` (fills `CompositeItemCache`, shared with the WO
+module) and `bomValues` lands one `SKUItemValue` per line whose Books item is a
+value of such a property (`PropertyValue.zohoItemId`). No custom field is
+needed for material parameters. With `cfgWidgetBooksOnly` a miss on parameters
+shows the fixed "create the BOM/item in Zoho Books" message with the Refresh
+button instead of the create card. No cron: MSUN is not a `recipe-engine` org,
+so `refreshAllOrgs` never touches it.
 
 ### Books packing-list widget (CR-131)
 
@@ -342,7 +409,10 @@ and a locked-out user repairs the org just by loading the app.
 |--------|------|---------|
 | GET | `/api/industries/:id/properties` | Properties of an industry (ordered by `skuPosition`) |
 | GET | `/api/properties` | All properties of the org, each with `industryName` (drives the Properties grid) |
-| GET | `/api/zoho/item-custom-fields` | Books item custom fields of the connected org — feeds the field-mapping picker (CR-008) |
+| GET | `/api/zoho/item-custom-fields` | Books item custom fields of the connected org — `{ customfield_id, api_name, label, data_type, values[] }`; feeds the property form's Zoho Books field select and the Mapping view (CR-288) |
+| GET | `/api/properties/books-categories` | Books item categories `[{ id, name, parent }]`, fresh read (CR-286) |
+| POST | `/api/properties/:id/sync-books` | Pull the property's values from Books by its `valueSource`: `items` = the Books category's active items (CR-286), `options` = the mapped dropdown field's options (CR-288); never deletes; 400 when the property is not Books-backed |
+| POST | `/api/properties/sync-books-all` | `{ industryId }` → every Books-backed property of the industry, sequential; the Quote Maker fires it on open / Refresh (CR-287) |
 | POST | `/api/properties` | Create. Requires `name, caption, valueType, skuPosition, industryId` |
 | PUT | `/api/properties/:id` | Partial update |
 | DELETE | `/api/properties/:id` | Delete + cascade its PropertyValues |
@@ -461,7 +531,7 @@ guarded. Setup procedure: [WORKORDER.md](WORKORDER.md).
 | POST | `/api/reserve/sync` | Manual stock refresh for this org's snapshot items |
 | POST | `/api/reserve/(actions)` | 501 until Phase 4 (see RESERVE-TASKS.md) |
 
-`POST /internal/sync-stock` (in `index.js`, `X-Sync-Secret` header = `SYNC_SECRET`) syncs all reserve-enabled orgs — the future cron target.
+`POST /internal/sync-stock` (in `index.js`, `X-Sync-Secret` header = `SYNC_SECRET`) syncs all reserve-enabled orgs — the future cron target. `POST /internal/refresh-items` (CR-271, same guard) runs `zoho/import.js` `refreshAllOrgs`: the SKU master of every `recipe-engine` org with a connected user is refreshed from Books (name / SKU / composite flag, plus the mapped custom fields of items Books changed since the last run — `booksData.last_modified_time`, ≤ 40 detail reads per run) — the daily cron target for orgs on Product Designs v2, where a design component points straight at a synced Books item (`RecipeComponent.skuItemId` on a goods row; `frontend/src/pages/RecipeV2*.jsx`, a copy of the design pages so the current ones stay untouched).
 
 Old-scope tokens (pre-Inventory) make reserve endpoints return `409 {error:"reauth_required"}` — the UI offers a Zoho reconnect; SKU flows keep working.
 
@@ -478,15 +548,18 @@ Costing math lives in `recipe/calc.js` (pure, `--selftest`); demo data in
 | GET | `/api/recipe/cost-elements` | Per-org cost columns (lazy-seeds CASTING/MACHINING/DRILLING/ASSEMBLY) |
 | GET | `/api/recipe/products` | Thin SKUItem list for the wizard (independent of sku-generator gate); rows carry `type` (CR-263) |
 | GET | `/api/recipe/products/composites` | The Books org's active composite items as `SKUItem` rows `[{ id, sku, name }]` — the Product Design form's Main product list. `zoho/import.js syncComposites` promotes matched rows to `Manufacturing` and adds the ones the SKU master lacks, so `productItemId` stays a `SKUItem` ROWID (CR-264) |
-| CRUD | `/api/recipe/recipes(/:id)` + `/components` + `/options` | Recipe builder; every design is writable in place (`assertEditable` refuses only a Superseded pre-CR-266 copy); `GET /recipes` hides Superseded rows; `DELETE` works on any design. `POST /recipes` takes `uom` + `components[]` in one request — the Books-style **New / Edit** page (`RecipeNewPage.jsx` at `recipes/new` and `recipes/:id/edit`, CR-221; edit = `PUT /recipes/:id` + `PUT /recipes/:id/components-bulk` + `DELETE /components/:id`); components carry `skuItemId` (own-org `SKUItem`, `skuItemRef`) |
+| CRUD | `/api/recipe/recipes(/:id)` + `/components` + `/options` | Recipe builder; every design is writable in place (`assertEditable` refuses only a Superseded pre-CR-266 copy); `GET /recipes` hides Superseded rows; `DELETE` works on any design. `POST /recipes` takes `uom` + `components[]` in one request — the Books-style **New / Edit** page (`RecipeV2NewPage.jsx` at `recipes/new` and `recipes/:id/edit`, CR-221; edit = `PUT /recipes/:id` + `PUT /recipes/:id/components-bulk` + `DELETE /components/:id`); components carry `skuItemId` (own-org `SKUItem`, `skuItemRef`) |
 | PUT | `/api/recipe/recipes/:id/component-order` | Drag-and-drop reorder |
 | POST | `/api/recipe/recipes/:id/clone` · PUT `/status` | Clone `{code, name}` = deep copy (`copyRecipeInto`) under a new code, live at once, no Books link (CR-230); status `{status}` Published (= Active) ↔ Archived (= Inactive) only. `/publish`, `/new-version` and `GET /versions` were removed in CR-266 |
 | POST | `/api/recipe/recipes/:id/calculate` | Cost/price for a selection (wizard review + builder Test tab; nothing saved) |
 | GET/POST | `/api/recipe/quotations(/:id)` · POST `/:id/convert` | Create = recompute + freeze snapshot + `QTN-` number; convert → `Order` |
 | GET/POST/PUT/DELETE | `/api/recipe/sizing-models(/:id)` | Product Configurator sizing master (`SizingModel`, CR-181); perm `recipe.sizing` |
-| POST | `/api/recipe/sizing/select` | `{industryId, tph, bd, rpm, group}` → `recipe/sizing.js` `selectModels`: `reqCap`, per-series best fit (+ one size up, ties, `tooBig`); options carry the `model`/`series` question value ids and `item {id, sku, name, type, zohoItemId}` from `SizingModel.skuItemId`, else from the linked Product Design's `productItemId` (CR-226). Perm `recipe.configure` |
+| GET/POST/PUT/DELETE | `/api/recipe/sizing-materials(/:id)` | Material-efficiency master (`SizingMaterial`, CR-281); perm `recipe.sizing`, GET also `recipe.configure` (the widget lists it). `POST /api/recipe/seed-rav-materials` loads Ricon's 83-row sheet once |
+| GET/POST/PUT/DELETE | `/api/recipe/geared-motors(/:id)` | Geared-motor selection master (`GearedMotor`, CR-284); perm `recipe.sizing`, GET also `recipe.configure` (the widget narrows the rows client-side). `POST /api/recipe/seed-rav-motors` loads Ricon's 107-row brand sheet once, linking `skuItemId` by item name = model |
+| POST | `/api/recipe/sizing/select` | `{industryId, tph, bd, rpm, group, materialId?}` → `recipe/sizing.js` `selectModels`: `reqCap` (× the material's efficiency ÷ 100 when `materialId` is sent, CR-281; response adds `material`), per-series best fit (+ one size up, ties, `tooBig`); options carry the `model`/`series` question value ids and `item {id, sku, name, type, zohoItemId}` from `SizingModel.skuItemId`, else from the linked Product Design's `productItemId` (CR-226). Perm `recipe.configure` |
 | POST | `/api/recipe/sizing/price` | `{recipeCode, answers[]}` → design cost for the widget's Rate box (CR-211): 404 unless `OrgSetting cfgDesignRate` is `true`; Published version of the code, else newest; `calc.js selectByMaterial` (option `materialCode` = any answer text, else the lone option, else 400 naming the component) → `computeQuote` qty 1 → `{recipe, unitCost, lines}`. Perm `recipe.configure` |
 | POST | `/api/recipe/sizing/bom` | `{recipeCode?, skuItemId?, answers[]}` → the picked model's Product Design component list for the widget's BOM box (CR-227): design by code (Published, else newest), else the design whose `productItemId` is the own-org `skuItemId`; per component the material option an answer names, else the lone option, else blank (never 400s, not gated by `cfgDesignRate`); line `{component, qty, uom, required, material, sku, name, inBooks}` from `RecipeComponent.skuItemId` → `SKUItem`, else `MaterialType.zohoItemName`; no design → `{recipe:null, lines:[]}`. Perm `recipe.configure` |
+| GET | `/api/recipe/products/goods` | Product Designs Item (ZB) list (CR-275; per material sub-line since CR-290): refreshes the SKU master from Books (`refreshFromBooks`, `skuFromName`), then the org's non-composite, non-service Books goods `[{ id, sku, name }]` |
 | GET/POST | `/api/recipe/config-quote?docKey=` · `/config-quote/:docKey` | CRM Product Configurator saved cart per record (CR-246): GET → `{ crmRowIds, lines | null }`; POST `{ crmRowIds, lines, quoteNo? }` (quote number for the WO lookup, CR-261) upserts `ConfigQuote` and replaces its `ConfigQuoteLine` rows (a line over 9500 chars → 413, the BOM snapshot trimmed to fit). `docKey` = `quotes:<id>` \| `deals:<id>`; perm `recipe.configure` |
 | POST | `/api/recipe/seed-rav` | Idempotent RAV starter: Industry + 26 questions + values + 43 sizing models (`recipe/seedData.js`), bulk inserts |
 | GET | `/api/recipe/books-items?q=` \| `/books-composites` | Books lookups (CR-143): material-link typeahead; composite picker for first push |
@@ -515,7 +588,8 @@ wizard), `quotations` (+ `/:id` snapshot, `/:id/mfg` manufacturing requirement),
 
 | File | Role |
 |------|------|
-| `index.js` | Express app: CORS, prefix-strip, per-request `req.catalyst` init, auth/org/add-on gates, route mounting, `/internal/sync-stock`, error handler |
+| `index.js` | Express app: `scrubErrors` (first), CORS, prefix-strip, per-request `req.catalyst` init, auth/org/add-on gates, route mounting, `/internal/sync-stock`, error handler |
+| `scrubErrors.js` | Safety net (CR-269): wraps `res.json` and replaces a raw JavaScript runtime error in `error` / `message` / `problems[]` with a plain message; the original goes to the log as `[raw-error] <METHOD> <path>`. Errors thrown on purpose pass through |
 | `session.js` | Password hashing (scrypt), signed session cookies, `requireAuth` / `requireAdmin`, AppUser helpers |
 | `addons.js` | Add-on keys, `DEFAULT_ON`, `enabledAddons`, `requireAddon(key)` gate |
 | `store.js` | Shared Data Store helpers incl. org scoping (below) |
@@ -523,7 +597,8 @@ wizard), `quotations` (+ `/:id` snapshot, `/:id/mfg` manufacturing requirement),
 | `itemFields.js` | Org-wise extra item fields (CR-209): `ITEM_FIELDS` catalogue (`hsn_or_sac`, `manufacturer` — key = Books item API field), `enabledKeys` from `OrgSetting skuItemFields`, `pickItemFields` / `mergeBooksData` into `SKUItem.booksData`, `catalogueFields` for the composite push. An entry's optional `source` is an app route returning the allowed values — the forms render a dropdown from it (Manufacturer → Books master, CR-210). Self-checked (`itemFields.test.js`) |
 | `routes/*.js` | The route handlers above (`auth`, `zohoAuth`, `industries`, `properties`, `propertyValues`, `sku`, `skuItems`, `reserve`, `admin`) |
 | `zoho/auth.js` | OAuth config, multi-DC host resolution (`dcHosts`), token load/exchange/refresh, org selection |
-| `zoho/booksApi.js` | Zoho Books v3 / Inventory v1 client (`createItem`, `updateItem`, `getOrganizations`, `listItems`, `getItem`, `listItemCustomFields`, SO/PO reads, `stampSalesOrderWo` — the SO's `cf_work_order_no_and_date` custom field, CR-173) |
+| `zoho/valueSync.js` | Pure sync plans for a property's values (CR-286/288): `planValueSync` (Books category items → create / link / rename), `planOptionSync` (dropdown field options → create), `nextCode` (continue the property's code series); `--selftest` |
+| `zoho/booksApi.js` | Zoho Books v3 / Inventory v1 client (`createItem`, `updateItem`, `getOrganizations`, `listItems`, `getItem`, `listItemCustomFields` (+ option names, CR-288), `addCustomFieldOption` (undocumented `PUT /settings/fields/{id}`, CR-288), SO/PO reads, `stampSalesOrderWo` — the SO's `cf_work_order_no_and_date` custom field, CR-173; skipped for an org whose Books has no such field, CR-268) |
 | `zoho/inventoryApi.js` | `getCompositeItem`/`updateCompositeItem`/`updateCompositeItemFields`/`listCompositeItems`/`createCompositeItem` (BOM + CR-029 full payload), `listWarehouses`, `getItemStock` + write stubs |
 | `zoho/push.js` | `pushToZoho` — best-effort create-or-update, no-op until configured, branching on `SKUItem.type` (CR-029): Trading → plain Books item, Manufacturing → composite/assembly item with associated items from `createValuesAsItems` properties (`buildAssociatedItems`, resolves each value via `pushValueToZoho`; unselected flagged properties are skipped — CR-030 — only a selected value that can't resolve fails). A Manufacturing re-push also swaps the composite's property-derived BOM lines (`mergeMappedLines`/`syncMappedItems` — manual lines and quantities untouched, write only on change). Type locks after first push, so `type` also says which Books API `zohoItemId` belongs to. Invoked by the manual `POST /sku-items/:id/push-zoho` route and by `POST /sku/update-item` for already-linked items (CR-030's exception to CR-021's no-auto-push rule) |
 | `zoho/import.js` | `importFromBooks` — create-only import of Books items, mapping custom fields to SKUItemValue (find-or-create PropertyValue) |
@@ -544,7 +619,7 @@ wizard), `quotations` (+ `/:id` snapshot, `/:id/mfg` manufacturing requirement),
 | `workorder/sync.js` | Bounded nightly reconcile + the Books webhook dispatcher + `tokenForOrg` |
 | `workorder/alerts.js` | Shortfall + cost-threshold evaluation, email delivery, `AlertLog` dedupe. Self-checked |
 | `workorder/reports.js` | SO-BOM + shortfall roll-ups, ZCQL only. Self-checked |
-| `recipe/sizing.js` | Product Configurator sizing (CR-181): `selectModels` — Req. Cap from TPH/BD/RPM, next-size-up per series, ties, `tooBig`, required speed. Pure. Self-checked (`node recipe/sizing.js --selftest`) |
+| `recipe/sizing.js` | Product Configurator sizing (CR-181): `selectModels` — Req. Cap from TPH/BD/RPM × material efficiency % (CR-281), next-size-up per series, ties, `tooBig`, required speed. Pure. Self-checked (`node recipe/sizing.js --selftest`) |
 
 ### `store.js` helpers
 - `rowList(zcqlRows)` — ZCQL returns each row keyed by table name; flattens to plain objects.
@@ -569,8 +644,20 @@ wizard), `quotations` (+ `/:id` snapshot, `/:id/mfg` manufacturing requirement),
 HashRouter (`/app/#/…`) — Catalyst web hosting has no SPA fallback.
 Left nav renders one entry per **enabled add-on**; SKU Generator is one entry
 with a tab bar (`SkuLayout` in `App.jsx`). Default landing is `/sku/items`.
-All settings live in the **Settings hub** (CR-137): header gear → `/settings/*`
-(`SettingsLayout.jsx`). Zoho-Setup style (CR-229): the main sidebar is hidden
+All settings live in the **Settings hub** (CR-137): sidebar user card →
+Settings, or `⌘,` from any page → `/settings/*` (`SettingsLayout.jsx`). There
+is no header bar (CR-294): the account menu is the **user card** pinned at the
+sidebar bottom (`UserCard` in `App.jsx`) — initials, name, Admin/Member — which
+opens a frosted `Popover` (`components/Popover.jsx`, portalled + fixed like
+`RowMenu`) with Settings, Keyboard shortcuts, the theme radio, Helpdesk,
+Switch Organization and Log Out. **Theme** (CR-294): `src/theme.js` keeps
+`'light' | 'dark' | 'system'` in `localStorage.theme` and resolves it onto
+`<html data-theme>`; `index.html` runs the same rule inline before first paint.
+`index.css` holds the light `:root` tokens, a full `:root[data-theme="dark"]`
+override and the `.glass-panel` surface (opaque fallback without
+`backdrop-filter` or under `prefers-reduced-transparency`). Components only
+ever use `var(--…)`; state colours are `--danger / --danger-soft / --ok /
+--on-accent / --overlay`. Zoho-Setup style (CR-229): the main sidebar is hidden
 under `/settings/*`; the hub's own left panel lists sections in groups
 (General / Add-ons) + search, filtered by the same addon/perm rules as the
 main nav; a section with several pages opens with a `TabBar`
@@ -584,7 +671,7 @@ Configurator's *Configure & Quote* / *Quotations* pages have no menu entry
 |-------|------|---------|
 | `/sku/items` | `SKUItemsPage` | The "SKU Generator" tab: browse/search items (free-text + SKU/Type/Industry/property filters, paginated grid); Toolbar **+ New** → `/sku/generator`, Import / Refresh / Push all unsynced. Row click → `/sku/items/:id`; old `?item=` links redirect there (CR-233) |
 | `/sku/items/:id` | `SKUItemPage` | Record page (CR-233): rail of items (search, Industries, Books), header name · sku · Books state · **Edit** (read-only until then) · More ▾ Open in Generator / Push to Zoho / Delete · ✕, tabs Details · History |
-| `/recipe/recipes` · `/recipe/recipes/:id` | `RecipeListPage` · `RecipeBuilderPage` | Product Designs grid → record page: rail (Statuses, Products), header · Push to Books · Edit · More ▾ Clone / Mark Inactive-Active / Delete, tabs Overview (details + Associated Items) · Components · Materials & costing · History (CR-230, CR-233; no Publish / Versions since CR-266 — status shows Active / Inactive via `statusLabel` in `recipeShared.jsx`). New/Edit form = `RecipeNewPage` — Component table + **Services** table (CR-254: a `RecipeComponent` with `allowMaterial=false` + `skuItemId` → a Books service item; `bomLines` pushes it as its own composite line) |
+| `/recipe/recipes` · `/recipe/recipes/new` · `/recipe/recipes/:id/edit` | `RecipeV2ListPage` · `RecipeV2NewPage` | Product Designs grid (search, filters, ⋮ Edit / Mark Inactive-Active / Delete) → one flat Books-style form: Main ERP item (Books composite, required) · SKU · Unit · Components (row = component; Item (ZB) per material sub-line, CR-290, or on the row when it lists no material) · Services with Price. The v1 form and the builder record page (Push to Books, Clone, cost elements, fixed costs) were retired in CR-289 (`recipes/:id` redirects to `edit`) |
 | `/recipe/quotations` · `/recipe/quotations/:id` | `RecipeQuotationsPage` · `RecipeSnapshotPage` | Quotations grid → record page: rail, Convert to sales order, More ▾ Manufacturing requirement / Print, tabs Snapshot · History (CR-233) |
 | `/recipe/component-map` · `/recipe/component-map/new` · `/recipe/component-map/edit?industryId&component` | `RecipeComponentMapPage` · `ComponentEditPage` | Components (CR-253): two sections like the Books composite item (CR-254) — **Associated Items** and **Associated Services** (a component whose item is a Books service, `booksData.product_type`; `?kind=service` form = service item · fixed qty · UOM · status only) — one grid row per component (Item = `SKU — name` or `By <question> · n/m answers`, `+n rules` when advanced rows exist), row click / Add → the flat form (Product · Component · Item: same always / depends on a question → Answer · Item table · Quantity · Required · Goes as · Status · Advanced rules), Test modal (answers → resolved lines + missing), Excel import; `/recipe/component-map/:id` stays the per-row record page for advanced rows |
 | `/recipe/materials(/:id)` · `/recipe/costs(/:id)` · `/recipe/sizing(/:id)` · `/recipe/component-map/:id` | master grid pages · `MasterDetailPage` | Each master grid (row click → details; New = the grid's modal) and one config-driven record page (`pages/MasterDetailPage.jsx`, CR-233): rail, Edit (same form as the grid, exported from the master file), More ▾ Duplicate (Component Map) / Mark Inactive-Active / Delete, tabs Details · History |
@@ -595,7 +682,7 @@ Configurator's *Configure & Quote* / *Quotations* pages have no menu entry
 | `/settings/sku/:tab` (`series` / `items` / `books`) | `SkuSettingsPage` | Series: numerical series mode + format. Item defaults: default item type + labels, extra item fields (CR-209), UOM list (CR-216). Zoho Books: push defaults, auto-push import, widget auto-push. One component, one Save across the three tabs |
 | `/settings/configurator` | `ConfiguratorSettingsPage` | Product Configurator (addon `recipe-engine`): price ladder (CR-220) + rate-from-design-costing toggle (CR-211) |
 | `/settings/sku/industries` | `IndustriesPage` | Manage industries |
-| `/settings/sku/industries/:id/properties` | `PropertyManagerPage` | Manage one industry's properties + values (incl. Books custom-field mapping) |
+| `/settings/sku/industries/:id/properties` | `PropertyManagerPage` | Manage one industry's properties + values. Header toggle **Properties | Mapping** (CR-288): Mapping is one grid, a row per property — Values come from (This app / Books items in a category / Options of the Zoho Books field) · Zoho Books field (live select) · Books category · value count · Sync, plus Sync all from Books |
 | `/settings/sku/properties` | `PropertiesPage` | All org properties in one grid, filterable by industry/type/required |
 | `/sku/books-items` | `BooksLinkedValuesPage` | The "Books items" tab: read-only grid of property values also created as standalone Zoho Books items (CR-026), filterable by industry |
 | `/wo` | `WorkOrderListPage` | Work order grid; **+ New** → `/wo/new` |
@@ -660,7 +747,7 @@ Set in `functions/skuapi/catalyst-config.json` → `env_variables`:
 | `ZOHO_REDIRECT_URI` | OAuth callback (defaults to localhost in dev) |
 | `FRONTEND_URL` | Where the OAuth callback redirects back to |
 | `ADMIN_EMAILS` | Comma-separated super-admin login emails (entitlement management) |
-| `SYNC_SECRET` | Shared secret for `/internal/sync-stock`, `/internal/reconcile` and `/internal/zoho-event` |
+| `SYNC_SECRET` | Shared secret for `/internal/sync-stock`, `/internal/reconcile`, `/internal/refresh-items` and `/internal/zoho-event` |
 | `ALERT_FROM_EMAIL` | From-address for Work Order shortfall / cost alerts (falls back to the recipient) |
 | `SESSION_SECRET` | Session-cookie HMAC key. Falls back to `ZOHO_CLIENT_SECRET` if unset (see TASKS.md) |
 

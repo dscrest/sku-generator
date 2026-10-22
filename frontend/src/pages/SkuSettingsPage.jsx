@@ -68,6 +68,10 @@ export default function SkuSettingsPage() {
   const [itemFields, setItemFields] = useState([]);
   // Units of measure (CR-216): comma-separated text, cleaned server-side.
   const [uoms, setUoms] = useState('');
+  // Quote Maker, Books-first mode (CR-287): Finished-goods category + "create in Books" misses.
+  const [fgCategoryId, setFgCategoryId] = useState('');
+  const [widgetBooksOnly, setWidgetBooksOnly] = useState(false);
+  const [categories, setCategories] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -85,11 +89,18 @@ export default function SkuSettingsPage() {
         setItemFieldCatalog(r.data.itemFieldCatalog || []);
         setItemFields(r.data.itemFields || []);
         setUoms((r.data.uoms || []).join(', '));
+        setFgCategoryId(r.data.fgCategoryId || '');
+        setWidgetBooksOnly(!!r.data.widgetBooksOnly);
         setLoaded(true);
       })
       .catch(() => toast.error('Failed to load settings'));
     axios.get('/api/sku-items/stock-accounts').then((r) => setStockAccounts(r.data)).catch(() => {});
   }, []);
+  // Books categories only when the Books tab is open — one Books read, on action.
+  useEffect(() => {
+    if (tab !== 'books' || categories.length) return;
+    axios.get('/api/properties/books-categories').then((r) => setCategories(r.data || [])).catch(() => {});
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!TABS.includes(tab)) return <Navigate to="/settings/sku/series" replace />;
 
@@ -100,7 +111,7 @@ export default function SkuSettingsPage() {
       // it does not receive untouched, so the Product Configurator page owns them.
       const { data } = await axios.put('/api/sku-items/settings', {
         autoPushImport: autoPush, seriesMode, seriesPad, defaultItemType, typeLabels, pushTracking, pushAccountId,
-        widgetAutoPush, itemFields, uoms,
+        widgetAutoPush, itemFields, uoms, fgCategoryId, widgetBooksOnly,
       });
       setUoms((data.uoms || []).join(', ')); // show the cleaned list (trimmed, de-duplicated)
       toast.success('Settings saved');
@@ -281,6 +292,41 @@ export default function SkuSettingsPage() {
               master. When on, it is also pushed to Zoho Books the moment it is added to a quote. When off, push it later
               from the SKU Items page (Push / Push all unsynced). Sales can still switch it per line with the widget&apos;s
               Push to Books box.
+            </span>
+          </span>
+        </label>
+      </div>
+      <div style={card}>
+        <span style={heading}>Quote Maker: Finished goods live in Zoho Books</span>
+        <span style={hint}>
+          With the toggle below on, the finished goods are the Zoho Books composite items: the widget refreshes them
+          each time it opens or Refresh is clicked, matches the parameters that have a Books field against the item&apos;s
+          custom fields and the parameters whose values are Books items against the composite&apos;s BOM lines. A category
+          (optional) narrows which composites are read. With the toggle off, only a category refreshes items; blank =
+          the widget does not refresh items (use Refresh from Zoho on the SKU Items page).
+        </span>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>Finished goods category (optional)</span>
+          <select value={fgCategoryId} disabled={!loaded} onChange={(e) => setFgCategoryId(e.target.value)}
+            style={{ padding: '6px 8px', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-card)', color: 'var(--text-primary)', font: 'inherit' }}>
+            <option value="">{widgetBooksOnly ? '— All composite items —' : '— Not set: widget does not refresh items —'}</option>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.parent ? `${c.parent} › ${c.name}` : c.name}</option>)}
+            {fgCategoryId && !categories.some((c) => c.id === fgCategoryId) && <option value={fgCategoryId}>Category {fgCategoryId}</option>}
+          </select>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={widgetBooksOnly}
+            disabled={!loaded}
+            onChange={(e) => setWidgetBooksOnly(e.target.checked)}
+            style={{ marginTop: 3 }}
+          />
+          <span>
+            <span style={heading}>Items are created in Zoho Books, not in the widget</span>
+            <span style={{ ...hint, display: 'block', marginTop: 3 }}>
+              When on, a parameter combination with no matching item shows &quot;create the BOM/item in Zoho Books&quot;
+              with a Refresh button instead of the in-widget create card. When off, the widget can still create the item.
             </span>
           </span>
         </label>

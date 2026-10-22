@@ -52,7 +52,12 @@ CR-249); Reserve and Issue are always org-wide.
 | Purchase Request confirm | — | delivery = Main | one draft PO **per vendor** (CR-170) |
 
 Reserve, de-reserve, issue and return are one table (`MaterialTxn`) and one code
-path — they differ only by `type` and the warehouse pair.
+path — they differ only by `type` and the warehouse pair. One action on the
+Materials grid is **one transaction and one Transfer Order for every finished
+good at once** (CR-277): each `MaterialTxnLine` names its FG, the same raw
+material under two FGs becomes one TO line (quantities summed, picks merged),
+and balances stay per FG. The Completed / Cancelled sweep likewise writes one
+de-reserve and/or one return TO per work order.
 
 ### Status lifecycle (CR-160)
 
@@ -75,12 +80,16 @@ are not re-asked. Completed onwards, Draft and Approved never step back.
 | Cancelled | De-reserves (Reserve → Main); issued material stays | — |
 
 Assembly (Details → **Make Assembly** action, CR-172; renamed CR-208) is allowed at any shop-floor
-stage (Ready For Machining … Ready For Dispatch) once every BOM line of the
-finished good is fully issued. The tab has two sections (CR-174): **Ready for
-assembly** (fully issued FGs, an *Assemble now* quantity per row for partial
-runs, Proceed opens the assemble modal seeded with it) and **Pending for
-assembly** (FGs still waiting on issues, with the count of open lines). The
-server re-checks fully-issued on Proceed.
+stage (Ready For Machining … Ready For Dispatch) once the finished good's
+**issued** material covers at least one unit (CR-277 — partial assembly; it
+used to need every BOM line fully issued). The tab is one table: Ordered ·
+Assembled · **Ready** (units the issued material covers = min over BOM lines of
+⌊(issued − consumed by earlier assemblies) ÷ per-unit⌋) · **Blocked** (the
+rest) · **Waiting on** (the raw materials holding them back, with the quantity
+still to issue, e.g. *Seal (1 more)*) · *Assemble now* (prefilled to Ready,
+edit for a smaller run; Proceed opens the assemble modal seeded with it). A row
+with nothing ready waits. The server re-checks the count on Proceed and refuses
+more than Ready, naming the raw materials.
 
 Proceed Assembly (CR-176) first looks up the batch/serial pool of every raw
 material at the Issue warehouse; tracked lines open the same picker as
@@ -127,6 +136,9 @@ so the reconcile is **mandatory, not optional**.
 5. **Register the cron** — Catalyst console → Cron → URL type, nightly:
    `POST https://<domain>/server/skuapi/internal/reconcile`
    with header `X-Sync-Secret: <SYNC_SECRET>`.
+   5b. **Daily item refresh** (CR-271, orgs on Product Designs) — same, daily:
+   `POST https://<domain>/server/skuapi/internal/refresh-items`
+   with header `X-Sync-Secret: <SYNC_SECRET>`.
 6. **Register the Books webhooks** — Books → Settings → Automation → Workflow
    Rules. One rule per module, action = webhook, method POST, URL:
    `https://<domain>/server/skuapi/internal/zoho-event?type=<type>&orgId=<orgId>`
@@ -154,6 +166,13 @@ so the reconcile is **mandatory, not optional**.
 
    Unknown types are acknowledged, never rejected, so an extra rule can never
    show failures in the customer's console.
+7. **Optional — work order number on the Sales Order** (CR-173 / CR-268). In
+   Books → Settings → Sales Orders → Field Customization, add a text field
+   labelled **Work Order No and Date** (api name
+   `cf_work_order_no_and_date`). The active work order is then written there
+   as `WO-0012 / 16/09/2026`, and cleared on cancel or draft delete. An org
+   without the field is skipped — no error, no Books call after the first
+   attempt. A field added later is picked up within minutes (next cold start).
 
 > Workflow-rule coverage differs per Books plan and module. Verify each rule
 > saves against the live org; anything Books will not fire is picked up by the
@@ -183,16 +202,19 @@ only thing that changes between jobs is which column you type in.
 1. Open the work order → **Materials tab**.
 2. Pick the action: **Reserve · De-reserve · Issue · Return**.
 3. Type quantities in the last column (or press **Fill maximum**), then
-   **Confirm**. One Transfer Order is created and its number is shown.
+   **Confirm**. One Transfer Order is created for every finished good you typed
+   against and its number is shown.
 4. The bold column is your limit for the action you picked. Typing over it turns
    the box red and Confirm explains exactly what to do.
 5. **Replace** (defective issued material): type the defective quantity, Proceed
-   → give the reason and add a photo (click the dashed box or drop the image on
-   it; on a phone it opens the camera or gallery) → pick the defective
-   batch/serial numbers → the units go back to Main and are **blocked** (they
-   never show in a picker again until the store manager clears them). That is
-   all the shop floor does — the request now waits in **Store issues** for the
-   store manager's decision on the replacement.
+   → pick the defective batch/serial numbers (tracked items only) → give the
+   reason and add a photo (click the dashed box or drop the image on it; on a
+   phone it opens the camera or gallery) → **Proceed Replace** sends it: a
+   Store issue (`SI-…`) per line and a **draft** return transaction. Nothing
+   moves in Zoho yet (CR-280): the units stay in the Issue warehouse and are
+   **blocked** there (never offered by a picker, never counted as assemblable)
+   until the store manager acts. That is all the shop floor does — the request
+   now waits in **Store issues**.
    Return and Replace only cover material **not yet assembled** — once a unit
    is made, its parts have left the Issue warehouse. Found a defect after
    assembly? Assembly tab → ⋮ **Delete assembly** first, then Replace.
@@ -204,13 +226,18 @@ only thing that changes between jobs is which column you type in.
 2. Order Management → **Store issues** (filter **Open** by default): each row is
    one defective line with its photo, batch/serials and reason. Two decisions
    per row, each with a reason, both in the work order's History:
-   - **Replacement** — ⋮ → **Replace — Reserve & Issue**: optionally pick a
-     different Books item (the BOM is swapped), the dialog shows what Main can
-     supply now and what will be purchase-requested, pick the batch/serial
-     numbers, Proceed → Transfer Orders Main → Reserve → Issue for the in-stock
-     part and one purchase request for the rest. **Replace — Raise PR** skips
-     the stock move and requests the whole quantity. The Replacement column
-     shows the outcome and the TO / PR numbers.
+   **The first action on a row fires the defective-return Transfer Order**
+   (Issue → Main, the batches picked at raise) — whichever of the two it is
+   (CR-280); the row then reads *returned to Main* instead of *still at Issue*.
+   - **Replacement** — ⋮ → **Replace — Reserve & Issue**: the dialog opens with
+     the defective item selected (✕ to pick a different Books item — the BOM is
+     swapped), shows what Main can supply now with its batch/serial numbers, and
+     what will be purchase-requested — or *No stock at Main for …*, in which
+     case Proceed raises a purchase request for the whole quantity. Pick the
+     batch/serial numbers, Proceed → return TO, then Transfer Orders Main →
+     Reserve → Issue for the in-stock part and one purchase request for the
+     rest. **Replace — Raise PR** skips the stock move and requests the whole
+     quantity. The Replacement column shows the outcome and the TO / PR numbers.
    - **Defective units** — ⋮ → **Restock — repaired** (usable again),
      **Trash — write off** (Zoho inventory adjustment at Main), or **Return to
      vendor** (marked; stays blocked — adjust the stock in Books when the
@@ -228,8 +255,45 @@ MOC = CI — not the composite's lines.
 - A part with no item for that MOC, or an item not yet in Books, is named in a
   message after Create; the other parts are seeded. Add the missing one on the
   **Items** tab, or map it in Components and use **BOM → Compare** to pull it in.
-- No Configuration shown = the SO did not name a saved quote; the BOM is the
-  composite's, as for any other item.
+- Which source a work order uses is a setting: **Settings → Work order →
+  Work order raw material** (CR-270). It needs the Product Configurator add-on.
+  Ricon is on *Direct from Template*; every other organisation is on *Direct
+  from Books*.
+
+  | Setting | Finished good | Raw material comes from | Source |
+  |---|---|---|---|
+  | Direct from Books (default) | any | Books composite item × qty | composite |
+  | Direct from Template | sold from a saved quote, Components rows match | Components for the quoted answers → their Books items | quote |
+  | Direct from Template | Main product of an active Product Design | the design's components → Materials → their Books items | design |
+  | Direct from Template | neither | Books composite item × qty, with a message | composite |
+
+  Within *Direct from Template* the first row that gives an item wins.
+- Neither found: Create says *<item>: no quote configuration or product design
+  gave items — BOM taken from the Books composite*, per finished good.
+- **From a Product Design (CR-270).** The sales order carries a dummy finished
+  good (one Books composite per model). The work order finds the design whose
+  **Main product** is that item and takes each component's material, then the
+  Books item that material is linked to on *Product Configurator → Materials*.
+  - Qty per finished good = component qty × cast weight. A part with cast
+    weight 0 (counted in Nos) = the component qty.
+  - One material on a component: it is used. Several (Casing: CI / WCB / SS):
+    the one the quote's answers name (MOC). No saved quote on the SO = the
+    component is named in a message and left out; add it on the **Items** tab.
+  - A material with no Books item is named in a message; link it on Materials
+    and use **BOM → Compare**.
+  - Inactive designs are not used.
+  - A work order raised before this change: **BOM → Compare** shows the
+    design's items against the composite's; **Apply here only** takes them.
+  - **Product Designs** (v2 since CR-271, the only form since CR-289): a
+    component row can carry an **Item (ZB)** — a Books item picked from the
+    synced SKU master — instead of its materials, and each material sub-line
+    carries its own item (CR-290: Casing → CI = item X, WCF = item Y). The work
+    order takes the option's item × qty × cast weight ahead of the material's
+    Materials-page link, no link step needed. Keep the Books
+    items synced: Books Items → Refresh from Zoho, or the daily cron (§4).
+    One row per component (CR-276); its materials are sub-lines, each with
+    its qty in the material's unit — Casing → CI 55 KG / WSB 70 KG. The
+    sub-line qty is the WO line qty per finished unit for that material.
 - The valve's Books composite is never updated from such a work order: the BOM
   tab offers *Apply here only*, and assembly consumes the WO's items without
   rewriting the composite.

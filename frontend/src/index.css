@@ -53,6 +53,62 @@
   --warn-soft: #fffbeb;
   --shadow-sm: 0 1px 2px rgba(15,23,42,0.04), 0 1px 4px rgba(15,23,42,0.04);
   --shadow-lg: 0 12px 32px -8px rgba(15,23,42,0.12), 0 4px 8px -4px rgba(15,23,42,0.06);
+  /* CR-294: shared state tokens so chrome can drop hardcoded hexes */
+  --danger: #dc2626;
+  --danger-soft: #fee2e2;
+  --on-accent: #ffffff;
+  --overlay: rgba(15,23,42,0.5);
+}
+
+/* Dark theme (CR-294): <html data-theme="dark">, set by index.html before
+   first paint and by src/theme.js afterwards. --bg-card stays solid so stacked
+   cards, sticky grid headers and the .grid-table clip read as one tone. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --blue: #3b82f6;
+  --blue-light: rgba(59,130,246,0.10);
+  --blue-mid: rgba(59,130,246,0.18);
+  --blue-border: rgba(59,130,246,0.35);
+  --slate-dark: #e5e7eb;
+  --slate-mid: #c7cbd3;
+  --slate-border: rgba(255,255,255,0.14);
+  --slate-text: #9ca3af;
+  --slate-muted: #6b7280;
+  --slate-sku: #60a5fa;
+  --bg: #0f1117;
+  --bg-page: #0f1117;
+  --bg-card: #171a23;
+  --bg-secondary: #1f2330;
+  --border: rgba(255,255,255,0.08);
+  --border-mid: rgba(255,255,255,0.14);
+  --text-primary: #e5e7eb;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+  --orange-light: rgba(249,115,22,0.12);
+  --orange: #fb923c;
+  --orange-border: rgba(249,115,22,0.35);
+  --bg-elev: #171a23;
+  --bg-subtle: #1f2330;
+  --ink: #e5e7eb;
+  --ink-2: #c7cbd3;
+  --ink-3: #9ca3af;
+  --ink-4: #6b7280;
+  --border-strong: rgba(255,255,255,0.14);
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --accent-soft: rgba(99,102,241,0.16);
+  --accent-ink: #a5b4fc;
+  --accent-ring: rgba(99,102,241,0.35);
+  --ok: #4ade80;
+  --ok-soft: rgba(34,197,94,0.14);
+  --warn: #fbbf24;
+  --warn-soft: rgba(245,158,11,0.14);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.4), 0 1px 4px rgba(0,0,0,0.3);
+  --shadow-lg: 0 12px 32px -8px rgba(0,0,0,0.6), 0 4px 8px -4px rgba(0,0,0,0.4);
+  --danger: #f87171;
+  --danger-soft: rgba(239,68,68,0.15);
+  --on-accent: #ffffff;
+  --overlay: rgba(0,0,0,0.6);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -104,7 +160,7 @@ body {
   background: none;
   padding: 4px;
   cursor: pointer;
-  color: #dc2626;
+  color: var(--danger);
   font-size: 16px;
   line-height: 1;
 }
@@ -113,6 +169,63 @@ body {
 /* Settings hub landing cards (CR-137). */
 .settings-card { transition: box-shadow 0.12s, border-color 0.12s; }
 .settings-card:hover { box-shadow: var(--shadow-sm); border-color: var(--blue) !important; }
+
+/* Frosted glass surfaces (CR-294): sidebar user-card popover + keyboard
+   shortcuts modal. Opaque fallback when backdrop-filter is missing or the
+   OS asks for reduced transparency. */
+.glass-panel {
+  --glass-bg: rgba(255,255,255,0.72);
+  --glass-line: rgba(255,255,255,0.6);
+  background: var(--glass-bg);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 var(--glass-line), var(--shadow-lg);
+  border-radius: var(--radius-lg);
+}
+:root[data-theme="dark"] .glass-panel {
+  --glass-bg: rgba(23,26,35,0.72);
+  --glass-line: rgba(255,255,255,0.08);
+}
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .glass-panel {
+    -webkit-backdrop-filter: blur(18px) saturate(1.4);
+    backdrop-filter: blur(18px) saturate(1.4);
+  }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-panel { background: var(--bg-card); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass-panel { background: var(--bg-card); backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+
+/* Sidebar user card (CR-294): 44px like the grid footer. */
+.user-card {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; height: 44px; padding: 0 10px; flex-shrink: 0;
+  background: transparent; border: none; border-top: 1px solid var(--border);
+  cursor: pointer; text-align: left; color: var(--text-primary); font-family: var(--font);
+}
+.user-card:hover, .user-card[aria-expanded="true"] { background: var(--bg-secondary); }
+.user-card .avatar {
+  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent); color: var(--on-accent); font-size: 11px; font-weight: 700; letter-spacing: .02em;
+}
+
+/* Popover rows */
+.pop-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 7px 10px; border: none; background: none; border-radius: var(--radius-sm);
+  font: 500 13px var(--font); color: var(--text-secondary); cursor: pointer; text-align: left;
+}
+.pop-item:hover { background: var(--bg-secondary); color: var(--text-primary); }
+.pop-item.danger:hover { background: var(--danger-soft); color: var(--danger); }
+.pop-item .check { margin-left: auto; color: var(--accent); }
+.pop-item kbd {
+  margin-left: auto; font: 11px var(--font-mono); color: var(--text-muted);
+  border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px;
+}
+.pop-sep { height: 1px; background: var(--border); margin: 4px 6px; }
 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(6px); }

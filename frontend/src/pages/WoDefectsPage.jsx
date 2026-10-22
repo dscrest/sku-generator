@@ -38,7 +38,7 @@ const FILTERS = [
   { key: 'adjusted', label: 'Written off' }, { key: 'returned_to_vendor', label: 'Returned to vendor' }, { key: '', label: 'All' },
 ];
 const REPLACE = [
-  { key: 'issue', label: 'Replace — Reserve & Issue', proceed: 'Proceed Reserve & Issue', hint: 'Reserves what Main has (Main → Reserve → Issue, batch numbers picked next) and raises a purchase request for the rest.' },
+  { key: 'issue', label: 'Replace — Reserve & Issue', proceed: 'Proceed Reserve & Issue', hint: 'Returns the defective units to Main first, then reserves what Main has (Main → Reserve → Issue, batch numbers picked next) and raises a purchase request for the rest.' },
   { key: 'pr', label: 'Replace — Raise PR', proceed: 'Proceed Raise PR', hint: 'Raises a purchase request for the full quantity; nothing moves now.' },
 ];
 const ACTIONS = [
@@ -60,10 +60,13 @@ const trackingText = t => {
 const isOpen = r => r.status === 'pending' || !r.replacementStatus;
 
 const buildColumns = (navigate, setAct, setRepl) => [
+  // CR-279: the Store issue number is the row's identity; the work order it
+  // came from is the secondary reference beside it.
+  { key: 'issueNumber', label: 'Store issue', lock: true, render: r => <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{r.issueNumber || '—'}</span> },
   {
-    key: 'woNumber', label: 'Work Order', lock: true, render: r => (
+    key: 'woNumber', label: 'Work Order', render: r => (
       <button onClick={e => { e.stopPropagation(); navigate(`/wo/${r.workOrderId}`); }}
-        style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontWeight: 600, color: 'var(--blue)', fontFamily: 'inherit', fontSize: 'inherit' }}>
+        style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--blue)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
         {r.woNumber}
       </button>
     ),
@@ -97,7 +100,15 @@ const buildColumns = (navigate, setAct, setRepl) => [
       </span>
     ),
   },
-  { key: 'status', label: 'Defective units', render: r => <Chip s={STATUS[r.status] || { label: r.status, tone: '#64748b' }} /> },
+  {
+    key: 'status', label: 'Defective units', render: r => (
+      <>
+        <Chip s={STATUS[r.status] || { label: r.status, tone: '#64748b' }} />
+        {/* CR-280: where the units physically are — the return TO fires on the first action */}
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{r.returnedAt ? 'returned to Main' : 'still at Issue'}</div>
+      </>
+    ),
+  },
   {
     key: 'actioned', label: 'Decision', render: r => r.actionedAt ? (
       <span style={{ fontSize: 12, whiteSpace: 'normal' }}>
@@ -132,11 +143,12 @@ export default function WoDefectsPage() {
   }
   useEffect(load, []);
 
-  const { cols, chooser } = useGridColumns('wo.defects', buildColumns(navigate, setAct, setRepl));
+  // Grid key bumped in CR-279 so the new first column is not appended after saved orders.
+  const { cols, chooser } = useGridColumns('wo.defects2', buildColumns(navigate, setAct, setRepl));
   const filtered = (rows || []).filter(r =>
     (status === 'open' ? isOpen(r) : !status || r.status === status) &&
     (!wo || r.woNumber === wo) &&
-    (!q || [r.itemName, r.itemSku, r.reason, r.fgName, r.replacementName].some(v => String(v || '').toLowerCase().includes(q.toLowerCase()))),
+    (!q || [r.issueNumber, r.woNumber, r.itemName, r.itemSku, r.reason, r.fgName, r.replacementName].some(v => String(v || '').toLowerCase().includes(q.toLowerCase()))),
   );
   const { pageRows, pager } = usePager(filtered);
 
@@ -144,7 +156,7 @@ export default function WoDefectsPage() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 20px', flexWrap: 'wrap', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)' }}>
         <input
-          value={q} onChange={e => setQ(e.target.value)} placeholder="Search item, reason…" aria-label="Search store issues"
+          value={q} onChange={e => setQ(e.target.value)} placeholder="Search issue no, item, reason…" aria-label="Search store issues"
           style={{ padding: '7px 11px', fontSize: 13, minWidth: 240, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--bg-card)' }}
         />
         <select value={status} onChange={e => setStatus(e.target.value)} title="Filter by status"
@@ -187,7 +199,8 @@ const textarea = { width: '100%', boxSizing: 'border-box', padding: '6px 10px', 
  */
 function ReplaceModal({ repl, onClose, onDone }) {
   const { row, mode } = repl;
-  const [item, setItem] = useState(null);      // Books item | null = same item
+  // CR-280: the defective item is the default replacement — ✕ to pick another.
+  const [item, setItem] = useState({ id: row.itemId, name: row.itemName, sku: row.itemSku });
   const [reason, setReason] = useState('');
   const [opts, setOpts] = useState(null);      // { qty, reservable, short, stock, tracking, prefill… }
   const [picker, setPicker] = useState(null);  // TrackingPicker items
@@ -240,18 +253,32 @@ function ReplaceModal({ repl, onClose, onDone }) {
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{mode.hint}</div>
         </div>
         <div>
-          <span style={label}>Replace with (optional — leave empty to reissue the same item)</span>
+          <span style={label}>Replace with</span>
           <ItemPicker value={item} onPick={setItem} field={{ ...textarea, resize: 'none' }} />
         </div>
         <div style={{ fontSize: 12, padding: '8px 10px', borderRadius: 'var(--radius-md)', background: 'var(--bg)', border: '1px solid var(--border)' }}>
           {!opts ? 'Checking stock at Main…' : mode.key === 'pr' ? (
             <>A purchase request for <b>{row.qty}</b> × {itemName} will be raised.</>
+          ) : opts.reservable <= 0 ? (
+            // CR-280: say it plainly; Proceed still raises the PR for the whole qty.
+            <>
+              <b style={{ color: '#b45309' }}>No stock at Main for {itemName}</b>
+              {opts.stock !== undefined && ` (${opts.stock} on hand, blocked units excluded)`}
+              {' — Proceed raises a purchase request for '}<b>{opts.short}</b>.
+            </>
           ) : (
             <>
-              <b style={{ color: opts.reservable > 0 ? '#15803d' : undefined }}>{opts.reservable}</b> reservable at Main
+              <b style={{ color: '#15803d' }}>{opts.reservable}</b> reservable at Main
               {opts.stock !== undefined && ` (${opts.stock} on hand, blocked units excluded)`}
               {opts.short > 0 && <> · <b style={{ color: '#b45309' }}>{opts.short}</b> will be purchase-requested</>}
-              {opts.tracking && ' · batch/serial numbers picked next'}
+              {opts.tracking && (
+                <div style={{ marginTop: 4, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
+                  {opts.tracking === 'serial'
+                    ? `Serials: ${(opts.serials || []).slice(0, 8).join(', ')}${(opts.serials || []).length > 8 ? ` +${opts.serials.length - 8} more` : ''}`
+                    : `Batches: ${(opts.batches || []).map(b => `${b.batch_number || b.batch_id} × ${b.available}`).join(' · ')}`}
+                  {' — pick on Proceed'}
+                </div>
+              )}
             </>
           )}
         </div>

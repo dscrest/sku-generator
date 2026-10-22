@@ -1,19 +1,23 @@
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 
 // Per-row ⋮ menu (CR-101): always visible (the old hover-revealed pencil/trash
 // was easy to miss on tall rows), opens a small Edit / Delete dropdown. Either
 // action is optional. Replaces RowEditButton + RowDeleteButton on record grids.
-// Menu is position:fixed so it never clips inside the grid's scroll container;
-// it closes on any outside mousedown or scroll.
+// The panel is position:fixed AND portalled to <body> (CR-277): .grid-table's
+// clip-path clips even fixed descendants, so inside the table the last row's
+// menu was cut off. Anchored to the button — below it, or above when there is
+// no room below. Closes on any outside mousedown or scroll.
 // `items` (CR-203): extra entries [{ label, onClick, tone?, disabled? }] rendered
 // above Edit / Duplicate / Delete — for grids whose actions aren't CRUD.
 export default function RowMenu({ onEdit, onDuplicate, onDelete, editLabel = 'Edit', deleteLabel = 'Delete', items = [] }) {
   const [pos, setPos] = useState(null); // null = closed
   const ref = useRef(null);
+  const panelRef = useRef(null); // portalled — not a DOM child of ref
 
   useEffect(() => {
     if (!pos) return;
-    const close = e => { if (!ref.current?.contains(e.target)) setPos(null); };
+    const close = e => { if (!ref.current?.contains(e.target) && !panelRef.current?.contains(e.target)) setPos(null); };
     document.addEventListener('mousedown', close);
     document.addEventListener('scroll', close, true);
     return () => { document.removeEventListener('mousedown', close); document.removeEventListener('scroll', close, true); };
@@ -34,7 +38,13 @@ export default function RowMenu({ onEdit, onDuplicate, onDelete, editLabel = 'Ed
           e.stopPropagation();
           if (pos) return setPos(null);
           const r = e.currentTarget.getBoundingClientRect();
-          setPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+          // ~30px per entry + panel padding; flip up when that won't fit below.
+          const h = (items.length + [onEdit, onDuplicate, onDelete].filter(Boolean).length) * 30 + 10;
+          const up = r.bottom + 4 + h > window.innerHeight && r.top > h;
+          setPos({
+            right: Math.max(8, window.innerWidth - r.right),
+            ...(up ? { bottom: window.innerHeight - r.top + 4 } : { top: r.bottom + 4 }),
+          });
         }}
         style={{
           width: 28, height: 28, flexShrink: 0,
@@ -50,12 +60,12 @@ export default function RowMenu({ onEdit, onDuplicate, onDelete, editLabel = 'Ed
           <circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/>
         </svg>
       </button>
-      {pos && (
-        <div style={{
-          position: 'fixed', top: pos.top, right: pos.right, zIndex: 1000,
+      {pos && createPortal(
+        <div ref={panelRef} style={{
+          position: 'fixed', top: pos.top, bottom: pos.bottom, right: pos.right, zIndex: 1000,
           minWidth: 130, padding: 4, background: 'var(--bg-card)',
           border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
-          boxShadow: '0 6px 20px rgba(0,0,0,0.12)',
+          boxShadow: 'var(--shadow-lg)',
         }}>
           {items.map(it => (
             <button key={it.label} disabled={it.disabled} title={it.title}
@@ -93,9 +103,9 @@ export default function RowMenu({ onEdit, onDuplicate, onDelete, editLabel = 'Ed
             </button>
           )}
           {onDelete && (
-            <button style={{ ...itemStyle, color: '#dc2626' }}
+            <button style={{ ...itemStyle, color: 'var(--danger)' }}
               onClick={e => { e.stopPropagation(); setPos(null); onDelete(); }}
-              onMouseEnter={e => { e.currentTarget.style.background = '#fee2e2'; }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'var(--danger-soft)'; }}
               onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -104,7 +114,8 @@ export default function RowMenu({ onEdit, onDuplicate, onDelete, editLabel = 'Ed
               {deleteLabel}
             </button>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

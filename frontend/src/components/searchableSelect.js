@@ -9,7 +9,7 @@ var SS_MAX_H = 240;   // list height cap
 var SS_HEAD = 48;     // search box + panel padding above the list
 var SS_PANEL_CSS = 'position:fixed;z-index:2000;box-sizing:border-box;padding:4px;text-align:left;' +
   'background:var(--bg-card,#fff);border:1px solid var(--border,#d9dfe8);border-radius:var(--radius-md,8px);' +
-  'box-shadow:0 8px 24px rgba(0,0,0,.14);font-size:13px;font-weight:400;color:var(--text-primary,#0f172a);';
+  'box-shadow:var(--shadow-lg);font-size:13px;font-weight:400;color:var(--text-primary,#0f172a);';
 var SS_INPUT_CSS = 'display:block;width:100%;box-sizing:border-box;margin:0 0 4px;padding:6px 8px;' +
   'font:inherit;font-size:13px;text-align:left;outline:none;color:inherit;background:var(--bg-card,#fff);' +
   'border:1px solid var(--border,#d9dfe8);border-radius:6px;';

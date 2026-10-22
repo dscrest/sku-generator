@@ -94,6 +94,10 @@
     #c-rate { width: 100px; text-align: right; }
     #c-info { font-size: 12.5px; color: #64748b; margin-top: 2px; }
     #c-error { margin-top: 2px; font-size: 12.5px; }
+    /* Books-first orgs (CR-287): a miss means "create it in Books", never a create card */
+    #notfound-box { border: 1.5px solid #fde68a; border-radius: 10px; padding: 14px 16px; background: #fffbeb; display: none; }
+    #notfound-box p { margin: 0 0 10px; font-size: 13.5px; color: #92400e; line-height: 1.5; }
+    #notfound-box .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
     /* quote lines */
     #lines-head { padding: 14px 16px 8px; display: flex; align-items: baseline; justify-content: space-between; font-size: 14.5px; font-weight: 600; }
@@ -184,6 +188,10 @@
           </div>
           <div id="c-info"></div>
           <div id="c-error" class="error"></div>
+        </div>
+        <div id="notfound-box">
+          <p>Matching Finished Goods/BOM item not found in Zoho Books. Please create the required BOM/item in Zoho Books with the selected parameter values.</p>
+          <div class="row"><button id="nf-refresh" type="button">Refresh from Books</button><span id="nf-status" class="muted"></span></div>
         </div>
       </div>
       <div id="right">
@@ -644,6 +652,8 @@ function startPicker(me) {
     .then(function (s) {
       if (s.defaultItemType) $('c-type').value = s.defaultItemType;
       $('c-push').checked = s.widgetAutoPush !== false; // org default, per-line override (CR-184)
+      booksOnly = s.widgetBooksOnly === true; // CR-287: misses say "create it in Books"
+      fgCategoryId = String(s.fgCategoryId || ''); // CR-287: the FG index refresh needs a category — never the whole catalog from here
       typeLabels = s.typeLabels || {};
       Array.prototype.forEach.call($('c-type').options, function (o) { o.textContent = typeLabel(o.value); });
       renderCart();
@@ -679,9 +689,51 @@ function loadParams() {
       // never one request per property, the Dev concurrency cap can't take it.
       return api('/api/industries/' + industryId + '/property-values')
         .then(function (r) { return r.ok ? r.json() : {}; })
-        .then(function (byProp) { valuesByProp = byProp || {}; renderFilterPanel(); });
+        .then(function (byProp) { valuesByProp = byProp || {}; renderFilterPanel(); refreshFromBooksBg(); });
     });
 }
+
+/* ---------- Books refresh (CR-287) ---------- */
+// Fetch on action, never on a timer: once when the widget opens (after the
+// local lists are already on screen) and on the Refresh button beside the
+// not-found message. Two sequential calls — never parallel on Dev: (1) every
+// category-backed parameter re-reads its Books category into values,
+// (2) the Finished-goods index re-reads Books. Then the value lists reload
+// with the current picks kept and the search runs again. Failures stay
+// silent: the local data still works.
+var booksOnly = false;     // org setting widgetBooksOnly — Books-only orgs index the Books composite items as Finished Goods (CR-295)
+var fgCategoryId = '';     // org setting fgCategoryId; with Books-only off and no category the FG refresh is skipped (a whole-catalog refresh would file every Books item under the industry)
+var refreshing = false;
+var refreshedOnce = false;
+function refreshFromBooksBg(force) {
+  if (refreshing || !industryId) return;
+  if (refreshedOnce && !force) return; // the open-time call runs once; the button forces
+  refreshing = true;
+  refreshedOnce = true;
+  $('nf-refresh').disabled = true;
+  $('nf-status').textContent = 'Refreshing from Books…';
+  setStatus('Refreshing from Books…');
+  var body = JSON.stringify({ industryId: industryId });
+  api('/api/properties/sync-books-all', { method: 'POST', body: body })
+    .catch(function () {})
+    .then(function () { return (booksOnly || fgCategoryId) ? api('/api/sku-items/refresh-zoho', { method: 'POST', body: body }).catch(function () {}) : null; })
+    .then(function () { return api('/api/industries/' + industryId + '/property-values').then(function (r) { return r.ok ? r.json() : null; }); })
+    .then(function (byProp) {
+      if (byProp) {
+        var picks = {};
+        params.forEach(function (p) { var c = panelCtrls[p.id]; if (c) picks[p.id] = c.el.value; });
+        valuesByProp = byProp;
+        renderFilterPanel();
+        params.forEach(function (p) { var c = panelCtrls[p.id]; if (c && picks[p.id]) c.el.value = picks[p.id]; });
+        syncChipsFromPanel(); // re-runs the search with the kept picks
+      }
+      setStatus('Books refreshed');
+      $('nf-status').textContent = 'Books refreshed — still no match.';
+    })
+    .catch(function () { setStatus(''); $('nf-status').textContent = ''; })
+    .then(function () { refreshing = false; $('nf-refresh').disabled = false; });
+}
+$('nf-refresh').addEventListener('click', function () { refreshFromBooksBg(true); });
 
 /* ---------- filter panel (CR-110, compact rows CR) ---------- */
 // Every showInWidget parameter is one slim clickable row; clicking opens a
@@ -907,6 +959,7 @@ function runSearch() {
     $('results').innerHTML = '<div class="r-empty">Type to search, or add a filter.</div>';
     $('result-summary').textContent = 'Type to search, or add a filter.';
     $('create-box').style.display = 'none';
+    $('notfound-box').style.display = 'none';
     return;
   }
   var body = { q: q, withValues: true };
@@ -965,9 +1018,14 @@ function renderResults(items) {
     box.appendChild(row);
   });
   var noHit = !items.length;
-  if (noHit) box.innerHTML = '<div class="r-empty">No catalog item matches — create it below.</div>';
-  $('create-box').style.display = noHit ? 'block' : 'none';
-  if (noHit) refreshCreateCard();
+  // Books-first org (CR-287): a miss on parameters is "create it in Books",
+  // never the create card. A plain text search with no filters keeps the card.
+  var booksMiss = noHit && booksOnly && chips.length > 0;
+  if (noHit) box.innerHTML = '<div class="r-empty">' + (booksMiss ? 'No matching item in Zoho Books.' : 'No catalog item matches — create it below.') + '</div>';
+  $('notfound-box').style.display = booksMiss ? 'block' : 'none';
+  if (!booksMiss) $('nf-status').textContent = '';
+  $('create-box').style.display = noHit && !booksMiss ? 'block' : 'none';
+  if (noHit && !booksMiss) refreshCreateCard();
 }
 
 /* ---------- cart (quote lines) ---------- */

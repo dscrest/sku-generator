@@ -2,7 +2,8 @@
 
 /**
  * Product Configurator sizing (CR-181). Pure math — picks the model for a duty.
- *   Req. Cap (ltr/rev) = TPH × 1000 ÷ (RPM × 60 × BD kg/ltr)
+ *   Req. Cap (ltr/rev) = TPH × 1000 ÷ (RPM × 60 × BD kg/ltr) × eff% (CR-281:
+ *                        material efficiency, 100 = no derating; Ricon's sheet)
  *   Required Speed     = Req. Cap × RPM ÷ model capacity
  * Always proposes the next size UP: per series within the asked group, the
  * smallest active model whose capacity ≥ Req. Cap. A series with a hole at
@@ -15,12 +16,12 @@ const { round2 } = require("./calc");
 
 const EPS = 1e-9; // a duty landing exactly on a model's capacity still fits it
 
-function selectModels({ tph, bd, rpm = 20, group, models }) {
-  const [t, d, r] = [Number(tph), Number(bd), Number(rpm)];
+function selectModels({ tph, bd, rpm = 20, eff = 100, group, models }) {
+  const [t, d, r, e] = [Number(tph), Number(bd), Number(rpm), Number(eff) > 0 ? Number(eff) : 100];
   if (!(t > 0) || !(d > 0) || !(r > 0)) {
     throw Object.assign(new Error("Capacity, bulk density and speed must be greater than zero"), { status: 400 });
   }
-  const need = (t * 1000) / (r * 60 * d);
+  const need = ((t * 1000) / (r * 60 * d)) * (e / 100);
   const bySeries = new Map();
   for (const m of models || []) {
     if (m.status === "Inactive" || !(Number(m.capacity) > 0)) continue;
@@ -68,6 +69,10 @@ if (require.main === module && process.argv.includes("--selftest")) {
   console.assert(!("next" in sq), "no one-size-up row");
   console.assert(new Set(dt.options.map((o) => o.series)).size === 4, "4 drop-through series");
   console.assert(dt.options.filter((o) => o.series === "Round Old").length === 2, "Round Old offers both 7.35 models");
+  // Material efficiency (CR-281): 50 % halves the duty (6.94 -> 3.47) and drops a size.
+  const half = selectModels({ tph: 5, bd: 0.6, rpm: 20, eff: 50, group: "Drop through", models: SIZING_MODELS });
+  console.assert(half.reqCap === 3.47, `eff 50 -> 3.47, got ${half.reqCap}`);
+  console.assert(half.options.find((o) => o.series === "Square").modelCode === "RAVH 150", "eff 50 -> RAVH 150");
   // Legacy sheet row: 1.81 × 20 × 60 × 0.3 = 651.6 kg/hr lands exactly on RAVH 100.
   const edge = selectModels({ tph: 0.6516, bd: 0.3, rpm: 20, group: "Drop through", models: SIZING_MODELS });
   console.assert(edge.options.find((o) => o.series === "Square").modelCode === "RAVH 100", "boundary fits RAVH 100");

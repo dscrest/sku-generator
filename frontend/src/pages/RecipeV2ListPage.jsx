@@ -3,11 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
+import { ConfirmModal } from '../components/Modal.jsx';
+import RowMenu from '../components/RowMenu.jsx';
 import GridFooter, { usePager, FilterSelect, SearchInput, matches, distinct } from '../components/GridFooter.jsx';
 import { StatusPill, statusLabel } from './recipeShared.jsx';
 import DataTable, { useGridColumns, ColumnChooser } from '../components/DataTable.jsx';
 
-const COLUMNS = [
+const FIELDS = [
   { key: 'code', label: 'Code', lock: true, render: r => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{r.code}</span> },
   { key: 'name', label: 'Template', render: r => <span style={{ fontWeight: 600 }}>{r.name}</span> },
   { key: 'productCode', label: 'Product', render: r => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{r.productCode || '—'}</span> },
@@ -16,13 +18,16 @@ const COLUMNS = [
   { key: 'updated', label: 'Updated', render: r => <span style={{ color: 'var(--text-muted)' }}>{(r.updatedAt || r.createdAt || '').slice(0, 10)}</span> },
 ];
 
-export default function RecipeListPage() {
+// Product Designs: the v2 form (CR-271) took over from the v1 builder. A row
+// opens the form; the ⋮ menu keeps the two builder actions that still matter —
+// Mark Inactive / Active (PUT /status) and Delete.
+export default function RecipeV2ListPage() {
   const [rows, setRows] = useState([]);
   const [search, setSearch] = useState('');
   const [fProduct, setFProduct] = useState('');
   const [fStatus, setFStatus] = useState('');
+  const [confirmDel, setConfirmDel] = useState(null);
   const navigate = useNavigate();
-  const { cols, chooser } = useGridColumns('recipe.list', COLUMNS);
 
   const load = useCallback(async () => {
     try {
@@ -32,6 +37,29 @@ export default function RecipeListPage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  async function setStatus(r) {
+    const status = r.status === 'Published' ? 'Archived' : 'Published';
+    try { await axios.put(`/api/recipe/recipes/${r.id}/status`, { status }); load(); }
+    catch (err) { toast.error(err.response?.data?.error || 'Status change failed'); }
+  }
+  async function handleDelete(r) {
+    try { await axios.delete(`/api/recipe/recipes/${r.id}`); toast.success('Deleted'); setConfirmDel(null); load(); }
+    catch (err) { toast.error(err.response?.data?.error || 'Delete failed'); }
+  }
+
+  const COLUMNS = [
+    ...FIELDS,
+    {
+      key: 'actions', label: 'Actions', lock: true, width: 60, render: r => (
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
+          <RowMenu onEdit={() => navigate(`/recipe/recipes/${r.id}/edit`)} onDelete={() => setConfirmDel(r)}
+            items={[{ label: r.status === 'Published' ? 'Mark Inactive' : 'Mark Active', onClick: () => setStatus(r) }]} />
+        </div>
+      ),
+    },
+  ];
+  const { cols, chooser } = useGridColumns('recipe.list.v2', COLUMNS);
 
   const filtered = rows.filter(r =>
     matches(search, r.code, r.name, r.productCode) &&
@@ -62,12 +90,23 @@ export default function RecipeListPage() {
               {rows.length ? 'No matches.' : 'No templates yet — create one.'}
             </div>
           ) : (
-            <DataTable cols={cols} rows={pageRows} onRowClick={r => navigate(`/recipe/recipes/${r.id}`)} />
+            <DataTable cols={cols} rows={pageRows} onRowClick={r => navigate(`/recipe/recipes/${r.id}/edit`)} />
           )}
         </div>
       </div>
 
       <GridFooter pager={pager} />
+
+      {confirmDel && (
+        <ConfirmModal
+          title={`Delete design ${confirmDel.code}?`}
+          confirmLabel="Delete design"
+          onConfirm={() => handleDelete(confirmDel)}
+          onClose={() => setConfirmDel(null)}
+        >
+          Its components and materials go with it. Mark it Inactive instead to keep the design.
+        </ConfirmModal>
+      )}
     </div>
   );
 }

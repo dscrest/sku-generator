@@ -54,8 +54,10 @@ function componentQtys(lines, qty, fgQty) {
  *   bal      { reservedQty, issuedQty, returnedQty } — our ReservationLine
  *   po       { poQty, receivedQty, billedQty }      — summed PurchaseRequestLines
  *   consumed qty already turned into FG stock by assemblies (componentQtys)
+ *   defective qty pulled as defective but still in the Issue warehouse — the
+ *            return TO fires on the first Store action (CR-280)
  */
-function gridRow(line, stock, bal, po, consumed = 0) {
+function gridRow(line, stock, bal, po, consumed = 0, defective = 0) {
   const A = n(line.requiredQty);
   const B = n(stock && stock.stockOnHand);
   const C = n(bal && bal.reservedQty);
@@ -78,6 +80,7 @@ function gridRow(line, stock, bal, po, consumed = 0) {
     sku: line.rmSku || null,
     uom: line.uom || null,
     bom: A,
+    perUnit: n(line.perUnitQty) || 0,
     stock: B,
     reserved: C,
     issued: D,
@@ -90,6 +93,7 @@ function gridRow(line, stock, bal, po, consumed = 0) {
     // Assembled units took their material out of the Issue warehouse; D stays
     // (fullyIssued / needed depend on it) but only the rest can come back.
     consumed: n(consumed),
+    defective: n(defective),
     returnable: Math.max(0, D - n(consumed)),
     // Red row: what is still needed cannot be covered from stock → reorder.
     short: H < needed,
@@ -154,13 +158,35 @@ function applyToBalance(type, bal, qty) {
   return b;
 }
 
-// An FG is ready to assemble once every BOM line is fully issued (CR-172).
-// Same rule as the Details → Assembly tab; a removed line (A = 0) is ignored.
-function fullyIssued(rows) {
-  return rows.some((r) => r.bom > 0) && rows.every((r) => r.bom <= 0 || r.issued >= r.bom);
+const round4 = (v) => Math.round(v * 1e4) / 1e4;
+
+/**
+ * How many units of an FG the issued material covers (CR-277, replaces the
+ * all-or-nothing fullyIssued of CR-172). Per live line: floor((issued −
+ * consumed − defective) / perUnit); the FG's max is the smallest, clamped to
+ * what is still to assemble. `blockers` are the lines that cap it below that,
+ * with the quantity still to issue for the rest. A removed line (A = 0) is
+ * ignored. Defective units awaiting their return TO (CR-280) are still "issued"
+ * but must not be planned into an assembly.
+ */
+function assemblable(rows, fg) {
+  const fgQty = n(fg && fg.fgQty);
+  const remaining = Math.max(0, fgQty - n(fg && fg.assembledQty));
+  const live = (rows || []).filter((r) => r.bom > 0);
+  if (!live.length) return { maxQty: 0, blockers: [] };
+  let maxQty = remaining;
+  const blockers = [];
+  for (const r of live) {
+    const perUnit = n(r.perUnit) > 0 ? n(r.perUnit) : fgQty > 0 ? r.bom / fgQty : 0;
+    if (perUnit <= 0) continue;
+    const units = Math.max(0, Math.floor(round4((n(r.issued) - n(r.consumed) - n(r.defective)) / perUnit)));
+    if (units < remaining) blockers.push({ itemId: r.itemId, name: r.name || r.sku || r.itemId, units, shortQty: round4((remaining - units) * perUnit) });
+    maxQty = Math.min(maxQty, units);
+  }
+  return { maxQty, blockers };
 }
 
-module.exports = { ROUTES, TXN_TYPES, componentQtys, gridRow, cap, validateLine, applyToBalance, fullyIssued };
+module.exports = { ROUTES, TXN_TYPES, componentQtys, gridRow, cap, validateLine, applyToBalance, assemblable };
 
 // ponytail self-check: `node functions/skuapi/workorder/formulas.js --selftest`
 if (require.main === module && process.argv.includes("--selftest")) {
@@ -254,10 +280,31 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.strictEqual(rt.issued, 0, "round trip nets back to zero allocated");
   assert.strictEqual(rt.reservable, 5, "and the material is reservable again");
 
-  // Ready to assemble = every live line fully issued (CR-172).
-  assert.strictEqual(fullyIssued([r3]), false, "partly issued → not ready");
-  assert.strictEqual(fullyIssued([row({ rmItemId: "1", requiredQty: 3 }, {}, { issuedQty: 3 }, {}), row({ rmItemId: "2", requiredQty: 0 }, {}, {}, {})]), true, "issued = BOM, removed line ignored");
-  assert.strictEqual(fullyIssued([]), false, "no lines → nothing to assemble");
+  // Partial assembly (CR-277): WO-0028 shape — 2 ordered, Shaft issued for both,
+  // Seal issued for one → 1 unit ready, Seal blocks the other (1 more to issue).
+  const fg2 = { fgQty: 2, assembledQty: 0 };
+  const a1 = assemblable([
+    gridRow({ rmItemId: "1", rmName: "Shaft", requiredQty: 4, perUnitQty: 2 }, {}, { issuedQty: 4 }, {}),
+    gridRow({ rmItemId: "2", rmName: "Seal", requiredQty: 2, perUnitQty: 1 }, {}, { issuedQty: 1 }, {}),
+    gridRow({ rmItemId: "3", rmName: "Gone", requiredQty: 0 }, {}, {}, {}),
+  ], fg2);
+  assert.strictEqual(a1.maxQty, 1, "issued material covers one unit");
+  assert.deepStrictEqual(a1.blockers, [{ itemId: "2", name: "Seal", units: 1, shortQty: 1 }], "the short line, with what is still to issue");
+  // After that unit is assembled its material is consumed: nothing more is ready.
+  const a2 = assemblable([
+    gridRow({ rmItemId: "1", rmName: "Shaft", requiredQty: 4, perUnitQty: 2 }, {}, { issuedQty: 4 }, {}, 2),
+    gridRow({ rmItemId: "2", rmName: "Seal", requiredQty: 2, perUnitQty: 1 }, {}, { issuedQty: 1 }, {}, 1),
+  ], { fgQty: 2, assembledQty: 1 });
+  assert.strictEqual(a2.maxQty, 0);
+  assert.strictEqual(a2.blockers[0].name, "Seal");
+  assert.strictEqual(a2.blockers.length, 1, "Shaft still covers the last unit");
+  // Fully issued → everything remaining, no blockers; decimal per-unit is rounded before floor.
+  assert.deepStrictEqual(assemblable([gridRow({ rmItemId: "1", requiredQty: 0.3, perUnitQty: 0.1 }, {}, { issuedQty: 0.3 }, {})], { fgQty: 3 }), { maxQty: 3, blockers: [] });
+  // A defective unit still sitting in Issue (CR-280) is not assemblable.
+  assert.strictEqual(assemblable([gridRow({ rmItemId: "1", rmName: "Seal", requiredQty: 2, perUnitQty: 1 }, {}, { issuedQty: 2 }, {}, 0, 1)], fg2).maxQty, 1);
+  // No perUnitQty (excel rows) → requiredQty / fgQty.
+  assert.strictEqual(assemblable([gridRow({ rmItemId: "1", requiredQty: 6 }, {}, { issuedQty: 4 }, {})], { fgQty: 3 }).maxQty, 2);
+  assert.deepStrictEqual(assemblable([], fg2), { maxQty: 0, blockers: [] }, "no lines → nothing to assemble");
 
   // Routing is exhaustive and each type has a distinct warehouse pair.
   assert.strictEqual(TXN_TYPES.length, 4);

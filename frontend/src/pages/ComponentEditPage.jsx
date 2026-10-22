@@ -157,13 +157,16 @@ export default function ComponentEditPage() {
             )}
           </div>
           {f.mode === 'always' && <ItemInput items={items} value={f.items['']} onChange={id => setItem('', id)} />}
-          {service && (
-            <div style={{ fontSize: 11.5, marginTop: 4, display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div style={{ fontSize: 11.5, marginTop: 4, display: 'flex', gap: 10, alignItems: 'center' }}>
+            {service && (
               <button type="button" onClick={() => setNewSvc(f.mode === 'always' ? '' : null)} disabled={f.mode !== 'always'}
                 style={{ border: 'none', background: 'none', color: 'var(--blue)', cursor: 'pointer', fontSize: 12, fontWeight: 600, padding: 0 }}>+ New service item in Books</button>
-              {!items.length && <span style={{ color: '#b45309' }}>None in the SKU master yet — create one here, or Refresh from Zoho on the Books items industry.</span>}
-            </div>
-          )}
+            )}
+            {/* CR-283: the list is the local SKU master — an item just added in Books needs this pull */}
+            <button type="button" onClick={lk.sync} disabled={lk.syncing} title="Pull new / renamed items from Zoho Books into this list"
+              style={{ border: 'none', background: 'none', color: 'var(--blue)', cursor: 'pointer', fontSize: 12, fontWeight: 600, padding: 0, opacity: lk.syncing ? 0.5 : 1 }}>⟳ Sync from Books</button>
+            {service && !items.length && <span style={{ color: '#b45309' }}>None in the SKU master yet — create one here or sync.</span>}
+          </div>
           {f.mode === 'depends' && f.propertyId && (
             <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>

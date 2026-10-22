@@ -64,18 +64,8 @@ function toLine(li) {
   };
 }
 
-// Books item weight → kg. A "Weight" custom field wins (label match like
-// bom.itemSize; value "205 kg" / "500 g" / 205), else the built-in package weight.
-const KG_PER = { g: 0.001, gm: 0.001, gms: 0.001, lb: 0.45359, lbs: 0.45359, oz: 0.02835 };
-function weightKg(item) {
-  const cf = ((item && item.custom_fields) || []).find((c) => /^weight\b/i.test(String(c.label || "").trim()));
-  if (cf && cf.value != null && cf.value !== "") {
-    const m = String(cf.value).trim().match(/^([\d.]+)\s*([a-z]*)/i);
-    if (m) return (Number(m[1]) || 0) * (KG_PER[m[2].toLowerCase()] || 1);
-  }
-  const pd = (item && item.package_details) || {};
-  return (Number(pd.weight) || 0) * (KG_PER[String(pd.weight_unit || "").toLowerCase()] || 1);
-}
+// Books item weight → kg: shared with workorder/purchase since CR-285.
+const { weightKg } = booksApi;
 
 // Fill line.weightPc from each line's Books item, one GET per distinct item in
 // parallel (outbound Zoho calls from one invocation — the Dev FUNCTIONS

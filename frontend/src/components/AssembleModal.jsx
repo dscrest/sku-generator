@@ -9,7 +9,8 @@ import { TrackingPicker } from './MaterialsGrid.jsx';
 // the parent closes this modal and shows "Assembling…" on the Ready row while
 // the Zoho bundle is created (CR-243). Never posts itself.
 export default function AssembleModal({ workOrderId, fg, whNames = {}, onClose, onProceed }) {
-  const remaining = (fg.qty || 0) - (fg.assembledQty || 0);
+  // CR-277: capped at what the issued material covers (the Assembly tab's Ready), else at the order.
+  const remaining = fg.maxQty ?? ((fg.qty || 0) - (fg.assembledQty || 0));
   // CR-174: the Assembly tab row's typed quantity (partial run) seeds the field.
   const [qty, setQty] = useState(String(fg.initialQty > 0 ? Math.min(fg.initialQty, remaining) : remaining));
   const [prefix, setPrefix] = useState(null); // null until the prefill arrives (CR-155)
@@ -94,7 +95,7 @@ export default function AssembleModal({ workOrderId, fg, whNames = {}, onClose, 
             value={qty} onChange={e => setQty(e.target.value)}
             style={{
               width: 120, padding: '7px 10px', fontSize: 14, textAlign: 'right', fontFamily: 'var(--font-mono)',
-              border: `1px solid ${(Number(qty) > 0 && Number(qty) <= remaining) || qty === '' ? 'var(--border)' : '#dc2626'}`,
+              border: `1px solid ${(Number(qty) > 0 && Number(qty) <= remaining) || qty === '' ? 'var(--border)' : 'var(--danger)'}`,
               borderRadius: 'var(--radius-md)', background: 'var(--bg-card)',
             }}
           />
@@ -108,13 +109,13 @@ export default function AssembleModal({ workOrderId, fg, whNames = {}, onClose, 
             value={prefix ?? ''} onChange={e => setPrefix(e.target.value.toUpperCase())}
             style={{
               width: 120, padding: '7px 10px', fontSize: 14, fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
-              border: `1px solid ${preview?.error && prefix !== null ? '#dc2626' : 'var(--border)'}`,
+              border: `1px solid ${preview?.error && prefix !== null ? 'var(--danger)' : 'var(--border)'}`,
               borderRadius: 'var(--radius-md)', background: 'var(--bg-card)',
             }}
           />
         </div>
       </div>
-      <div style={{ fontSize: 13, fontFamily: 'var(--font-mono)', color: preview?.error ? '#dc2626' : 'var(--text-secondary)' }}>
+      <div style={{ fontSize: 13, fontFamily: 'var(--font-mono)', color: preview?.error ? 'var(--danger)' : 'var(--text-secondary)' }}>
         {preview?.error ? preview.error : preview?.serialRange ? `Will assign ${preview.serialRange}` : prefix === null ? 'Loading…' : ''}
       </div>
       {(fg.assemblies || []).length > 0 && (

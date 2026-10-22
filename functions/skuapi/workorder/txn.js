@@ -7,13 +7,17 @@
  * the warehouse pair (BRD §6.2–6.5). Every confirmed transaction writes exactly
  * one Zoho Transfer Order and updates our running balance — nothing is ever
  * read back from Zoho to find out what we just did.
+ *
+ * CR-277: one transaction may span every FG of the work order (one Transfer
+ * Order per action, not per FG). Each MaterialTxnLine carries its own
+ * workOrderFgId; MaterialTxn.workOrderFgId is only filled for a single-FG txn.
  */
 const { rowList, zStr } = require("../store");
 const { dsDate } = require("../zoho/auth");
 const { createTransferOrder, listWarehouses, getItemStock, withBatchFallback, listSerialsBatches, pickSerialsBatches } = require("../zoho/inventoryApi");
 const { validateLine, applyToBalance, TXN_TYPES } = require("./formulas");
 const { routeFor, nextNumber, logActivity, byOrg, settings, inList, warehouses } = require("./store");
-const { buildGrid, indexRows } = require("./grid");
+const { buildGridsBulk } = require("./grid");
 const { MATERIAL_OK } = require("./status");
 const { blockedFor, entryFor, applyBlocks, blockedPick } = require("./blocks");
 
@@ -69,10 +73,13 @@ function parseTracking(json) {
  * Pure: match the requested quantities to the grid rows and check every cap.
  * Returns the lines to write plus every problem found — all of them, so the
  * user fixes the whole form in one pass instead of one error at a time.
+ * Rows and requests are keyed by fgId|itemId (CR-277): the same raw material
+ * under two FGs is two lines with their own caps.
  */
 function planLines(type, gridRows, requested, blocked) {
   if (!TXN_TYPES.includes(type)) return { lines: [], errors: [`Unknown transaction type "${type}"`] };
-  const byItem = new Map(gridRows.map((r) => [String(r.itemId), r]));
+  const keyOf = (fgId, itemId) => `${fgId || ""}|${itemId}`;
+  const byKey = new Map(gridRows.map((r) => [keyOf(r.fgId, String(r.itemId)), r]));
   const lines = [];
   const errors = [];
   const seen = new Set();
@@ -81,9 +88,10 @@ function planLines(type, gridRows, requested, blocked) {
     const itemId = String(req.itemId);
     const qty = n(req.qty);
     if (qty === 0) continue; // untouched cell — not an error, just nothing to do
-    if (seen.has(itemId)) { errors.push(`Item ${itemId} appears twice in one transaction`); continue; }
-    seen.add(itemId);
-    const row = byItem.get(itemId);
+    const key = keyOf(req.fgId, itemId);
+    if (seen.has(key)) { errors.push(`Item ${itemId} appears twice in one transaction`); continue; }
+    seen.add(key);
+    const row = byKey.get(key);
     if (!row) { errors.push(`Item ${itemId} is not on this work order's BOM`); continue; }
     const problem = validateLine(type, row, qty);
     if (problem) { errors.push(problem); continue; }
@@ -93,10 +101,47 @@ function planLines(type, gridRows, requested, blocked) {
     // pool and are checked at confirm (assertPicksAllowed).
     const bErr = blocked ? blockedPick(req.tracking, blocked.get(itemId), row.name || itemId) : null;
     if (bErr) { errors.push(bErr); continue; }
-    lines.push({ rmItemId: itemId, workOrderLineId: row.workOrderLineId, qty, name: row.name, tracking: req.tracking || null });
+    lines.push({ rmItemId: itemId, workOrderFgId: row.fgId || "", workOrderLineId: row.workOrderLineId, qty, name: row.name, tracking: req.tracking || null });
   }
   if (!lines.length && !errors.length) errors.push("Enter a quantity on at least one line");
   return { lines, errors };
+}
+
+/**
+ * Pure (CR-277): the Transfer Order gets one line per item. The same raw
+ * material under two FGs is summed, its explicit picks concatenated (batches
+ * merged by batch_id) — Zoho's FIFO auto-pick runs per payload line, so two
+ * lines of one tracked item would pick the same serials.
+ * ponytail: an item with an explicit pick on one FG and none on the other is
+ * sent as explicit-only; the picker always asks for every tracked row, so the
+ * UI never produces that mix.
+ */
+function mergeByItem(lines) {
+  const out = new Map();
+  for (const l of lines) {
+    const k = String(l.rmItemId);
+    const cur = out.get(k);
+    if (!cur) { out.set(k, { rmItemId: k, name: l.name, qty: n(l.qty), tracking: l.tracking ? { ...l.tracking } : null }); continue; }
+    cur.qty = Math.round((cur.qty + n(l.qty)) * 1e4) / 1e4;
+    if (!l.tracking) continue;
+    const t = cur.tracking || (cur.tracking = {});
+    if (Array.isArray(l.tracking.serials) && l.tracking.serials.length) t.serials = [...(t.serials || []), ...l.tracking.serials];
+    if (Array.isArray(l.tracking.batches) && l.tracking.batches.length) {
+      const byBatch = new Map((t.batches || []).map((b) => [String(b.batch_id), { ...b }]));
+      for (const b of l.tracking.batches) {
+        const prev = byBatch.get(String(b.batch_id));
+        if (prev) prev.qty = n(prev.qty) + n(b.qty); else byBatch.set(String(b.batch_id), { ...b });
+      }
+      t.batches = [...byBatch.values()];
+    }
+  }
+  return [...out.values()];
+}
+
+// Grid rows of every FG in `fgs`, each tagged with its fgId for planLines.
+async function taggedRows(catalyst, orgId, wo, fgs) {
+  const grids = await buildGridsBulk(catalyst, orgId, fgs.map((fg) => ({ wo, fg })));
+  return grids.flatMap((g) => g.rows.map((r) => ({ ...r, fgId: g.workOrderFgId })));
 }
 
 /**
@@ -108,9 +153,9 @@ function planLines(type, gridRows, requested, blocked) {
 async function trackingPool(catalyst, orgId, { itemId, type, fromWarehouseId, qty, wo }) {
   const from = fromWarehouseId ? String(fromWarehouseId) : (await routeFor(catalyst, orgId, String(type), wo)).fromWarehouseId;
   const item = await withBatchFallback(catalyst, await getItemStock(catalyst, String(itemId)), String(itemId), from);
-  let mainId = null;
-  try { mainId = (await warehouses(catalyst, orgId, wo)).main; } catch { /* not configured */ }
-  applyBlocks(item, entryFor(await blockedFor(catalyst, orgId), String(itemId), from, mainId));
+  let mainId = null, issueId = null;
+  try { ({ main: mainId, issue: issueId } = await warehouses(catalyst, orgId, wo)); } catch { /* not configured */ }
+  applyBlocks(item, entryFor(await blockedFor(catalyst, orgId), String(itemId), from, mainId, issueId));
   const pool = listSerialsBatches(item, from);
   if (!pool.tracking) return { tracking: null };
   let prefill = null;
@@ -127,8 +172,11 @@ async function trackingPool(catalyst, orgId, { itemId, type, fromWarehouseId, qt
 
 // ---- draft ----------------------------------------------------------------
 
+// `requested[i].fgId` names each line's FG (CR-277); `workOrderFgId` is the
+// default for lines without one (single-FG callers: defects, API).
 async function createDraft(catalyst, orgId, { workOrderId, workOrderFgId, type, requested, notes, fromWarehouseId, toWarehouseId }, userId) {
-  const { wo, fg } = await loadContext(catalyst, orgId, workOrderId, workOrderFgId);
+  const reqs = (requested || []).map((r) => ({ ...r, fgId: String(r.fgId || workOrderFgId || "") }));
+  const { wo, fgs } = await loadFgs(catalyst, orgId, workOrderId, reqs.map((r) => r.fgId));
   // Reserve/issue only once the floor is ready (CR-159); dereserve/return may
   // run from any open status so the completion/cancel sweeps still work.
   if (["reserve", "issue"].includes(type) && !MATERIAL_OK.includes(String(wo.status))) {
@@ -136,8 +184,7 @@ async function createDraft(catalyst, orgId, { workOrderId, workOrderFgId, type, 
     e.status = 409;
     throw e;
   }
-  const grid = await buildGrid(catalyst, orgId, wo, fg);
-  const { lines, errors } = planLines(type, grid.rows, requested, await blockedFor(catalyst, orgId));
+  const { lines, errors } = planLines(type, await taggedRows(catalyst, orgId, wo, fgs), reqs, await blockedFor(catalyst, orgId));
   if (errors.length) { const e = new Error(errors.join("\n")); e.status = 400; e.details = errors; throw e; }
 
   const s = await settings(catalyst, orgId);
@@ -167,7 +214,7 @@ async function createDraft(catalyst, orgId, { workOrderId, workOrderFgId, type, 
     txnNumber,
     type,
     workOrderId: String(wo.ROWID),
-    workOrderFgId: String(fg.ROWID),
+    workOrderFgId: fgs.length === 1 ? String(fgs[0].ROWID) : "",
     salesOrderId: String(wo.salesOrderId || ""),
     status: "Draft",
     fromWarehouseId: route.fromWarehouseId,
@@ -192,6 +239,7 @@ async function createDraft(catalyst, orgId, { workOrderId, workOrderFgId, type, 
     await lineTable.insertRow({
       orgId: String(orgId),
       txnId: String(txn.ROWID),
+      workOrderFgId: String(l.workOrderFgId || ""),
       workOrderLineId: String(l.workOrderLineId || ""),
       rmItemId: String(l.rmItemId),
       qty: l.qty,
@@ -221,17 +269,16 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
     e.status = 409;
     throw e;
   }
-  const { wo, fg } = await loadContext(catalyst, orgId, txn.workOrderId, txn.workOrderFgId);
   const txnLines = await byOrg(catalyst, orgId, "MaterialTxnLine", `txnId = ${zStr(String(txnId))}`);
   if (!txnLines.length) { const e = new Error("This transaction has no lines"); e.status = 400; throw e; }
+  // Lines written before CR-277 carry no FG of their own → the txn's.
+  const reqs = txnLines.map((l) => ({
+    fgId: String(l.workOrderFgId || txn.workOrderFgId || ""), itemId: l.rmItemId, qty: l.qty, tracking: parseTracking(l.trackingJson),
+  }));
+  const { wo, fgs } = await loadFgs(catalyst, orgId, txn.workOrderId, reqs.map((r) => r.fgId));
 
-  const grid = await buildGrid(catalyst, orgId, wo, fg);
   const blocked = await blockedFor(catalyst, orgId);
-  const { lines, errors } = planLines(
-    txn.type, grid.rows,
-    txnLines.map((l) => ({ itemId: l.rmItemId, qty: l.qty, tracking: parseTracking(l.trackingJson) })),
-    blocked,
-  );
+  const { lines, errors } = planLines(txn.type, await taggedRows(catalyst, orgId, wo, fgs), reqs, blocked);
   if (errors.length) { const e = new Error(errors.join("\n")); e.status = 409; e.details = errors; throw e; }
 
   // The draft row stored its route at create time (including any per-txn
@@ -240,9 +287,10 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
   const route = (txn.fromWarehouseId && txn.toWarehouseId)
     ? { fromWarehouseId: String(txn.fromWarehouseId), toWarehouseId: String(txn.toWarehouseId) }
     : await routeFor(catalyst, orgId, txn.type, wo);
-  let mainId = null;
-  try { mainId = (await warehouses(catalyst, orgId, wo)).main; } catch { /* per-txn override without the role map */ }
-  await assertPicksAllowed(catalyst, lines, route.fromWarehouseId, mainId, blocked);
+  let mainId = null, issueId = null;
+  try { ({ main: mainId, issue: issueId } = await warehouses(catalyst, orgId, wo)); } catch { /* per-txn override without the role map */ }
+  const toLines = mergeByItem(lines);
+  await assertPicksAllowed(catalyst, toLines, route.fromWarehouseId, mainId, issueId, blocked);
   let to;
   try {
     to = await createTransferOrder(catalyst, {
@@ -250,13 +298,13 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
       fromWarehouseId: route.fromWarehouseId,
       toWarehouseId: route.toWarehouseId,
       reason: `${txn.type} — ${wo.woNumber} / ${wo.salesOrderNumber || "SO"}`,
-      lines,
+      lines: toLines,
       // Fallback number for orgs with Transfer Order auto-numbering off (code 6).
       numberHint: txn.txnNumber,
       // Published to the TO's cf_so_no SO-lookup custom field (needs the id).
       soId: wo.salesOrderId || "",
       // Defective-block (CR-203): FIFO auto-pick skips blocked serials/batch qty.
-      blockedEntry: (itemId) => entryFor(blocked, itemId, route.fromWarehouseId, mainId),
+      blockedEntry: (itemId) => entryFor(blocked, itemId, route.fromWarehouseId, mainId, issueId),
     });
   } catch (err) {
     throw friendlyTransferError(err);
@@ -288,8 +336,8 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
     ...(batchNote ? { notes: [txn.notes, batchNote].filter(Boolean).join("\n") } : {}),
   });
 
-  await applyBalances(catalyst, orgId, wo, fg, txn.type, lines);
-  await adjustSnapshots(catalyst, orgId, route, lines);
+  await applyBalances(catalyst, orgId, wo, fgs, txn.type, lines);
+  await adjustSnapshots(catalyst, orgId, route, toLines);
 
   await logActivity(catalyst, orgId, "MaterialTxn", txn.ROWID, `txn.confirm.${txn.type}`, userId, {
     txnNumber: txn.txnNumber, transferOrder: to.transfer_order_number, lines,
@@ -310,10 +358,10 @@ async function confirmTxn(catalyst, orgId, txnId, userId) {
  * live Zoho read per line, only for items that have a batch block at this
  * source — serials were judged in planLines without a pool.
  */
-async function assertPicksAllowed(catalyst, lines, fromWarehouseId, mainId, blocked) {
+async function assertPicksAllowed(catalyst, lines, fromWarehouseId, mainId, issueId, blocked) {
   if (!blocked.size) return;
   for (const l of lines) {
-    const entry = entryFor(blocked, l.rmItemId, fromWarehouseId, mainId);
+    const entry = entryFor(blocked, l.rmItemId, fromWarehouseId, mainId, issueId);
     if (!entry || !entry.batches.size || !(l.tracking && Array.isArray(l.tracking.batches))) continue;
     const item = await withBatchFallback(catalyst, await getItemStock(catalyst, l.rmItemId), l.rmItemId, fromWarehouseId);
     const pool = listSerialsBatches(applyBlocks(item, entry), fromWarehouseId);
@@ -362,41 +410,45 @@ function sweepLines(gridRows) {
 
 /**
  * Send leftover material back to Main when a work order completes. One
- * dereserve and/or return txn per FG, confirmed immediately (each writes a Zoho
- * Transfer Order). A Zoho failure throws — the caller aborts the status change,
- * and a retry sweeps only what is still outstanding. `types` narrows the sweep
- * (Cancelled de-reserves only, CR-159).
+ * dereserve and/or one return txn for the whole work order (CR-277), confirmed
+ * immediately (each writes a Zoho Transfer Order). A Zoho failure throws — the
+ * caller aborts the status change, and a retry sweeps only what is still
+ * outstanding. `types` narrows the sweep (Cancelled de-reserves only, CR-159).
  */
 async function autoReturnOnComplete(catalyst, orgId, wo, userId, { types } = {}) {
   const fgs = await byOrg(catalyst, orgId, "WorkOrderFG", `workOrderId = ${zStr(String(wo.ROWID))}`);
-  const transferOrders = [];
-  for (const fg of fgs) {
-    const grid = await buildGrid(catalyst, orgId, wo, fg);
-    const sweep = sweepLines(grid.rows);
-    for (const [type, lines] of [["dereserve", sweep.dereserve], ["return", sweep.return]]) {
-      if (!lines.length || (types && !types.includes(type))) continue;
-      const draft = await createDraft(
-        catalyst, orgId,
-        {
-          workOrderId: wo.ROWID, workOrderFgId: fg.ROWID, type,
-          requested: lines.map((l) => ({ itemId: l.itemId, qty: l.qty })),
-          notes: types ? "Auto-release on cancel" : "Auto-return on completion",
-        },
-        userId,
-      );
-      const confirmed = await confirmTxn(catalyst, orgId, draft.id, userId);
-      transferOrders.push({ type, txnNumber: confirmed.txnNumber, transferOrderNumber: confirmed.transferOrderNumber });
+  const grids = await buildGridsBulk(catalyst, orgId, fgs.map((fg) => ({ wo, fg })));
+  const requested = { dereserve: [], return: [] };
+  for (const g of grids) {
+    const sweep = sweepLines(g.rows);
+    for (const type of ["dereserve", "return"]) {
+      requested[type].push(...sweep[type].map((l) => ({ fgId: g.workOrderFgId, itemId: l.itemId, qty: l.qty })));
     }
+  }
+  const transferOrders = [];
+  for (const type of ["dereserve", "return"]) {
+    if (!requested[type].length || (types && !types.includes(type))) continue;
+    const draft = await createDraft(
+      catalyst, orgId,
+      { workOrderId: wo.ROWID, type, requested: requested[type], notes: types ? "Auto-release on cancel" : "Auto-return on completion" },
+      userId,
+    );
+    const confirmed = await confirmTxn(catalyst, orgId, draft.id, userId);
+    transferOrders.push({ type, txnNumber: confirmed.txnNumber, transferOrderNumber: confirmed.transferOrderNumber });
   }
   return { transferOrders };
 }
 
 // ---- balances & snapshots -------------------------------------------------
 
-// Upsert ReservationLine per item. C and D are disjoint (see formulas.js).
-async function applyBalances(catalyst, orgId, wo, fg, type, lines) {
+// Upsert ReservationLine per FG × item (each line names its FG). C and D are
+// disjoint (see formulas.js).
+async function applyBalances(catalyst, orgId, wo, fgs, type, lines) {
   const table = catalyst.datastore().table("ReservationLine");
+  const fgById = new Map(fgs.map((fg) => [String(fg.ROWID), fg]));
   for (const l of lines) {
+    const fg = fgById.get(String(l.workOrderFgId));
+    if (!fg) throw new Error(`Line ${l.rmItemId} names an FG that is not on this transaction`);
     const existing = await byOrg(
       catalyst, orgId, "ReservationLine",
       `workOrderId = ${zStr(String(wo.ROWID))} AND workOrderFgId = ${zStr(String(fg.ROWID))} AND componentItemId = ${zStr(String(l.rmItemId))}`,
@@ -462,7 +514,7 @@ async function recompute(catalyst, orgId, workOrderId) {
   const lineMap = await txnLines(catalyst, orgId, txns);
   for (const t of txns) {
     for (const l of lineMap.get(String(t.ROWID)) || []) {
-      const key = `${t.workOrderFgId}|${l.rmItemId}`;
+      const key = `${l.workOrderFgId || t.workOrderFgId}|${l.rmItemId}`;
       fresh.set(key, applyToBalance(t.type, fresh.get(key) || {}, l.qty));
     }
   }
@@ -491,12 +543,32 @@ async function loadContext(catalyst, orgId, workOrderId, workOrderFgId) {
   );
   if (!fgs.length) { const e = new Error("Finished good not found on this work order"); e.status = 404; throw e; }
   const wo = wos[0];
+  assertMovable(wo);
+  return { wo, fg: fgs[0] };
+}
+
+function assertMovable(wo) {
   if (["Closed", "Cancelled", "Hold"].includes(String(wo.status))) {
     const e = new Error(`${wo.woNumber} is ${String(wo.status) === "Hold" ? "on hold" : String(wo.status).toLowerCase()} — material cannot be moved against it`);
     e.status = 409;
     throw e;
   }
-  return { wo, fg: fgs[0] };
+}
+
+// The WO plus the distinct FGs a multi-FG transaction names (CR-277). Every id
+// must be an FG of this work order.
+async function loadFgs(catalyst, orgId, workOrderId, fgIds) {
+  const wos = await byOrg(catalyst, orgId, "WorkOrder", `ROWID = ${zStr(String(workOrderId))}`);
+  if (!wos.length) { const e = new Error("Work order not found"); e.status = 404; throw e; }
+  const wo = wos[0];
+  assertMovable(wo);
+  const wanted = [...new Set(fgIds.map(String).filter(Boolean))];
+  if (!wanted.length) { const e = new Error("Finished good not found on this work order"); e.status = 404; throw e; }
+  const all = await byOrg(catalyst, orgId, "WorkOrderFG", `workOrderId = ${zStr(String(workOrderId))}`);
+  const byId = new Map(all.map((fg) => [String(fg.ROWID), fg]));
+  const fgs = wanted.map((id) => byId.get(id));
+  if (fgs.some((fg) => !fg)) { const e = new Error("Finished good not found on this work order"); e.status = 404; throw e; }
+  return { wo, fgs };
 }
 
 async function loadTxn(catalyst, orgId, txnId) {
@@ -546,6 +618,7 @@ async function listTxns(catalyst, orgId, workOrderId) {
       notes: t.notes || null,
       lines: lines.map((l) => ({
         rmItemId: String(l.rmItemId), qty: n(l.qty),
+        workOrderFgId: String(l.workOrderFgId || t.workOrderFgId || ""),
         tracking: parseTracking(l.trackingJson),
         ...(items.get(String(l.rmItemId)) || { name: null, sku: null, uom: null }),
       })),
@@ -555,8 +628,8 @@ async function listTxns(catalyst, orgId, workOrderId) {
 }
 
 module.exports = {
-  planLines, createDraft, confirmTxn, cancelTxn, recompute, listTxns, trackingPool,
-  applyBalances, adjustSnapshots, loadContext, loadTxn, sweepLines, autoReturnOnComplete, trackingProblem,
+  planLines, mergeByItem, createDraft, confirmTxn, cancelTxn, recompute, listTxns, trackingPool,
+  applyBalances, adjustSnapshots, loadContext, loadFgs, loadTxn, sweepLines, autoReturnOnComplete, trackingProblem,
 };
 
 // ponytail self-check: `node functions/skuapi/workorder/txn.js --selftest`
@@ -605,6 +678,29 @@ if (require.main === module && process.argv.includes("--selftest")) {
   assert.match(planLines("teleport", rows, [{ itemId: "11", qty: 1 }]).errors[0], /Unknown transaction type/);
   assert.match(planLines("reserve", rows, []).errors[0], /at least one line/);
   assert.match(planLines("reserve", rows, [{ itemId: "11", qty: 1 }, { itemId: "11", qty: 1 }]).errors[0], /twice/);
+
+  // CR-277: the same item under two FGs is two lines, each against its own FG's row.
+  const two = [
+    { ...rows[0], fgId: "FGA" },
+    { ...gridRow({ rmItemId: "11", rmName: "Shaft", requiredQty: 3 }, { stockOnHand: 6 }, {}, {}), fgId: "FGB" },
+  ];
+  const multi = planLines("reserve", two, [{ fgId: "FGA", itemId: "11", qty: 6 }, { fgId: "FGB", itemId: "11", qty: 3 }]);
+  assert.deepStrictEqual(multi.errors, []);
+  assert.deepStrictEqual(multi.lines.map((l) => [l.workOrderFgId, l.qty]), [["FGA", 6], ["FGB", 3]]);
+  assert.match(planLines("reserve", two, [{ fgId: "FGB", itemId: "11", qty: 4 }]).errors[0], /only 3 can be reserved/, "cap is the FG's own");
+  assert.match(planLines("reserve", two, [{ fgId: "FGC", itemId: "11", qty: 1 }]).errors[0], /not on this work order's BOM/);
+  // One TO line per item: quantities summed, serials concatenated, batches merged by id.
+  assert.deepStrictEqual(mergeByItem([
+    { rmItemId: "11", name: "Shaft", qty: 2, tracking: { serials: ["S1", "S2"] } },
+    { rmItemId: "22", name: "Seal", qty: 1, tracking: { batches: [{ batch_id: "b1", batch_number: "B1", qty: 1 }] } },
+    { rmItemId: "11", name: "Shaft", qty: 1, tracking: { serials: ["S3"] } },
+    { rmItemId: "22", name: "Seal", qty: 2, tracking: { batches: [{ batch_id: "b1", batch_number: "B1", qty: 1 }, { batch_id: "b2", batch_number: "B2", qty: 1 }] } },
+    { rmItemId: "33", qty: 0.1, tracking: null }, { rmItemId: "33", qty: 0.2, tracking: null },
+  ]), [
+    { rmItemId: "11", name: "Shaft", qty: 3, tracking: { serials: ["S1", "S2", "S3"] } },
+    { rmItemId: "22", name: "Seal", qty: 3, tracking: { batches: [{ batch_id: "b1", batch_number: "B1", qty: 2 }, { batch_id: "b2", batch_number: "B2", qty: 1 }] } },
+    { rmItemId: "33", name: undefined, qty: 0.3, tracking: null },
+  ]);
 
   // Defective block (CR-203): a pick that names a blocked serial is refused; other items unaffected.
   const blocked = new Map([["11", { qty: 1, batches: new Map(), serials: new Set(["S9"]) }]]);

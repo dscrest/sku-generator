@@ -75,12 +75,26 @@ const EMPTY = { industryId: '', component: '', conditions: [], skuItemId: '', qt
 export function useMapLookups() {
   const [lk, setLk] = useState({ industries: [], items: [], uoms: ['Nos'] });
   const [questions, setQuestions] = useState({}); // industryId -> { props, values }
+  const [syncing, setSyncing] = useState(false);
   useEffect(() => {
     Promise.all([
       axios.get('/api/industries').catch(() => ({ data: [] })),
       axios.get('/api/recipe/products').catch(() => ({ data: [] })),
       axios.get('/api/recipe/uoms').catch(() => ({ data: ['Nos'] })),
     ]).then(([i, it, u]) => setLk({ industries: i.data, items: it.data, uoms: u.data }));
+  }, []);
+  // Sync from Books on demand (CR-283): the pickers read the local SKU master,
+  // which only learns a new Books item when something refreshes it.
+  const sync = useCallback(async () => {
+    setSyncing(true);
+    const tid = toast.loading('Syncing items from Zoho Books…');
+    try {
+      const { data } = await axios.post('/api/recipe/products/sync');
+      const items = (await axios.get('/api/recipe/products')).data;
+      setLk(prev => ({ ...prev, items }));
+      toast.success(`${data.created} new, ${data.updated} updated${data.errors?.length ? `, ${data.errors.length} errors` : ''}`, { id: tid });
+    } catch (err) { toast.error(err.response?.data?.message || err.response?.data?.error || 'Sync failed', { id: tid }); }
+    finally { setSyncing(false); }
   }, []);
   const loadQuestions = useCallback(async (industryId) => {
     if (!industryId) return null;
@@ -92,7 +106,7 @@ export function useMapLookups() {
     setQuestions(prev => ({ ...prev, [industryId]: q }));
     return q;
   }, []);
-  return { ...lk, questions, loadQuestions };
+  return { ...lk, questions, loadQuestions, sync, syncing };
 }
 
 // Raw row + lookups → the row the grid, rail and details show.
@@ -445,6 +459,7 @@ export default function RecipeComponentMapPage() {
             onRefresh={load}
             right={
               <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" style={{ ...tbtn, opacity: lk.syncing ? 0.5 : 1 }} disabled={lk.syncing} onClick={lk.sync} title="Pull new / renamed items from Zoho Books into the item list">Sync from Books</button>
                 <button type="button" style={tbtn} onClick={() => setTest(true)} title="Pick answers and see the resolved items">Test</button>
                 <label title="Import rows from Excel/CSV into the selected product" style={tbtn}>
                   Import

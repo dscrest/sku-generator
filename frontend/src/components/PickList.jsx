@@ -58,7 +58,7 @@ export default function PickList({ value, onChange, options, style, placeholder,
           ...(up ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }),
           maxHeight: PANEL_MAX, overflowY: 'auto', padding: 4, boxSizing: 'border-box',
           background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
-          boxShadow: '0 8px 24px rgba(0,0,0,.14)',
+          boxShadow: 'var(--shadow-lg)',
         }}>
           {shown.map(o => (
             <button

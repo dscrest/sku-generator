@@ -14,7 +14,7 @@ const { Readable } = require("stream");
 const { rowList, zStr } = require("../store");
 const { dsDate } = require("../zoho/auth");
 const { createInventoryAdjustment } = require("../zoho/inventoryApi");
-const { byOrg, inList, settings, warehouses, logActivity } = require("./store");
+const { byOrg, inList, settings, warehouses, logActivity, nextNumber } = require("./store");
 const txn = require("./txn");
 const bom = require("./bom");
 const purchase = require("./purchase");
@@ -29,9 +29,13 @@ const REPL = { issued: "issued", pr_raised: "pr_raised", both: "both", legacy: "
 function bad(msg, status = 400) { const e = new Error(msg); e.status = status; throw e; }
 
 /**
- * Raise: one confirmed return txn (Issue → Main) for all lines, one
- * DefectReturn row per line, the activity entry and the store-manager email.
+ * Raise: one DRAFT return txn (Issue → Main) for all lines, one DefectReturn
+ * row per line, the activity entry and the store-manager email. The Transfer
+ * Order fires later, on the first Store action on any of the rows (CR-280,
+ * settleReturn) — until then the units sit in Issue, blocked (blocks.js).
  * lines: [{ itemId, qty, tracking? }]
+ * ponytail: a draft cancelled through /txn/:id/cancel orphans its defects
+ * (settleReturn then refuses the action) — not guarded.
  */
 async function raise(catalyst, orgId, { wo, fg, lines, reason, photoFileId, photoType }, userId) {
   const why = String(reason || "").trim();
@@ -44,23 +48,20 @@ async function raise(catalyst, orgId, { wo, fg, lines, reason, photoFileId, phot
     { workOrderId: wo.ROWID, workOrderFgId: fg.ROWID, type: "return", requested, notes: `Defective — ${why}` },
     userId,
   );
-  let confirmed;
-  try {
-    confirmed = await txn.confirmTxn(catalyst, orgId, draft.id, userId);
-  } catch (err) {
-    await txn.cancelTxn(catalyst, orgId, draft.id, userId).catch(() => {});
-    throw err;
-  }
 
   const skus = new Map(
     (await byOrg(catalyst, orgId, "WorkOrderLine", `workOrderFgId = ${zStr(String(fg.ROWID))}`))
       .map((l) => [String(l.rmItemId), l]),
   );
   const table = catalyst.datastore().table("DefectReturn");
+  const s = await settings(catalyst, orgId);
   const out = [];
   for (const l of draft.lines) {
+    // CR-279: every line is its own Store issue, numbered from the org's series.
+    const issueNumber = await nextNumber(catalyst, orgId, "DefectReturn", "issueNumber", s.siNumberPrefix);
     const row = await table.insertRow({
       orgId: String(orgId),
+      issueNumber,
       workOrderId: String(wo.ROWID),
       workOrderFgId: String(fg.ROWID),
       itemId: String(l.rmItemId),
@@ -75,7 +76,8 @@ async function raise(catalyst, orgId, { wo, fg, lines, reason, photoFileId, phot
       photoFileId: photoFileId ? String(photoFileId) : "",
       photoType: photoType ? String(photoType) : "",
       status: "pending",
-      txnId: String(confirmed.id),
+      txnId: String(draft.id),
+      returnedAt: null,
       replacementItemId: "",
       replacementName: "",
       replacementStatus: "",
@@ -86,31 +88,59 @@ async function raise(catalyst, orgId, { wo, fg, lines, reason, photoFileId, phot
       raisedAt: dsDate(Date.now()),
       actionedAt: null,
     });
-    out.push({ id: String(row.ROWID), itemId: String(l.rmItemId), itemName: l.name, qty: l.qty });
+    out.push({ id: String(row.ROWID), issueNumber, itemId: String(l.rmItemId), itemName: l.name, qty: l.qty });
   }
 
   await logActivity(catalyst, orgId, "WorkOrder", wo.ROWID, "defect.raised", userId, {
-    txnNumber: confirmed.txnNumber, transferOrder: confirmed.transferOrderNumber, reason: why,
-    lines: out.map((d) => ({ itemName: d.itemName, qty: d.qty })),
+    txnNumber: draft.txnNumber, reason: why,
+    lines: out.map((d) => ({ issueNumber: d.issueNumber, itemName: d.itemName, qty: d.qty })),
   });
 
-  const s = await settings(catalyst, orgId);
   await email(
     catalyst, s.storeIssueEmail,
-    `Defective material — ${wo.woNumber}`,
+    `Store issue ${out.map((d) => d.issueNumber).join(", ")} — ${wo.woNumber}`,
     [
-      `${wo.woNumber} (${fg.fgName}): defective material returned to the Main warehouse and blocked from reuse.`,
+      `${wo.woNumber} (${fg.fgName}): defective material reported — the units stay in the Issue warehouse, blocked, until you act on the Store issue (the Transfer Order to Main is created then).`,
       "",
-      ...out.map((d) => `• ${d.itemName} × ${d.qty}`),
+      ...out.map((d) => `• ${d.issueNumber}: ${d.itemName} × ${d.qty}`),
       "",
       `Reason: ${why}`,
-      `Transfer Order: ${confirmed.transferOrderNumber || confirmed.txnNumber}`,
+      `Return draft: ${draft.txnNumber}`,
       "",
       "Awaiting your decision in Order Management → Store issues: replace (reserve & issue or purchase) and repair, write off or return the units.",
     ].join("\n"),
   );
 
-  return { ...confirmed, defects: out };
+  return { ...draft, defects: out };
+}
+
+/**
+ * CR-280: the first Store action on a defect fires its return Transfer Order
+ * (Issue → Main) by confirming the draft raised with it. Idempotent: a row
+ * already returned (or raised before CR-280, whose txn is already Confirmed)
+ * just gets stamped. One draft covers every line of the raise, so all its rows
+ * are stamped together. Throws the ledger's own message when the confirm is
+ * refused (cap raced, Zoho down) — the action does not proceed.
+ */
+async function settleReturn(catalyst, orgId, row, userId) {
+  if (row.returnedAt) return null;
+  const t = await txn.loadTxn(catalyst, orgId, row.txnId);
+  let transferOrderNumber = t.zohoTransferOrderNumber || null;
+  if (t.status === "Draft") {
+    transferOrderNumber = (await txn.confirmTxn(catalyst, orgId, t.ROWID, userId)).transferOrderNumber || null;
+  } else if (t.status !== "Confirmed") {
+    bad(`The return draft ${t.txnNumber} was cancelled — raise the defect again from the work order`, 409);
+  }
+  const table = catalyst.datastore().table("DefectReturn");
+  const at = dsDate(Date.now());
+  for (const r of await byOrg(catalyst, orgId, "DefectReturn", `txnId = ${zStr(String(row.txnId))}`)) {
+    if (!r.returnedAt) await table.updateRow({ ROWID: String(r.ROWID), returnedAt: at });
+  }
+  row.returnedAt = at;
+  await logActivity(catalyst, orgId, "WorkOrder", row.workOrderId, "defect.returned", userId, {
+    defectId: String(row.ROWID), itemName: row.itemName, qty: n(row.qty), txnNumber: t.txnNumber, transferOrder: transferOrderNumber,
+  });
+  return transferOrderNumber;
 }
 
 // ---- replacement (CR-244) ---------------------------------------------------
@@ -165,6 +195,9 @@ async function replace(catalyst, orgId, id, { mode, replacement, tracking, reaso
   const row = await loadDefect(catalyst, orgId, id);
   if (row.replacementStatus) bad(`Replacement already decided — ${String(row.replacementStatus).replace(/_/g, " ")}`, 409);
   const { wo, fg } = await txn.loadContext(catalyst, orgId, row.workOrderId, row.workOrderFgId);
+  // The defective units go back to Main first (CR-280) — that frees the issued
+  // balance the replacement reserve needs.
+  const returnTransferOrder = await settleReturn(catalyst, orgId, row, userId);
   const table = catalyst.datastore().table("DefectReturn");
   const repl = replacement && replacement.id && String(replacement.id) !== String(row.itemId) ? replacement : null;
   const itemId = repl ? String(repl.id) : String(row.itemId);
@@ -231,7 +264,7 @@ async function replace(catalyst, orgId, id, { mode, replacement, tracking, reaso
   });
   await logActivity(catalyst, orgId, "WorkOrder", wo.ROWID, "defect.replacement", userId, {
     defectId: String(row.ROWID), itemName, qty: plan.qty, reservedIssued: plan.can, purchased: plan.short,
-    transferOrders: refs.filter((r) => r !== prNumber), prNumber, reason: why, replacement: repl ? repl.name : null,
+    transferOrders: refs.filter((r) => r !== prNumber), prNumber, reason: why, replacement: repl ? repl.name : null, returnTransferOrder,
   });
   return { id: String(row.ROWID), replacementStatus: plan.status, replacementRef: refs.join(", "), reservedIssued: plan.can, purchased: plan.short, prNumber };
 }
@@ -246,6 +279,7 @@ async function action(catalyst, orgId, id, { action: what, reason }, userId) {
   if (!rows.length) bad("Defect not found", 404);
   const row = rows[0];
   if (row.status !== "pending") bad(`This defect is already ${String(row.status).replace(/_/g, " ")}`, 409);
+  await settleReturn(catalyst, orgId, row, userId); // CR-280: units reach Main before any disposition
 
   const patch = { ROWID: String(row.ROWID), status, actionReason: why, actionedBy: userId ? String(userId) : "", actionedAt: dsDate(Date.now()) };
   if (status === "adjusted") {
@@ -290,12 +324,14 @@ async function list(catalyst, orgId, status) {
     try { tracking = r.trackingJson ? JSON.parse(r.trackingJson) : null; } catch { /* ignore */ }
     return {
       id: String(r.ROWID),
+      issueNumber: r.issueNumber || null, // blank on rows raised before CR-279
       workOrderId: String(r.workOrderId), woNumber: r.woNumber, fgName: r.fgName,
       itemId: String(r.itemId), itemName: r.itemName, itemSku: r.itemSku || null,
       qty: n(r.qty), tracking,
       reason: r.reason || "", actionReason: r.actionReason || "",
       hasPhoto: Boolean(r.photoFileId),
       status: r.status,
+      returnedAt: r.returnedAt || null, // CR-280: null = still in the Issue warehouse
       replacementName: r.replacementName || null,
       replacementStatus: r.replacementStatus || "",
       replacementRef: r.replacementRef || null,

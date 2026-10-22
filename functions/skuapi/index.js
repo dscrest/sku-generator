@@ -9,6 +9,8 @@ const express = require("express");
 const catalystSDK = require("zcatalyst-sdk-node");
 
 const app = express();
+// Raw runtime errors never reach a user (CR-269) — first, so it covers every route.
+app.use(require("./scrubErrors").scrubErrors);
 app.use(express.json());
 // The CRM widget sends JSON as text/plain to keep requests "simple" (no CORS
 // preflight — Catalyst's gateway answers OPTIONS itself without CORS headers,
@@ -214,6 +216,18 @@ app.post("/internal/sync-stock", async (req, res) => {
   try {
     const result = await require("./reserve/sync").syncAllOrgs(req.catalyst);
     res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error(err && (err.stack || err.message));
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Daily cron (CR-271): refresh the SKU master from Books for every org that
+// reads Product Designs, so a design picks Books items with no mapping step.
+app.post("/internal/refresh-items", async (req, res) => {
+  if (!internalAuth(req, res)) return;
+  try {
+    res.json({ ok: true, ...(await require("./zoho/import").refreshAllOrgs(req.catalyst)) });
   } catch (err) {
     console.error(err && (err.stack || err.message));
     res.status(500).json({ error: err.message });

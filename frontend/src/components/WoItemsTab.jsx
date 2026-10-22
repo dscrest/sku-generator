@@ -277,7 +277,7 @@ export function ItemPicker({ value, onPick, field }) {
           <div style={{
             position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 41, maxHeight: 220, overflowY: 'auto',
             background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)',
-            boxShadow: '0 8px 24px rgba(0,0,0,.14)',
+            boxShadow: 'var(--shadow-lg)',
           }}>
             {!hits?.length ? (
               <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)' }}>No matching Books items.</div>

@@ -235,12 +235,12 @@ export default function BomTab({ workOrderId, fgs, revision, onChanged }) {
             <button onClick={() => apply(false)} disabled={busy || !preview.changeCount} style={btn}>
               Apply here only
             </button>
-            {/* A configured valve's BOM comes from its quote — the shared Zoho composite is never updated from it. */}
-            {preview.source !== 'quote' && (
+            {/* A configured valve's BOM comes from its quote or its Product Design — the shared Zoho composite is never updated from it. */}
+            {!['quote', 'design'].includes(preview.source) && (
               <button
                 onClick={() => apply(true)}
                 disabled={busy || !preview.changeCount || preview.blocked?.length}
-                style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)', fontWeight: 600 }}
+                style={{ ...btn, background: 'var(--blue)', color: 'var(--on-accent)', borderColor: 'var(--blue)', fontWeight: 600 }}
               >
                 Apply &amp; update Zoho
               </button>
@@ -354,7 +354,7 @@ function PasteBox({ onParse, onCancel }) {
         style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12, padding: 8, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}
       />
       <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-        <button onClick={() => onParse(text)} style={{ ...btn, background: 'var(--blue)', color: '#fff', borderColor: 'var(--blue)' }}>Compare</button>
+        <button onClick={() => onParse(text)} style={{ ...btn, background: 'var(--blue)', color: 'var(--on-accent)', borderColor: 'var(--blue)' }}>Compare</button>
         <button onClick={onCancel} style={btn}>Cancel</button>
       </div>
     </div>

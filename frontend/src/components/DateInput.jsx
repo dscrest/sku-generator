@@ -117,7 +117,7 @@ export default function DateInput({ value, onChange, style, disabled, min, max }
                 <button key={iso} disabled={out} onClick={() => pick(iso)} style={{
                   border: iso === todayIso && !selected ? '1px solid var(--blue-border)' : '1px solid transparent',
                   background: selected ? 'var(--blue)' : 'none',
-                  color: selected ? '#fff' : out ? 'var(--border-mid)' : inMonth ? 'var(--text-primary)' : 'var(--text-muted)',
+                  color: selected ? 'var(--on-accent)' : out ? 'var(--border-mid)' : inMonth ? 'var(--text-primary)' : 'var(--text-muted)',
                   borderRadius: 'var(--radius-sm)', padding: '5px 0', cursor: out ? 'default' : 'pointer', fontSize: 13,
                   fontWeight: selected ? 600 : 400,
                 }}

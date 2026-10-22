@@ -226,20 +226,24 @@ async function searchItems(catalyst, q) {
 // parent_category_name). Cached per org like the stock accounts — the tree
 // rarely changes and the configurator asks on every MOC pick.
 const _categoryCache = new Map(); // orgId -> categories[]
-async function listCategories(catalyst) {
+async function listCategories(catalyst, { fresh = false } = {}) {
   const orgId = await getOrgId(catalyst);
-  if (_categoryCache.has(orgId)) return _categoryCache.get(orgId);
+  if (!fresh && _categoryCache.has(orgId)) return _categoryCache.get(orgId);
   const data = await apiRequest(catalyst, "GET", "/categories");
   const list = data.categories || [];
   _categoryCache.set(orgId, list);
   return list;
 }
 
-// Items under one category. ponytail: one page; page like listItems if a
-// category ever holds more than 200 items.
+// Items under one category, paged like listItems (CR-286).
 async function listItemsByCategory(catalyst, categoryId) {
-  const data = await apiRequest(catalyst, "GET", `/items?category_id=${encodeURIComponent(categoryId)}&per_page=200`);
-  return data.items || [];
+  const items = [];
+  for (let page = 1; ; page++) {
+    const data = await apiRequest(catalyst, "GET", `/items?category_id=${encodeURIComponent(categoryId)}&page=${page}&per_page=200`);
+    items.push(...(data.items || []));
+    if (!data.page_context || !data.page_context.has_more_page) break;
+  }
+  return items;
 }
 
 // Find an existing Books item by exact (case-insensitive) SKU — `search_text`
@@ -283,11 +287,41 @@ async function deleteItem(catalyst, zohoItemId) {
 }
 
 // Custom-field definitions configured on Books items — the source list for the
-// field-mapping screen.
+// property form + mapping view (CR-288). `values` = option names of a dropdown /
+// multiselect field (`fields[].values[].name`, proven live), `[]` otherwise.
+// `raw` is the field as Books sent it — addCustomFieldOption writes it back.
 async function listItemCustomFields(catalyst) {
   const data = await apiRequest(catalyst, "GET", "/settings/fields?entity=item");
   const fields = data.fields || data.customfields || [];
-  return fields.map((f) => ({ api_name: f.api_name, label: f.label, data_type: f.data_type }));
+  return fields.map((f) => ({
+    customfield_id: f.customfield_id ? String(f.customfield_id) : null,
+    api_name: f.api_name,
+    label: f.label,
+    data_type: f.data_type,
+    values: Array.isArray(f.values) ? f.values.map((v) => v.name).filter(Boolean) : [],
+    raw: f,
+  }));
+}
+
+const _loose = (s) => String(s || "").toLowerCase().replace(/\s+/g, "");
+const OPTION_TYPES = /^(dropdown|multiselect|multi_select|multiselect_dropdown)$/i;
+const isOptionField = (f) => !!f && OPTION_TYPES.test(String(f.data_type || ""));
+
+// Append one option to a dropdown custom field (CR-288): `PUT /settings/fields/
+// {customfield_id}` with the field as Books sent it plus the new value. ⚠ The
+// endpoint is undocumented — shape taken from the Books UI; a refusal surfaces
+// as the Books error text (callers treat it as best-effort). No-op when an
+// option already matches loosely (case + whitespace): Books rejects duplicates.
+async function addCustomFieldOption(catalyst, field, name) {
+  const want = String(name || "").trim();
+  if (!want) return { added: false };
+  if (!isOptionField(field)) throw new Error(`Books field ${field && field.api_name} is not a dropdown`);
+  if (field.values.some((v) => _loose(v) === _loose(want))) return { added: false, exists: true };
+  const raw = field.raw || {};
+  const values = [...(raw.values || []), { name: want, order: (raw.values || []).length + 1 }];
+  await apiRequest(catalyst, "PUT", `/settings/fields/${field.customfield_id}`, { ...raw, values });
+  field.values.push(want);
+  return { added: true };
 }
 
 // Manufacturer master (Books → Settings → Items → Manufacturers), names only —
@@ -321,15 +355,34 @@ async function getSalesOrder(catalyst, soId) {
 // `/salesorder/{id}/customfields` and the body a bare array — the plural path
 // is "Invalid URL Passed (code 5)". If Books still refuses the body shape, the
 // plain SO update with `custom_fields` is the fallback.
+//
+// CR-268: the field is the org's own — MSUN's Books has it, Ricon's does not.
+// Books answers 120138 ("custom field … doesnot exist") for an org without it;
+// that org simply does not use the stamp, so it is skipped, not reported.
+// ponytail: in-memory, warm-instance only — a field added in Books later is
+// picked up on the next cold start. Per-org setting if an org names it differently.
 const SO_WO_CF = "cf_work_order_no_and_date";
-async function stampSalesOrderWo(catalyst, soId, value) {
+const NO_SUCH_CF = 120138;
+const _noWoCf = new Set(); // Books org ids without the field
+async function stampWith(request, orgId, soId, value) {
+  if (_noWoCf.has(orgId)) return;
   const cf = { api_name: SO_WO_CF, value: String(value ?? "") };
   try {
-    await apiRequest(catalyst, "PUT", `/salesorder/${soId}/customfields`, [cf]);
+    try {
+      await request("PUT", `/salesorder/${soId}/customfields`, [cf]);
+    } catch (err) {
+      // not authorized / no such field — the fallback would fail the same way
+      if (err.zohoCode === 57 || err.zohoCode === NO_SUCH_CF) throw err;
+      await request("PUT", `/salesorders/${soId}`, { custom_fields: [cf] });
+    }
   } catch (err) {
-    if (err.zohoCode === 57) throw err; // not authorized — the fallback would fail the same way
-    await apiRequest(catalyst, "PUT", `/salesorders/${soId}`, { custom_fields: [cf] });
+    if (err.zohoCode !== NO_SUCH_CF) throw err;
+    _noWoCf.add(orgId);
   }
+}
+async function stampSalesOrderWo(catalyst, soId, value) {
+  const request = (method, path, body) => apiRequest(catalyst, method, path, body);
+  return stampWith(request, await getOrgId(catalyst), soId, value);
 }
 
 // Invoice detail (packing-list widget: resolves the linked SO for line items).
@@ -494,6 +547,56 @@ async function getOrganizations(catalyst) {
   return data.organizations || [];
 }
 
+// Books item weight → kg. A "Weight" custom field wins (label match like
+// bom.itemSize; value "205 kg" / "500 g" / 205), else the built-in package
+// weight. Lived in routes/packing until CR-285 made purchase share it.
+const KG_PER = { g: 0.001, gm: 0.001, gms: 0.001, lb: 0.45359, lbs: 0.45359, oz: 0.02835 };
+function weightKg(item) {
+  const cf = ((item && item.custom_fields) || []).find((c) => /^weight\b/i.test(String(c.label || "").trim()));
+  if (cf && cf.value != null && cf.value !== "") {
+    const m = String(cf.value).trim().match(/^([\d.]+)\s*([a-z]*)/i);
+    if (m) return (Number(m[1]) || 0) * (KG_PER[m[2].toLowerCase()] || 1);
+  }
+  const pd = (item && item.package_details) || {};
+  return (Number(pd.weight) || 0) * (KG_PER[String(pd.weight_unit || "").toLowerCase()] || 1);
+}
+
+// CR-285 (MSUN): a raw material flagged "Unit Conversion Item" is bought as its
+// "Convert Item", qty × weight. Both custom fields matched by label, like
+// weightKg. The lookup's `value` is either the Books item id or the display
+// name ("SG Iron-(Pcs)") — resolveConvertItem settles whichever it is.
+function itemConversion(item) {
+  const cfs = (item && item.custom_fields) || [];
+  const lbl = (c) => String(c.label || "").trim();
+  const flag = cfs.find((c) => /^unit conversion/i.test(lbl(c)));
+  const on = !!flag && (flag.value === true || String(flag.value).trim().toLowerCase() === "true");
+  const look = cfs.find((c) => /^convert item/i.test(lbl(c)));
+  const raw = look && look.value != null ? String(look.value).trim() : "";
+  const isId = /^\d{15,}$/.test(raw);
+  return {
+    on,
+    convertItemId: isId ? raw : "",
+    convertItemName: isId ? String((look && look.value_formatted) || "").trim() : raw,
+    weight: weightKg(item),
+  };
+}
+
+// Name → id when the lookup gave only the display name; id → name when it gave
+// only the id. The "-(unit)" suffix Books appends is not part of the item name.
+async function resolveConvertItem(catalyst, conv) {
+  if (conv.convertItemId) {
+    if (conv.convertItemName) return conv;
+    const it = await getItem(catalyst, conv.convertItemId).catch(() => null);
+    return { ...conv, convertItemName: it ? String(it.name || "") : conv.convertItemId };
+  }
+  if (!conv.convertItemName) return conv;
+  const name = conv.convertItemName.replace(/\s*-\s*\([^)]*\)\s*$/, "").trim();
+  const items = await searchItems(catalyst, name);
+  const hit = items.find((i) => String(i.name || "").trim().toLowerCase() === name.toLowerCase())
+    || (items.length === 1 ? items[0] : null);
+  return hit ? { ...conv, convertItemId: String(hit.item_id), convertItemName: String(hit.name || name) } : conv;
+}
+
 module.exports = {
   apiRequest,
   getStockAccountId,
@@ -511,6 +614,11 @@ module.exports = {
   getItem,
   deleteItem,
   listItemCustomFields,
+  addCustomFieldOption,
+  isOptionField,
+  weightKg,
+  itemConversion,
+  resolveConvertItem,
   listManufacturers,
   getSalesOrder,
   stampSalesOrderWo,
@@ -544,5 +652,29 @@ if (require.main === module && process.argv.includes("--selftest")) {
   // matches) so the line always carries a tax (avoids 110802).
   assert.strictEqual(pickGstTax([taxes[0]], false).tax_id, "1");
   assert.strictEqual(pickGstTax([], false), null);
-  console.log("zoho/booksApi.js self-check passed");
+
+  // SO WO stamp (CR-268): an org without the field is skipped quietly and not
+  // asked again; any other Books error still surfaces.
+  (async () => {
+    const zohoErr = (code) => Object.assign(new Error(`code ${code}`), { zohoCode: code });
+    let calls = 0;
+    const noField = async () => { calls += 1; throw zohoErr(NO_SUCH_CF); };
+    await stampWith(noField, "ricon", "so1", "WO-1");
+    assert.strictEqual(calls, 1, "no such field → no fallback call");
+    await stampWith(noField, "ricon", "so1", "WO-1");
+    assert.strictEqual(calls, 1, "org remembered → no Books call at all");
+
+    // First endpoint refuses the body, the fallback finds no field → still quiet.
+    const paths = [];
+    await stampWith(async (_m, path) => { paths.push(path); throw zohoErr(paths.length === 1 ? 5 : NO_SUCH_CF); }, "ricon2", "so1", "WO-1");
+    assert.strictEqual(paths.length, 2, "other error → fallback tried");
+
+    const sent = [];
+    await stampWith(async (...a) => { sent.push(a); }, "msun", "so9", "WO-7 / 01/09/2026");
+    assert.deepStrictEqual(sent, [["PUT", "/salesorder/so9/customfields", [{ api_name: SO_WO_CF, value: "WO-7 / 01/09/2026" }]]]);
+
+    await assert.rejects(stampWith(async () => { throw zohoErr(57); }, "msun", "so9", "x"), /code 57/, "not authorized still throws");
+    await assert.rejects(stampWith(async () => { throw zohoErr(1002); }, "msun", "so9", "x"), /code 1002/, "other errors still throw");
+    console.log("zoho/booksApi.js self-check passed");
+  })();
 }

@@ -8,10 +8,10 @@ import axios from 'axios';
 // reconnect through the Zoho consent screen (?consent=1) so the not-yet-granted
 // ZohoCRM scope is actually added.
 const C = {
-  bgElev: '#ffffff', border: '#e2e8f0', ink: '#0f172a', ink3: '#64748b',
+  bgElev: 'var(--bg-elev)', border: 'var(--border)', ink: 'var(--ink)', ink3: 'var(--ink-3)',
   ink4: '#94a3b8', accent: '#4f46e5', warnSoft: '#fffbeb', warn: '#b45309',
 };
-const shadowSm = '0 1px 2px rgba(15,23,42,0.04), 0 1px 4px rgba(15,23,42,0.04)';
+const shadowSm = 'var(--shadow-sm)';
 
 const lookup = (v) => (v && typeof v === 'object' ? v.name : v) || null;
 
@@ -60,7 +60,7 @@ export default function CrmInfoCard({ dealId }) {
 
   if (state.status === 'loading') {
     return <div style={card}><div style={eyebrow}>CRM Info</div>
-      <div style={{ height: 14, width: 180, background: '#f1f5f9', borderRadius: 6 }} /></div>;
+      <div style={{ height: 14, width: 180, background: 'var(--bg-subtle)', borderRadius: 6 }} /></div>;
   }
 
   if (state.status === 'reauth') {

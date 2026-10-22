@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import Toolbar from '../components/Toolbar.jsx';
 import Modal, { ModalFooter, ModalBtn, ConfirmModal } from '../components/Modal.jsx';
 import RowMenu from '../components/RowMenu.jsx';
+import { SearchInput, matches } from '../components/GridFooter.jsx';
 
 const inputStyle = {
   width: '100%', background: 'var(--bg-secondary)', border: '1px solid var(--border)',
@@ -22,7 +23,62 @@ const selectStyle = {
   backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center', paddingRight: 30,
 };
 
-const emptyProp = { name: '', caption: '', unit: '', valueType: 'Manual', rangeMin: '', rangeMax: '', required: false, includeInName: false, zohoCfApiName: '', clubKey: '', createValuesAsItems: false, showInWidget: false, sizingRole: '' };
+const emptyProp = { name: '', caption: '', unit: '', valueType: 'Manual', rangeMin: '', rangeMax: '', required: false, includeInName: false, zohoCfApiName: '', clubKey: '', valueSource: 'manual', showInWidget: false, sizingRole: '', booksCategoryId: '' };
+
+// Where a property's values come from (CR-288). Stored server-side as two flags;
+// the API speaks `valueSource`.
+const SOURCES = [
+  { value: 'manual', label: 'This app', hint: 'Values are typed here (Properties → values).' },
+  { value: 'items', label: 'Zoho Books items in a category', hint: 'Every active item of the picked Books category is a value; values added here become Books items.' },
+  { value: 'options', label: 'Options of the Zoho Books field', hint: 'The dropdown options of the mapped Books item field are the values; a value added here is appended to the field\'s options.' },
+];
+const sourceLabel = v => (SOURCES.find(s => s.value === v) || SOURCES[0]).label;
+const isOptionField = f => !!f && /^(dropdown|multiselect|multi_select|multiselect_dropdown)$/i.test(f.data_type || '');
+const cfText = f => `${f.label || f.api_name} · ${f.api_name}${f.data_type ? ` · ${f.data_type}` : ''}`;
+
+// Zoho Books item custom fields (CR-288): null = not loaded, false = Books unreachable, [] = none.
+// Loaded on action (form open / Mapping view), once per page.
+function useCfFields() {
+  const [cfFields, setCfFields] = useState(null);
+  const load = useCallback(() => {
+    if (cfFields !== null) return;
+    axios.get('/api/zoho/item-custom-fields').then(r => setCfFields(r.data || [])).catch(() => setCfFields(false));
+  }, [cfFields]);
+  return [cfFields, load];
+}
+
+// Books category pick for the Mapping grid (CR-286 key). One read per page, on first use.
+let _catsCache = null;
+function CategorySelect({ value, onChange, style = selectStyle }) {
+  const [cats, setCats] = useState(_catsCache);
+  useEffect(() => {
+    if (cats !== null) return;
+    axios.get('/api/properties/books-categories').then(r => { _catsCache = r.data || []; setCats(_catsCache); }).catch(() => setCats([]));
+  }, [cats]);
+  return (
+    <select style={style} value={value || ''} onChange={e => onChange(e.target.value)}>
+      <option value="">{cats === null ? 'Loading…' : '— none —'}</option>
+      {(cats || []).map(c => <option key={c.id} value={c.id}>{c.parent ? `${c.parent} › ${c.name}` : c.name}</option>)}
+      {value && cats && !cats.some(c => c.id === value) && <option value={value}>Category {value}</option>}
+    </select>
+  );
+}
+
+// Books field pick: a select from the live list, the stored api name kept when
+// it is not in the list, a plain text box when Books could not be read.
+function CfSelect({ value, onChange, cfFields, usedBy = {}, style = selectStyle, onFocus, onBlur }) {
+  if (cfFields === false) {
+    return <input style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} value={value || ''} onChange={e => onChange(e.target.value)} placeholder="cf_brand — Books unreachable, type the api_name" onFocus={onFocus} onBlur={onBlur} />;
+  }
+  const list = cfFields || [];
+  return (
+    <select style={style} value={value || ''} onChange={e => onChange(e.target.value)} onFocus={onFocus} onBlur={onBlur}>
+      <option value="">{cfFields === null ? 'Loading fields from Zoho Books…' : '— not mapped —'}</option>
+      {list.map(f => <option key={f.api_name} value={f.api_name}>{cfText(f)}{usedBy[f.api_name] ? ` · also on ${usedBy[f.api_name]}` : ''}</option>)}
+      {value && !list.some(f => f.api_name === value) && <option value={value}>{value}</option>}
+    </select>
+  );
+}
 const emptyVal = { displayValue: '', name: '', sku: '', description: '', createAsItem: false, isDefault: false, capMin: '', capMax: '' };
 
 // Single-club combobox: shows the current club as a removable chip, filters
@@ -76,9 +132,17 @@ function ClubPicker({ value, onChange, clubKeys }) {
   );
 }
 
-function PropForm({ form, setForm, onSubmit, onCancel, label, clubKeys = [] }) {
+function PropForm({ form, setForm, onSubmit, onCancel, label, clubKeys = [], cfFields }) {
   const fi = e => e.target.style.borderColor = 'var(--blue)';
   const fo = e => e.target.style.borderColor = 'var(--border)';
+  // Books item categories (CR-286): read once the source is Books items; the pick is the Sync from Books key
+  const [cats, setCats] = useState(null); // null = not loaded, [] = none / Books unreachable
+  useEffect(() => {
+    if (form.valueSource !== 'items' || cats !== null) return;
+    axios.get('/api/properties/books-categories').then(r => setCats(r.data)).catch(() => setCats([]));
+  }, [form.valueSource, cats]);
+  const cf = (cfFields || []).find(f => f.api_name === form.zohoCfApiName) || null;
+  const optionsOk = cfFields === false ? !!form.zohoCfApiName : isOptionField(cf);
   return (
     <>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -105,10 +169,38 @@ function PropForm({ form, setForm, onSubmit, onCancel, label, clubKeys = [] }) {
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Pick an existing club or create a new one — properties sharing a club combine into one SKU segment with no separator between their codes.</div>
       </div>
       <div>
-        <label style={labelStyle}>Zoho Books custom field (api_name)</label>
-        <input style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} value={form.zohoCfApiName} onChange={e => setForm(f => ({ ...f, zohoCfApiName: e.target.value }))} placeholder="cf_brand — leave blank to skip sync" onFocus={fi} onBlur={fo} />
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>This property's value syncs into the matching Books item custom field, and is read back on import.</div>
+        <label style={labelStyle}>Zoho Books field</label>
+        <CfSelect value={form.zohoCfApiName} onChange={v => setForm(f => ({ ...f, zohoCfApiName: v, valueSource: f.valueSource === 'options' && !v ? 'manual' : f.valueSource }))} cfFields={cfFields} onFocus={fi} onBlur={fo} />
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>This property's value is written into that Books item field on push and read back on import.{cf && isOptionField(cf) ? ` ${cf.values?.length || 0} option${cf.values?.length === 1 ? '' : 's'} in Books.` : ''}</div>
       </div>
+      <div>
+        <label style={labelStyle}>Values come from</label>
+        {SOURCES.map(s => {
+          const off = s.value === 'options' && !optionsOk;
+          return (
+            <label key={s.value} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: off ? 'not-allowed' : 'pointer', fontSize: 13, color: off ? 'var(--text-muted)' : 'var(--text-primary)', marginBottom: 6 }}>
+              <input type="radio" name="valueSource" style={{ marginTop: 3 }} disabled={off} checked={form.valueSource === s.value} onChange={() => setForm(f => ({ ...f, valueSource: s.value }))} />
+              <span>{s.label}
+                <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>
+                  {s.hint}{off ? (form.zohoCfApiName ? ' Pick a dropdown field above to use this.' : ' Pick a Zoho Books dropdown field above to use this.') : ''}
+                </span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      {form.valueSource === 'items' && (
+        <div>
+          <label style={labelStyle}>Books category</label>
+          <select style={selectStyle} value={form.booksCategoryId || ''} onChange={e => setForm(f => ({ ...f, booksCategoryId: e.target.value }))} onFocus={fi} onBlur={fo}>
+            <option value="">— none —</option>
+            {(cats || []).map(c => <option key={c.id} value={c.id}>{c.parent ? `${c.parent} › ${c.name}` : c.name}</option>)}
+          </select>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+            {cats === null ? 'Loading categories from Zoho Books…' : cats.length === 0 ? 'No categories found in Zoho Books.' : 'Sync from Books pulls every item in this category in as a value.'}
+          </div>
+        </div>
+      )}
       <div>
         <label style={labelStyle}>Sizing role (Product Configurator)</label>
         <select style={{ ...inputStyle, background: 'var(--bg-card)' }} value={form.sizingRole || ''} onChange={e => setForm(f => ({ ...f, sizingRole: e.target.value }))}>
@@ -134,12 +226,6 @@ function PropForm({ form, setForm, onSubmit, onCancel, label, clubKeys = [] }) {
         <input type="checkbox" checked={!!form.includeInName} onChange={e => setForm(f => ({ ...f, includeInName: e.target.checked }))} />
         Include in item name
         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>— tick none and every property is used</span>
-      </label>
-      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)' }}>
-        <input type="checkbox" style={{ marginTop: 3 }} checked={!!form.createValuesAsItems} onChange={e => setForm(f => ({ ...f, createValuesAsItems: e.target.checked }))} />
-        <span>Values are Zoho Books items
-          <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>Every value of this property is created/synced as an item in Zoho Books. Leave off for properties that are not items (e.g. size, colour).</span>
-        </span>
       </label>
       <ModalFooter><ModalBtn onClick={onCancel}>Cancel</ModalBtn><ModalBtn onClick={onSubmit} variant="primary">{label}</ModalBtn></ModalFooter>
     </>
@@ -198,6 +284,23 @@ export default function PropertyManagerPage() {
   const [propForm, setPropForm] = useState(emptyProp);
   const [valForm, setValForm] = useState(emptyVal);
   const [dragOver, setDragOver] = useState(null);
+  // CR-288: Properties (two panes) or Mapping (one grid: property ↔ Books field, side by side)
+  const [view, setView] = useState('props');
+  const [cfFields, loadCfFields] = useCfFields();
+  const [mapQ, setMapQ] = useState('');
+  const [valueCounts, setValueCounts] = useState(null); // propertyId -> count, mapping view only
+  const [syncingAll, setSyncingAll] = useState(false);
+  const loadValueCounts = useCallback(async () => {
+    try {
+      const { data } = await axios.get(`/api/industries/${industryId}/property-values`);
+      setValueCounts(Object.fromEntries(Object.entries(data || {}).map(([k, v]) => [k, (v || []).length])));
+    } catch { setValueCounts({}); }
+  }, [industryId]);
+  useEffect(() => {
+    if (view !== 'mapping') return;
+    loadCfFields();
+    loadValueCounts();
+  }, [view, loadCfFields, loadValueCounts]);
 
   const loadProperties = useCallback(async () => {
     try {
@@ -227,6 +330,47 @@ export default function PropertyManagerPage() {
     setSelectedVal(null);
   }, [selectedProp, loadValues]);
 
+  // The selected row as the list has it now (an edit reloads the list, not the selection)
+  const curProp = selectedProp ? properties.find(p => String(p.id) === String(selectedProp.id)) || selectedProp : null;
+  const [syncing, setSyncing] = useState(false);
+  // CR-286 / CR-288: Books category items or Books field options → values. Never deletes a value.
+  async function syncFromBooks(prop = curProp) {
+    setSyncing(true);
+    const tid = toast.loading(`Syncing ${prop.caption || prop.name} from Zoho Books…`);
+    try {
+      const { data } = await axios.post(`/api/properties/${prop.id}/sync-books`);
+      toast.success(`${data.created} new, ${data.linked} linked, ${data.renamed} renamed`, { id: tid });
+      if (curProp && String(curProp.id) === String(prop.id)) loadValues(prop.id);
+      if (view === 'mapping') loadValueCounts();
+    } catch (err) { toast.error(err.response?.data?.error || 'Sync failed', { id: tid }); }
+    finally { setSyncing(false); }
+  }
+  async function syncAll() {
+    setSyncingAll(true);
+    const tid = toast.loading('Syncing every Books-backed property…');
+    try {
+      const { data } = await axios.post('/api/properties/sync-books-all', { industryId });
+      const failed = data.synced.filter(x => x.error);
+      const created = data.synced.reduce((n, x) => n + (x.created || 0), 0);
+      if (failed.length) toast.error(`${created} new · ${failed.map(f => `${f.caption}: ${f.error}`).join(' · ')}`, { id: tid, duration: 8000 });
+      else toast.success(`${data.properties} propert${data.properties === 1 ? 'y' : 'ies'} synced, ${created} new value${created === 1 ? '' : 's'}`, { id: tid });
+      loadValueCounts();
+      if (curProp) loadValues(curProp.id);
+    } catch (err) { toast.error(err.response?.data?.error || 'Sync failed', { id: tid }); }
+    finally { setSyncingAll(false); }
+  }
+  // Inline save from the Mapping grid: one field at a time, the list reloads
+  async function saveMapping(prop, patch) {
+    try {
+      await axios.put(`/api/properties/${prop.id}`, patch);
+      loadProperties();
+    } catch (err) { toast.error(err.response?.data?.error || 'Failed to update property'); }
+  }
+  const syncKeyOf = p => (p.valueSource === 'items' ? p.booksCategoryId : p.valueSource === 'options' ? p.zohoCfApiName : null);
+  const syncHint = p => (p.valueSource === 'items'
+    ? (p.booksCategoryId ? 'Pull this property\'s Books category items in as values' : 'Pick a Books category on the property first')
+    : (p.zohoCfApiName ? 'Pull the Books field\'s options in as values' : 'Pick the Zoho Books field on the property first'));
+
   async function handleAddProp() {
     if (!propForm.name.trim() || !propForm.caption.trim()) return toast.error('Name and Caption are required');
     const nextPos = properties.length > 0 ? Math.max(...properties.map(p => p.skuPosition)) + 1 : 1;
@@ -238,7 +382,8 @@ export default function PropertyManagerPage() {
 
   function openEditProp(prop) {
     setSelectedProp(prop);
-    setPropForm({ name: prop.name, caption: prop.caption, unit: prop.unit || '', valueType: prop.valueType, rangeMin: prop.rangeMin ?? '', rangeMax: prop.rangeMax ?? '', required: !!prop.required, includeInName: !!prop.includeInName, zohoCfApiName: prop.zohoCfApiName || '', clubKey: prop.clubKey || '', createValuesAsItems: !!prop.createValuesAsItems, showInWidget: !!prop.showInWidget, sizingRole: prop.sizingRole || '' });
+    setPropForm({ name: prop.name, caption: prop.caption, unit: prop.unit || '', valueType: prop.valueType, rangeMin: prop.rangeMin ?? '', rangeMax: prop.rangeMax ?? '', required: !!prop.required, includeInName: !!prop.includeInName, zohoCfApiName: prop.zohoCfApiName || '', clubKey: prop.clubKey || '', valueSource: prop.valueSource || (prop.createValuesAsItems ? 'items' : 'manual'), showInWidget: !!prop.showInWidget, sizingRole: prop.sizingRole || '', booksCategoryId: prop.booksCategoryId || '' });
+    loadCfFields();
     setShowEditProp(true);
   }
 
@@ -316,13 +461,93 @@ export default function PropertyManagerPage() {
         <Link to="/settings/sku/industries" style={{ fontSize: 13, color: 'var(--blue)', textDecoration: 'none', fontWeight: 500 }}>Industries</Link>
         <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>/</span>
         <span style={{ fontSize: 15, fontWeight: 600 }}>{industryName || '…'} — Properties</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
+          {[['props', 'Properties'], ['mapping', 'Mapping']].map(([k, l]) => (
+            <button key={k} type="button" onClick={() => setView(k)}
+              style={{ height: 28, padding: '0 12px', border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 600, background: view === k ? 'var(--blue)' : 'var(--bg-card)', color: view === k ? '#fff' : 'var(--text-secondary)' }}>
+              {l}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div style={{ flex: 1, overflow: 'auto', padding: '20px 24px' }}>
+      {view === 'mapping' && (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '20px 24px' }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+            <Toolbar
+              onRefresh={() => { loadProperties(); loadValueCounts(); }}
+              right={
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <SearchInput value={mapQ} onChange={setMapQ} placeholder="Search properties…" />
+                  <button type="button" onClick={syncAll} disabled={syncingAll || !properties.some(p => syncKeyOf(p))}
+                    title="Sync every property whose values come from Zoho Books (items or field options)"
+                    style={{ ...inputStyle, width: 'auto', display: 'flex', alignItems: 'center', background: 'var(--bg-card)', fontSize: 13, cursor: 'pointer', opacity: syncingAll || !properties.some(p => syncKeyOf(p)) ? 0.5 : 1 }}>
+                    {syncingAll ? 'Syncing…' : 'Sync all from Books'}
+                  </button>
+                </div>
+              }
+            />
+            <div style={{ flex: 1, overflow: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead><tr>
+                  <th style={thStyle}>Property</th>
+                  <th style={thStyle}>Values come from</th>
+                  <th style={thStyle}>Zoho Books field</th>
+                  <th style={thStyle}>Books category</th>
+                  <th style={{ ...thStyle, textAlign: 'right' }}>Values</th>
+                  <th style={{ ...thStyle, width: 120 }}></th>
+                </tr></thead>
+                <tbody>
+                  {properties.filter(p => matches(mapQ, p.name, p.caption, p.zohoCfApiName, sourceLabel(p.valueSource))).map(p => {
+                    const cf = (cfFields || []).find(f => f.api_name === p.zohoCfApiName) || null;
+                    const optionsOk = cfFields === false ? !!p.zohoCfApiName : isOptionField(cf);
+                    // other properties of this industry already on a Books field → "also on …" in the select
+                    const usedBy = Object.fromEntries(properties.filter(o => o.zohoCfApiName && String(o.id) !== String(p.id)).map(o => [o.zohoCfApiName, o.name]));
+                    const cell = { padding: '8px 12px', borderTop: '1px solid var(--border)', verticalAlign: 'middle' };
+                    const sel = { ...selectStyle, padding: '6px 28px 6px 10px', background: 'var(--bg-card)' };
+                    return (
+                      <tr key={p.id}>
+                        <td style={cell}>
+                          <div style={{ fontWeight: 500 }}>{p.name}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{p.caption}{p.unit ? ` · ${p.unit}` : ''}</div>
+                        </td>
+                        <td style={{ ...cell, minWidth: 200 }}>
+                          <select style={sel} value={p.valueSource || 'manual'} onChange={e => saveMapping(p, { valueSource: e.target.value })}>
+                            {SOURCES.map(s => <option key={s.value} value={s.value} disabled={s.value === 'options' && !optionsOk}>{s.label}{s.value === 'options' && !optionsOk ? ' (needs a dropdown field)' : ''}</option>)}
+                          </select>
+                        </td>
+                        <td style={{ ...cell, minWidth: 240 }}>
+                          <CfSelect value={p.zohoCfApiName} cfFields={cfFields} usedBy={usedBy} style={sel}
+                            onChange={v => saveMapping(p, { zohoCfApiName: v, ...(p.valueSource === 'options' && !v ? { valueSource: 'manual' } : {}) })} />
+                        </td>
+                        <td style={{ ...cell, minWidth: 180 }}>
+                          {p.valueSource === 'items' ? <CategorySelect value={p.booksCategoryId} onChange={v => saveMapping(p, { booksCategoryId: v })} style={sel} /> : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                        </td>
+                        <td style={{ ...cell, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12 }}>{valueCounts ? (valueCounts[String(p.id)] || 0) : '…'}</td>
+                        <td style={{ ...cell, textAlign: 'right' }}>
+                          {p.valueSource !== 'manual' && (
+                            <button type="button" onClick={() => syncFromBooks(p)} disabled={!syncKeyOf(p) || syncing} title={syncHint(p)}
+                              style={{ ...inputStyle, width: 'auto', padding: '6px 10px', display: 'inline-flex', alignItems: 'center', background: 'var(--bg-card)', fontSize: 12.5, cursor: syncKeyOf(p) ? 'pointer' : 'not-allowed', opacity: !syncKeyOf(p) || syncing ? 0.5 : 1 }}>
+                              Sync
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {properties.length === 0 && <tr><td colSpan={6} style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>No properties. Add them on the Properties view.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {view === 'props' && <div style={{ flex: 1, overflow: 'auto', padding: '20px 24px' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
 
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-            <Toolbar onAdd={() => { setPropForm(emptyProp); setShowAddProp(true); }} onRefresh={loadProperties} />
+            <Toolbar onAdd={() => { setPropForm(emptyProp); loadCfFields(); setShowAddProp(true); }} onRefresh={loadProperties} />
             <div>
               {properties.length === 0 && <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No properties. Click + to add.</div>}
               {properties.map(prop => {
@@ -346,7 +571,8 @@ export default function PropertyManagerPage() {
                         {prop.includeInName && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--blue)', background: 'var(--blue-light)', border: '1px solid var(--blue-border)', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>IN NAME</span>}
                         {prop.activeInSku === false && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--text-muted)', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>NOT IN SKU</span>}
                         {prop.clubKey && <span title={`Clubbed: ${prop.clubKey}`} style={{ fontSize: 9, fontWeight: 700, color: '#6d28d9', background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>⛓ {prop.clubKey}</span>}
-                        {prop.createValuesAsItems && <span title="Values of this property sync to Zoho Books as items" style={{ fontSize: 9, fontWeight: 700, color: '#047857', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>→ BOOKS</span>}
+                        {prop.valueSource === 'items' && <span title="Values of this property are Zoho Books items" style={{ fontSize: 9, fontWeight: 700, color: '#047857', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>→ BOOKS</span>}
+                        {prop.valueSource === 'options' && <span title={`Values of this property are the options of the Books field ${prop.zohoCfApiName || ''}`} style={{ fontSize: 9, fontWeight: 700, color: '#0369a1', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 8, padding: '1px 6px', letterSpacing: '0.03em' }}>⇄ FIELD</span>}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{prop.caption}{prop.unit ? ` · ${prop.unit}` : ''}</div>
                     </div>
@@ -362,7 +588,17 @@ export default function PropertyManagerPage() {
           </div>
 
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-            <Toolbar onAdd={selectedProp ? () => { setValForm(emptyVal); setShowAddVal(true); } : undefined} onRefresh={selectedProp ? () => loadValues(selectedProp.id) : undefined} />
+            <Toolbar
+              onAdd={selectedProp ? () => { setValForm(emptyVal); setShowAddVal(true); } : undefined}
+              onRefresh={selectedProp ? () => loadValues(selectedProp.id) : undefined}
+              right={curProp && curProp.valueSource !== 'manual' ? (
+                <button type="button" onClick={() => syncFromBooks()} disabled={!syncKeyOf(curProp) || syncing}
+                  title={syncHint(curProp)}
+                  style={{ ...inputStyle, width: 'auto', display: 'flex', alignItems: 'center', cursor: syncKeyOf(curProp) ? 'pointer' : 'not-allowed', background: 'var(--bg-card)', fontSize: 13, opacity: !syncKeyOf(curProp) || syncing ? 0.5 : 1 }}>
+                  Sync from Books
+                </button>
+              ) : undefined}
+            />
             {!selectedProp ? (
               <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Select a property to view its values</div>
             ) : (
@@ -401,10 +637,10 @@ export default function PropertyManagerPage() {
             )}
           </div>
         </div>
-      </div>
+      </div>}
 
-      {showAddProp && <Modal title="New" onClose={() => setShowAddProp(false)} onSubmit={handleAddProp}><PropForm form={propForm} setForm={setPropForm} clubKeys={clubKeys} onSubmit={handleAddProp} onCancel={() => setShowAddProp(false)} label="Create" /></Modal>}
-      {showEditProp && <Modal title="Edit" onClose={() => setShowEditProp(false)} onSubmit={handleEditProp}><PropForm form={propForm} setForm={setPropForm} clubKeys={clubKeys} onSubmit={handleEditProp} onCancel={() => setShowEditProp(false)} label="Save" /></Modal>}
+      {showAddProp && <Modal title="New" onClose={() => setShowAddProp(false)} onSubmit={handleAddProp}><PropForm form={propForm} setForm={setPropForm} clubKeys={clubKeys} cfFields={cfFields} onSubmit={handleAddProp} onCancel={() => setShowAddProp(false)} label="Create" /></Modal>}
+      {showEditProp && <Modal title="Edit" onClose={() => setShowEditProp(false)} onSubmit={handleEditProp}><PropForm form={propForm} setForm={setPropForm} clubKeys={clubKeys} cfFields={cfFields} onSubmit={handleEditProp} onCancel={() => setShowEditProp(false)} label="Save" /></Modal>}
       {showAddVal && <Modal title="New" onClose={() => setShowAddVal(false)} onSubmit={handleAddVal}><ValForm form={valForm} setForm={setValForm} onSubmit={handleAddVal} onCancel={() => setShowAddVal(false)} label="Create" /></Modal>}
       {showEditVal && <Modal title="Edit" onClose={() => setShowEditVal(false)} onSubmit={handleEditVal}><ValForm form={valForm} setForm={setValForm} onSubmit={handleEditVal} onCancel={() => setShowEditVal(false)} label="Save" /></Modal>}
       {confirmDel && (

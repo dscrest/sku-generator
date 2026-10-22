@@ -227,6 +227,10 @@ const WO_MAP = [
 ];
 const RECIPE_MAP = [
   [/^\/materials/, ["recipe.materials"]],
+  // the widget reads the material list (CR-281); the master stays with recipe.sizing
+  [/^\/sizing-materials/, ["recipe.sizing", "recipe.configure"]],
+  // the widget reads the geared-motor sheet (CR-284); the master stays with recipe.sizing
+  [/^\/geared-motors/, ["recipe.sizing", "recipe.configure"]],
   [/^\/(sizing-models|seed-rav)/, ["recipe.sizing"]],
   [/^\/component-map\/resolve/, ["recipe.configure"]],
   // the widget never reads the grid, only /resolve — the master stays with recipe.sizing
@@ -307,6 +311,9 @@ if (require.main === module && process.argv.includes("--selftest")) {
   console.assert(eq(cls(RECIPE_MAP, ["recipe.recipes"], "/books-composites"), ["recipe.recipes", "recipe.configure"]), "recipe books composites");
   console.assert(eq(cls(RECIPE_MAP, ["recipe.recipes"], "/recipes/1/push-books"), ["recipe.recipes", "recipe.configure"]), "recipe push");
   console.assert(eq(cls(RECIPE_MAP, ["recipe.recipes"], "/sizing-models/4"), ["recipe.sizing"]), "recipe sizing master");
+  console.assert(eq(cls(RECIPE_MAP, ["recipe.recipes"], "/seed-rav-materials"), ["recipe.sizing"]), "material seed = sizing master");
+  console.assert(eq(cls(RECIPE_MAP, ["recipe.recipes"], "/geared-motors/4"), ["recipe.sizing", "recipe.configure"]), "geared motors: widget reads, master edits");
+  console.assert(eq(cls(RECIPE_MAP, ["recipe.recipes"], "/seed-rav-motors"), ["recipe.sizing"]), "motor seed = sizing master");
   console.assert(eq(cls(RECIPE_MAP, ["recipe.recipes"], "/service-items"), ["recipe.recipes", "recipe.sizing"]), "recipe service item create");
   console.assert(eq(cls(RECIPE_MAP, ["recipe.recipes"], "/sizing/select"), ["recipe.configure"]), "recipe sizing select");
   console.assert(eq(cls(RECIPE_MAP, ["recipe.recipes"], "/config-quote/quotes:1"), ["recipe.configure"]), "saved configurator cart");

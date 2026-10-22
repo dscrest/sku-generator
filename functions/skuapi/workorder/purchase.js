@@ -11,6 +11,7 @@ const { dsDate } = require("../zoho/auth");
 const {
   createPurchaseOrder, getPurchaseOrder, updatePurchaseOrder,
   deletePurchaseOrder, setPurchaseOrderStatus, listPurchaseOrders,
+  getItem, listItemCustomFields, itemConversion, resolveConvertItem,
 } = require("../zoho/booksApi");
 const { warehouses, nextNumber, logActivity, byOrg, settings, inList } = require("./store");
 
@@ -48,9 +49,10 @@ function shortfallLines(grid) {
 function applyDraftCoverage(lines, draftLines) {
   const pool = new Map(); // rmItemId -> { qty, prNumbers }
   for (const d of draftLines || []) {
-    const key = String(d.rmItemId);
+    // CR-285: a converted line covers its *source* item, in source units.
+    const key = String(d.srcItemId || d.rmItemId);
     const cur = pool.get(key) || { qty: 0, prNumbers: new Set() };
-    cur.qty += n(d.purchaseQty);
+    cur.qty += d.srcItemId ? n(d.srcQty) : n(d.purchaseQty);
     if (d.prNumber) cur.prNumbers.add(d.prNumber);
     pool.set(key, cur);
   }
@@ -113,7 +115,8 @@ function collapseLines(lines) {
     const qty = n(l.purchaseQty) || n(l.requiredQty);
     // Catalyst booleans read back as strings — "false" is truthy, normalize.
     const extra = l.isExtra === true || l.isExtra === "true";
-    const key = `${l.rmItemId}|${l.soNumber || ""}|${extra ? 1 : 0}`;
+    // CR-285: two source items converting to the same raw material stay separate PO lines.
+    const key = `${l.rmItemId}|${l.srcItemId || ""}|${l.soNumber || ""}|${extra ? 1 : 0}`;
     const cur = byItem.get(key);
     if (!cur) byItem.set(key, { ...l, isExtra: extra, purchaseQty: qty });
     else {
@@ -234,6 +237,76 @@ async function openDraftLines(catalyst, orgId, workOrderId) {
     .map((l) => ({ ...l, prNumber: prNo.get(String(l.purchaseRequestId)) }));
 }
 
+/**
+ * CR-285 (MSUN): items flagged "Unit Conversion Item" in Books are bought as
+ * their Convert Item with qty × weight. Every PR path (createPR, addPRLine,
+ * raiseItemPO) runs through here; the PR line stores the converted item in
+ * rmItemId/rmName/purchaseQty and the original in srcItemId/srcName/srcQty
+ * with convFactor, so the grid and draft coverage keep tracking the source.
+ */
+// Org gate: one /settings/fields read per instance. Orgs without the field
+// (Ricon) pay no per-item Books GETs. A failed read is not cached.
+const _convOrgCache = new Map(); // orgId -> boolean
+async function orgHasConversion(catalyst, orgId) {
+  const key = String(orgId);
+  if (_convOrgCache.has(key)) return _convOrgCache.get(key);
+  let fields;
+  try { fields = await listItemCustomFields(catalyst); } catch { return false; }
+  const has = fields.some((f) => /^unit conversion/i.test(String(f.label || "").trim()));
+  _convOrgCache.set(key, has);
+  return has;
+}
+
+// Pure: apply one item's conversion info to a line. Flag on with an incomplete
+// master throws 400 — ordering the wrong material is worse than stopping.
+function convertLine(line, info) {
+  if (!info || !info.on) return line;
+  if (!(info.weight > 0) || !info.convertItemId) {
+    const e = new Error(`${line.rmName || line.rmItemId}: Unit Conversion is on but Weight / Convert Item is empty in Books`);
+    e.status = 400;
+    throw e;
+  }
+  const f = info.weight;
+  return {
+    ...line,
+    srcItemId: String(line.rmItemId),
+    srcName: line.rmName || "",
+    srcQty: n(line.purchaseQty),
+    convFactor: f,
+    rmItemId: String(info.convertItemId),
+    rmName: info.convertItemName || String(info.convertItemId),
+    requiredQty: n(line.requiredQty) * f,
+    purchaseQty: n(line.purchaseQty) * f,
+  };
+}
+
+// Conversion info per distinct item — Books GETs in chunks of 5 (CR-205 cap).
+async function conversionByItem(catalyst, orgId, itemIds) {
+  const out = new Map();
+  if (!(await orgHasConversion(catalyst, orgId))) return out;
+  const ids = [...new Set(itemIds.map((id) => String(id || "")).filter(Boolean))];
+  for (let i = 0; i < ids.length; i += 5) {
+    await Promise.all(ids.slice(i, i + 5).map(async (id) => {
+      const conv = itemConversion(await getItem(catalyst, id));
+      out.set(id, conv.on ? await resolveConvertItem(catalyst, conv) : conv);
+    }));
+  }
+  return out;
+}
+
+async function convertLines(catalyst, orgId, lines) {
+  const by = await conversionByItem(catalyst, orgId, lines.map((l) => l.rmItemId));
+  return lines.map((l) => convertLine(l, by.get(String(l.rmItemId))));
+}
+
+// The four CR-285 columns on a PurchaseRequestLine row (blank/0 = not converted).
+const srcCols = (l) => ({
+  srcItemId: l.srcItemId || "",
+  srcName: l.srcName || "",
+  srcQty: n(l.srcQty),
+  convFactor: n(l.convFactor),
+});
+
 async function createPR(catalyst, orgId, { workOrderId, lines }, userId) {
   const wos = await byOrg(catalyst, orgId, "WorkOrder", `ROWID = ${zStr(String(workOrderId))}`);
   if (!wos.length) { const e = new Error("Work order not found"); e.status = 404; throw e; }
@@ -256,6 +329,8 @@ async function createPR(catalyst, orgId, { workOrderId, lines }, userId) {
     e.status = 409;
     throw e;
   }
+  // After coverage (which nets in source units), before collapse (which keys on the converted item).
+  lines = await convertLines(catalyst, orgId, lines);
 
   const s = await settings(catalyst, orgId);
   const prNumber = await nextNumber(catalyst, orgId, "PurchaseRequest", "prNumber", s.prNumberPrefix);
@@ -278,6 +353,7 @@ async function createPR(catalyst, orgId, { workOrderId, lines }, userId) {
       rmName: l.rmName || "",
       requiredQty: n(l.requiredQty),
       purchaseQty: n(l.purchaseQty) || n(l.requiredQty),
+      ...srcCols(l),
       vendorId: l.vendorId ? String(l.vendorId) : "",
       vendorName: l.vendorName || "",
       zohoPoId: "",
@@ -315,14 +391,16 @@ async function addPRLine(catalyst, orgId, prId, { rmItemId, rmName, purchaseQty,
   if (!prs.length) { const e = new Error("Purchase request not found"); e.status = 404; throw e; }
   if (prs[0].status !== "Draft") { const e = new Error("Only draft purchase requests can take new lines"); e.status = 409; throw e; }
   if (!rmItemId || n(purchaseQty) <= 0) { const e = new Error("Pick an item and a quantity above zero"); e.status = 400; throw e; }
+  const [l] = await convertLines(catalyst, orgId, [{ rmItemId, rmName, requiredQty: 0, purchaseQty: n(purchaseQty) }]);
   const row = await catalyst.datastore().table("PurchaseRequestLine").insertRow({
     orgId: String(orgId),
     purchaseRequestId: String(prId),
     workOrderId: prs[0].workOrderId ? String(prs[0].workOrderId) : "",
-    rmItemId: String(rmItemId),
-    rmName: rmName || "",
+    rmItemId: String(l.rmItemId),
+    rmName: l.rmName || "",
     requiredQty: 0,
-    purchaseQty: n(purchaseQty),
+    purchaseQty: n(l.purchaseQty),
+    ...srcCols(l),
     isExtra: true, // ad-hoc line = extra material by definition (CR-120)
     vendorId: vendorId ? String(vendorId) : "",
     vendorName: vendorName || "",
@@ -395,6 +473,8 @@ async function createPoForLines(catalyst, orgId, group, { referenceNumber, notes
       qty: n(l.purchaseQty),
       description: [
         l.rmName,
+        // CR-285 traceability: the source item and its qty in source units.
+        l.srcItemId && n(l.convFactor) > 0 ? `from ${l.srcName} × ${n(l.purchaseQty) / n(l.convFactor)}` : "",
         l.isExtra ? "Extra" : "",
         l.soNumber ? `SO ${l.soNumber}` : description || "",
       ].filter(Boolean).join(" · ") || undefined,
@@ -502,6 +582,7 @@ async function raiseItemPO(catalyst, orgId, { vendorId, vendorName, items }, use
 
   const table = catalyst.datastore().table("PurchaseRequestLine");
   const localLines = [];
+  const convBy = await conversionByItem(catalyst, orgId, items.map((i) => i.rmItemId)); // CR-285
   for (const item of items) {
     const bd = (item.breakdown || []).filter((b) => n(b.qty) > 0);
     const target = item.qty != null ? n(item.qty) : bd.reduce((sum, b) => sum + n(b.qty), 0);
@@ -534,14 +615,19 @@ async function raiseItemPO(catalyst, orgId, { vendorId, vendorName, items }, use
     for (const b of shares) {
       if (n(b.qty) <= 0) continue;
       const isExtra = item.isExtra === true || b.extraQty > 0;
+      const l = convertLine(
+        { rmItemId: String(item.rmItemId), rmName: item.rmName || "", requiredQty: isExtra ? 0 : n(b.qty), purchaseQty: n(b.qty) },
+        convBy.get(String(item.rmItemId)),
+      );
       const row = await table.insertRow({
         orgId: String(orgId),
         purchaseRequestId: String(pr.ROWID),
         workOrderId: b.workOrderId ? String(b.workOrderId) : "",
-        rmItemId: String(item.rmItemId),
-        rmName: item.rmName || "",
-        requiredQty: isExtra ? 0 : n(b.qty),
-        purchaseQty: n(b.qty),
+        rmItemId: l.rmItemId,
+        rmName: l.rmName,
+        requiredQty: l.requiredQty,
+        purchaseQty: l.purchaseQty,
+        ...srcCols(l),
         isExtra,
         vendorId: String(vendorId),
         vendorName: vendorName || "",
@@ -549,8 +635,9 @@ async function raiseItemPO(catalyst, orgId, { vendorId, vendorName, items }, use
         receivedQty: 0, billedQty: 0, lastPoSyncAt: null,
       });
       localLines.push({
-        ROWID: row.ROWID, rmItemId: String(item.rmItemId), rmName: item.rmName || "",
-        purchaseQty: n(b.qty),
+        ROWID: row.ROWID, rmItemId: l.rmItemId, rmName: l.rmName,
+        purchaseQty: l.purchaseQty,
+        ...srcCols(l),
         isExtra,
         // Per-breakdown SO → one PO line per (item, SO) via collapseLines,
         // each carrying its own cf_so_no. In memory only, no DB column.
@@ -917,7 +1004,10 @@ async function refreshPurchaseOrders(catalyst, orgId, { poIds } = {}) {
           billedQty: b,
           lastPoSyncAt: dsDate(Date.now()),
         };
-        if (qtyChanged) update.purchaseQty = n(l.purchaseQty);
+        if (qtyChanged) {
+          update.purchaseQty = n(l.purchaseQty);
+          if (n(l.convFactor) > 0) update.srcQty = n(l.purchaseQty) / n(l.convFactor); // CR-285
+        }
         await table.updateRow(update);
         refreshed++;
       }
@@ -947,6 +1037,8 @@ function prJson(p, lines) {
       poStatus: l.poStatus || null,
       receivedQty: n(l.receivedQty),
       billedQty: n(l.billedQty),
+      srcName: l.srcName || null, // CR-285: set when the line was unit-converted
+      srcQty: l.srcItemId ? n(l.srcQty) : null,
     })),
   };
 }
@@ -1015,7 +1107,14 @@ async function procStatusByWo(catalyst, orgId, workOrderId) {
       prById = new Map(prs.map((p) => [String(p.ROWID), p]));
     }
   }
-  if (!lines.length) return new Map();
+  const out = new Map();
+  // Piggybacked on the same scan (Haresh item 20): when material last arrived
+  // per WO — max lastPoSyncAt across lines with anything received. Carried as a
+  // property on the returned Map so the two existing callers stay untouched.
+  // Set before the early return (CR-269): an org with no purchase lines yet
+  // still gets `receiptAt`, or the WO list throws on `.receiptAt.get`.
+  out.receiptAt = new Map();
+  if (!lines.length) return out;
   const byWo = new Map();
   for (const l of lines) {
     const parent = prById.get(String(l.purchaseRequestId));
@@ -1024,11 +1123,6 @@ async function procStatusByWo(catalyst, orgId, workOrderId) {
     if (!byWo.has(woId)) byWo.set(woId, []);
     byWo.get(woId).push(l);
   }
-  const out = new Map();
-  // Piggybacked on the same scan (Haresh item 20): when material last arrived
-  // per WO — max lastPoSyncAt across lines with anything received. Carried as a
-  // property on the returned Map so the two existing callers stay untouched.
-  out.receiptAt = new Map();
   for (const [woId, ls] of byWo) {
     out.set(woId, procurementStatus(ls));
     const seen = ls
@@ -1040,7 +1134,7 @@ async function procStatusByWo(catalyst, orgId, workOrderId) {
 }
 
 module.exports = {
-  SETTLED_PO, shortfallLines, applyDraftCoverage, openDraftLines, validatePR, groupByVendor, collapseLines,
+  SETTLED_PO, shortfallLines, applyDraftCoverage, openDraftLines, validatePR, groupByVendor, collapseLines, convertLine,
   splitExtra, shortfallByItem, procurementStatus, createPoForLines, raiseItemPO, procStatusByWo,
   createPR, updatePRLine, addPRLine, deletePR, deletePRLine, confirmPR, refreshPurchaseOrders, listPRs, listAllPRs,
   poPutBody, poDetail, deletePo, setPoStatus, updatePoLines, poListRow, listAllPOs,
@@ -1113,6 +1207,29 @@ if (require.main === module && process.argv.includes("--selftest")) {
   );
   assert.strictEqual(twoFgs.length, 1, "first row fully covered, second partly");
   assert.strictEqual(twoFgs[0].purchaseQty, 4, "10 across FGs − 6 on draft = 4");
+
+  // CR-285 unit conversion: 10 × weight 5 → Convert Item, qty 50, source kept.
+  const conv = convertLine({ rmItemId: "11", rmName: "Stem Nut", requiredQty: 10, purchaseQty: 10 },
+    { on: true, convertItemId: "99", convertItemName: "SG Iron", weight: 5 });
+  assert.deepStrictEqual(
+    [conv.rmItemId, conv.rmName, conv.requiredQty, conv.purchaseQty, conv.srcItemId, conv.srcName, conv.srcQty, conv.convFactor],
+    ["99", "SG Iron", 50, 50, "11", "Stem Nut", 10, 5]);
+  const plain = { rmItemId: "11", rmName: "Stem Nut", requiredQty: 10, purchaseQty: 10 };
+  assert.strictEqual(convertLine(plain, { on: false, weight: 5 }), plain, "flag off → line untouched");
+  assert.strictEqual(convertLine(plain, undefined), plain, "no info → line untouched");
+  assert.throws(() => convertLine(plain, { on: true, convertItemId: "", weight: 5 }), /Stem Nut: Unit Conversion is on/);
+  assert.throws(() => convertLine(plain, { on: true, convertItemId: "99", weight: 0 }), /Weight \/ Convert Item is empty/);
+  // A converted draft line covers its source item in source units.
+  const covConv = applyDraftCoverage(
+    [{ rmItemId: "11", rmName: "Stem Nut", requiredQty: 10, purchaseQty: 10 }],
+    [{ rmItemId: "99", srcItemId: "11", srcQty: 4, purchaseQty: 20, convFactor: 5, prNumber: "PR-0009" }],
+  );
+  assert.strictEqual(covConv[0].purchaseQty, 6, "10 − 4 source units on draft = 6");
+  // Two sources → the same raw material stay separate PO lines.
+  assert.strictEqual(collapseLines([
+    { rmItemId: "99", srcItemId: "11", purchaseQty: 50 },
+    { rmItemId: "99", srcItemId: "12", purchaseQty: 25 },
+  ]).length, 2);
 
   // Same item from two FGs collapses to one PR line with summed quantities.
   const collapsed = collapseLines([
@@ -1279,5 +1396,10 @@ if (require.main === module && process.argv.includes("--selftest")) {
     procurementStatus([{ purchaseQty: 8, zohoPoId: "P1", receivedQty: 8 }]), "Fulfilled", "all received",
   );
 
-  console.log("workorder/purchase.js self-check passed");
+  // CR-269: an org with no purchase lines still gets `receiptAt` — the WO list reads it.
+  const noLines = { zcql: () => ({ executeZCQLQuery: async () => [] }) };
+  procStatusByWo(noLines, "1").then((m) => {
+    assert.ok(m.receiptAt instanceof Map, "no purchase lines → receiptAt still a Map");
+    console.log("workorder/purchase.js self-check passed");
+  });
 }
